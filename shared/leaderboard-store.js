@@ -46,10 +46,10 @@
         if (!raw || typeof raw !== 'object') return null;
 
         // Determine source/mode from legacy fields if not present
-        const source = raw.source || (raw.level === 1 ? 'level1' : 'level2');
+        const numericLevel = Number(raw.level);
+        const source = raw.source || (numericLevel === 1 ? 'level1' : 'level2');
         const mode   = raw.mode   || (source === 'level1' ? 'level1-basic' : 'goldfields-venture');
-        const level  = Number(raw.level  || (source === 'level1' ? 1 : 2));
-
+        const level  = Number(raw.level || (source === 'level1' ? 1 : 2));
         // score: prefer explicit score, else netWorth, else finalCash, else 0
         const netWorth  = Number(raw.netWorth  ?? raw.score ?? 0);
         const finalCash = Number(raw.finalCash ?? raw.cash  ?? 0);
