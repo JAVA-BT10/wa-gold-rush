@@ -54,15 +54,20 @@ class TeacherDashboard {
      * @returns {string}
      */
     generateUsername(name, excludeId) {
-        const base = (name || 'student')
+        const clean = (name || 'student')
             .toLowerCase()
-            .replace(/[^a-z0-9]/g, '')
-            .slice(0, MAX_USERNAME_LENGTH) || 'student';
+            .replace(/[^a-z0-9]/g, '') || 'student';
+
+        const base = clean.slice(0, MAX_USERNAME_LENGTH) || 'student';
         let candidate = base;
         let suffix = 1;
+
         while (this.students.some(s => s.username === candidate && s.id !== excludeId)) {
-            candidate = base + suffix++;
+            const suf = String(suffix++);
+            const headLen = Math.max(1, MAX_USERNAME_LENGTH - suf.length);
+            candidate = base.slice(0, headLen) + suf;
         }
+
         return candidate;
     }
 
