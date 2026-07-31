@@ -745,7 +745,7 @@ function syncPlayerRecord() {
         playerKey,
         studentId:      gameState.player.studentId || playerKey,
         studentName:    gameState.player.studentName || (session?.studentName) || 'Anonymous Student',
-        username:       gameState.player.studentId  || (session?.username)    || '',
+        username:       (session?.username) || '',
         level:          gameState.assignedLevel || 2,
         mode:           'goldfields-venture',
         source:         'level2',
