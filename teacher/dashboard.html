@@ -307,10 +307,10 @@
                 <td>${idx + 1}</td>
                 <td>${_esc(r.studentName)}</td>
                 <td>${_esc(r.companyName || '—')}</td>
-                <td>$${Number(r.score || r.netWorth || 0).toFixed(2)}</td>
+                <td>$${Number((r.score ?? r.netWorth ?? 0)).toFixed(2)}</td>
                 <td>${badge}</td>
-                <td>${r.roundsPlayed || '—'}</td>
-                <td>${r.minesOwned || '—'}</td>
+                <td>${r.roundsPlayed ?? '—'}</td>
+                <td>${r.minesOwned ?? '—'}</td>
                 <td class="muted">${r.timestamp ? new Date(r.timestamp).toLocaleString() : '—'}</td>
             </tr>`;
         }).join('');
