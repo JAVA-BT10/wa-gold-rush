@@ -3,6 +3,39 @@
  * Handles student data, level assignment, and class statistics
  */
 
+// =============================================================================
+// ⚠️  TEMPORARY ALLOWLIST MODE — LOW SECURITY — TEMPORARY USE ONLY ⚠️
+//
+// Set TEMP_TEACHER_ALLOWLIST_MODE = true  → teachers in the allowlist below
+//   (or in localStorage key "wa_gold_rush_teacher_allowlist") bypass M365 auth.
+// Set TEMP_TEACHER_ALLOWLIST_MODE = false → only valid M365 teacher sessions
+//   are accepted (normal production mode).
+//
+// HOW TO RE-ENABLE M365-ONLY AUTH (once Entra app registration is ready):
+//   1. Set TEMP_TEACHER_ALLOWLIST_MODE = false in this file.
+//   2. Deploy the change.
+//   3. Teachers will sign in via Microsoft 365 on the home page as normal.
+// =============================================================================
+
+// ⚠️ LOW SECURITY / temporary use only — set to false once Entra is configured
+const TEMP_TEACHER_ALLOWLIST_MODE = true;
+
+// ---------------------------------------------------------------------------
+// Static default allowlist — add teacher email/UPN strings here.
+// Instructions for non-technical admins:
+//   • Each entry must be the teacher's full UPN/email, e.g. "teacher@school.edu"
+//   • Comparisons are case-insensitive and whitespace-trimmed.
+//   • You can also set allowed emails at runtime via browser localStorage:
+//       Key:   wa_gold_rush_teacher_allowlist
+//       Value: comma- or newline-separated emails, e.g. "alice@school.edu,bob@school.edu"
+//     Entries from localStorage are merged with the static list below.
+// ---------------------------------------------------------------------------
+const TEMP_TEACHER_ALLOWLIST_STATIC = [
+    // Add teacher emails/UPNs below — one per line:
+    // 'teacher@education.wa.edu.au',
+    // 'anotherteacher@school.edu',
+];
+
 class TeacherDashboard {
     constructor() {
         this.students = [];
@@ -21,6 +54,9 @@ class TeacherDashboard {
         this.M365_SESSION_KEY = 'wa_gold_rush_m365_session';
         this.STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
         this.TEACHER_DASHBOARD_KEY = 'teacher_dashboard';
+
+        // localStorage key for runtime allowlist override/merge (comma or newline separated emails)
+        this.TEACHER_ALLOWLIST_STORAGE_KEY = 'wa_gold_rush_teacher_allowlist';
     }
 
     /**
@@ -57,9 +93,72 @@ class TeacherDashboard {
         return upn.endsWith('@education.wa.edu.au') && !upn.includes('@student.');
     }
 
-    hasTeacherSession() {
-        const upn = this.getSignedInUpn();
-        return this.isLikelyTeacherUpn(upn);
+    /**
+     * Returns the merged teacher allowlist (static defaults + localStorage override/merge).
+     * ⚠️ TEMPORARY ALLOWLIST MODE only — not used when TEMP_TEACHER_ALLOWLIST_MODE is false.
+     *
+     * To add teachers at runtime without editing code:
+     *   Open browser DevTools → Application → Local Storage → set key
+     *   "wa_gold_rush_teacher_allowlist" to comma- or newline-separated email list.
+     */
+    getTeacherAllowlist() {
+        const list = new Set(
+            TEMP_TEACHER_ALLOWLIST_STATIC.map(e => String(e || '').trim().toLowerCase()).filter(Boolean)
+        );
+
+        try {
+            const raw = localStorage.getItem(this.TEACHER_ALLOWLIST_STORAGE_KEY);
+            if (raw) {
+                String(raw).split(/[\n,]+/).forEach(entry => {
+                    const trimmed = entry.trim().toLowerCase();
+                    if (trimmed) list.add(trimmed);
+                });
+            }
+        } catch (_) {}
+
+        return list;
+    }
+
+    /**
+     * Returns true if the given UPN/email is in the teacher allowlist (case-insensitive).
+     * ⚠️ TEMPORARY ALLOWLIST MODE only.
+     */
+    isInTeacherAllowlist(upn) {
+        if (!upn || typeof upn !== 'string') return false;
+        return this.getTeacherAllowlist().has(upn.trim().toLowerCase());
+    }
+
+    /**
+     * Returns true if teacher access should be granted.
+     *
+     * Normal mode (TEMP_TEACHER_ALLOWLIST_MODE = false):
+     *   Requires a valid M365 teacher session (existing behaviour).
+     *
+     * Temporary mode (TEMP_TEACHER_ALLOWLIST_MODE = true):  ⚠️ LOW SECURITY
+     *   Also allows access when the signed-in identity (UPN read from session storage)
+     *   is present in the teacher allowlist, OR when a UPN was entered manually and
+     *   is in the allowlist (see dashboard.html prompt fallback).
+     *   Falls back to normal M365 check so production accounts still work transparently.
+     */
+    hasTeacherSession(overrideUpn) {
+        // Always try normal M365 path first — works regardless of mode
+        const upn = overrideUpn || this.getSignedInUpn();
+        if (this.isLikelyTeacherUpn(upn)) return true;
+
+        // ⚠️ TEMPORARY ALLOWLIST MODE — LOW SECURITY
+        if (TEMP_TEACHER_ALLOWLIST_MODE) {
+            if (upn && this.isInTeacherAllowlist(upn)) return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Returns true if temporary allowlist mode is currently active.
+     * Useful for displaying appropriate UI messages.
+     */
+    isTempAllowlistMode() {
+        return !!TEMP_TEACHER_ALLOWLIST_MODE;
     }
 
     toNumber(value, fallback = 0) {
