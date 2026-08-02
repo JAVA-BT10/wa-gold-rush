@@ -16,6 +16,50 @@ class TeacherDashboard {
             topMineOwner: null,
             averageRound: 0
         };
+
+        // Auth/session constants aligned with index/dashboard pages
+        this.M365_SESSION_KEY = 'wa_gold_rush_m365_session';
+        this.STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
+        this.TEACHER_DASHBOARD_KEY = 'teacher_dashboard';
+    }
+
+    /**
+     * ===== AUTH HELPERS =====
+     */
+    getM365Session() {
+        try {
+            const session = JSON.parse(sessionStorage.getItem(this.M365_SESSION_KEY));
+            return session && typeof session === 'object' ? session : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    getSignedInUpn() {
+        const m365 = this.getM365Session();
+        if (m365?.studentUpn) return String(m365.studentUpn).toLowerCase();
+
+        // Compatibility fallback
+        try {
+            const legacy = JSON.parse(sessionStorage.getItem(this.STUDENT_SESSION_KEY));
+            if (legacy?.studentUpn) return String(legacy.studentUpn).toLowerCase();
+            if (legacy?.studentId && String(legacy.authProvider || '').toLowerCase() === 'm365') {
+                return String(legacy.studentId).toLowerCase();
+            }
+        } catch (_) {}
+
+        return null;
+    }
+
+    isLikelyTeacherUpn(upn) {
+        if (!upn || typeof upn !== 'string') return false;
+        // Staff accounts should be @education.wa.edu.au and not student subdomain
+        return upn.endsWith('@education.wa.edu.au') && !upn.includes('@student.');
+    }
+
+    hasTeacherSession() {
+        const upn = this.getSignedInUpn();
+        return this.isLikelyTeacherUpn(upn);
     }
 
     /**
@@ -339,7 +383,7 @@ class TeacherDashboard {
                 timestamp: new Date().toISOString(),
                 students: this.students
             };
-            localStorage.setItem('teacher_dashboard', JSON.stringify(data));
+            localStorage.setItem(this.TEACHER_DASHBOARD_KEY, JSON.stringify(data));
             return true;
         } catch (error) {
             console.error('Failed to save to localStorage:', error);
@@ -352,7 +396,7 @@ class TeacherDashboard {
      */
     loadFromLocalStorage() {
         try {
-            const data = JSON.parse(localStorage.getItem('teacher_dashboard'));
+            const data = JSON.parse(localStorage.getItem(this.TEACHER_DASHBOARD_KEY));
             if (data && data.students) {
                 this.students = data.students;
                 return true;
@@ -378,7 +422,7 @@ class TeacherDashboard {
             topMineOwner: null,
             averageRound: 0
         };
-        localStorage.removeItem('teacher_dashboard');
+        localStorage.removeItem(this.TEACHER_DASHBOARD_KEY);
     }
 }
 
