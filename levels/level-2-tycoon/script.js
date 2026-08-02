@@ -854,7 +854,6 @@ function syncPlayerRecord() {
     const session   = getPlayerSession();
     const totalRounds = Math.max(1, gameState.round - 1);
 
-    const competition = getCompetitionContext();
     const studentId = competition.isLoggedIn
         ? (competition.matchedStudent.displayId || competition.matchedStudent.id)
         : (gameState.player.studentId || playerKey);
