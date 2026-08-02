@@ -27,7 +27,14 @@
         .toggle-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; }
         .toggle-row input[type="checkbox"] { width: auto; margin-top: 2px; }
         .toggle-copy strong { display: block; margin-bottom: 4px; }
-        #authRequiredMessage { display: none; max-width: 640px; margin: 28px auto; padding: 16px; background: #fff3f3; border: 1px solid #f5c2c7; border-radius: 8px; color: #842029; font-family: Arial, sans-serif; }
+        #authRequiredMessage { display: none; max-width: 640px; margin: 28px auto; padding: 20px 24px; background: #fff3f3; border: 1px solid #f5c2c7; border-radius: 8px; color: #842029; font-family: Arial, sans-serif; line-height: 1.6; }
+        #authRequiredMessage h2 { margin-top: 0; font-size: 18px; }
+        #authRequiredMessage a { color: #842029; font-weight: bold; }
+        #authRequiredMessage .auth-actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+        #authRequiredMessage .auth-actions a, #authRequiredMessage .auth-actions button { display: inline-block; padding: 8px 16px; border-radius: 6px; font-weight: bold; text-decoration: none; cursor: pointer; font-size: 14px; border: 0; }
+        #authRequiredMessage .btn-home { background: #842029; color: #fff; }
+        #authRequiredMessage .btn-retry { background: #f4b400; color: #fff; }
+        #authRequiredMessage .auth-hint { margin-top: 12px; font-size: 13px; color: #555; background: #fffbe6; border: 1px solid #ffe69c; border-radius: 4px; padding: 8px 12px; }
     </style>
 </head>
 <body>
@@ -141,22 +148,74 @@
         const dashboard = new TeacherDashboard();
 
         function enforceTeacherDashboardAccess() {
+            // Normal path: session already present
             if (dashboard.hasTeacherSession()) {
                 document.body.classList.add('authorized');
                 return true;
             }
 
+            // Temporary allowlist mode: prompt for email if no session found
+            if (dashboard.isTempAllowlistMode()) {
+                const entered = prompt(
+                    '⚠️ Temporary Access Mode\n\n' +
+                    'Microsoft 365 sign-in is currently unavailable.\n\n' +
+                    'Enter your teacher email address to check the allowlist:'
+                );
+                if (entered && dashboard.hasTeacherSession(entered.trim())) {
+                    document.body.classList.add('authorized');
+                    return true;
+                }
+            }
+
+            // Access denied — show guidance
             const authMessage = document.getElementById('authRequiredMessage');
             const signedInUpn = dashboard.getSignedInUpn();
-            const detail = signedInUpn && !dashboard.isLikelyTeacherUpn(signedInUpn)
-                ? `Signed in account (${signedInUpn}) does not have teacher access.`
-                : 'Teacher sign-in is required to open the dashboard.';
-            const message = `${detail} Redirecting to Home...`;
-            authMessage.textContent = message;
+            const isTempMode = dashboard.isTempAllowlistMode();
+
+            let detail;
+            if (signedInUpn && !dashboard.isLikelyTeacherUpn(signedInUpn) && !isTempMode) {
+                detail = `Signed-in account (<strong>${escHtmlMsg(signedInUpn)}</strong>) does not have teacher access.`;
+            } else if (isTempMode) {
+                detail = 'Your email address was not found in the teacher allowlist.';
+            } else {
+                detail = 'Teacher sign-in is required to open the dashboard.';
+            }
+
+            const allowlistHint = isTempMode
+                ? '<div class="auth-hint">⚠️ <strong>Temporary mode is active.</strong> ' +
+                  'To gain access, ask your administrator to add your email to the teacher allowlist ' +
+                  'in <code>teacher/dashboard-state.js</code> or via the ' +
+                  '<code>wa_gold_rush_teacher_allowlist</code> localStorage key.</div>'
+                : '';
+
+            authMessage.innerHTML = `
+                <h2>🔒 Dashboard Access Denied</h2>
+                <p>${detail}</p>
+                <p>
+                    Microsoft 365 sign-in is the preferred way to access the teacher dashboard.
+                    Please sign in on the home page first.
+                </p>
+                ${allowlistHint}
+                <div class="auth-actions">
+                    <a class="btn-home" href="../index.html">← Return to Home Page</a>
+                    <button class="btn-retry" onclick="location.reload()">Try Again</button>
+                </div>
+            `;
             authMessage.style.display = 'block';
-            alert('Teacher sign-in is required to access the dashboard.');
-            window.location.replace('../index.html');
+
+            // Scroll message into view before redirecting
+            authMessage.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            setTimeout(() => { window.location.replace('../index.html'); }, 4000);
             return false;
+        }
+
+        function escHtmlMsg(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         function getRecords() {
