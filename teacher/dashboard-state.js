@@ -4,9 +4,44 @@
  * class statistics, and unified cross-level leaderboard.
  */
 
+<<<<<<< HEAD
 const STUDENTS_STORE_KEY  = 'wa_gold_rush_students_v2';
 const TEACHER_LEGACY_KEY  = 'teacher_dashboard';
 const MAX_USERNAME_LENGTH = 12;
+=======
+// =============================================================================
+// ⚠️  TEMPORARY ALLOWLIST MODE — LOW SECURITY — TEMPORARY USE ONLY ⚠️
+//
+// Set TEMP_TEACHER_ALLOWLIST_MODE = true  → teachers in the allowlist below
+//   (or in localStorage key "wa_gold_rush_teacher_allowlist") bypass M365 auth.
+// Set TEMP_TEACHER_ALLOWLIST_MODE = false → only valid M365 teacher sessions
+//   are accepted (normal production mode).
+//
+// HOW TO RE-ENABLE M365-ONLY AUTH (once Entra app registration is ready):
+//   1. Set TEMP_TEACHER_ALLOWLIST_MODE = false in this file.
+//   2. Deploy the change.
+//   3. Teachers will sign in via Microsoft 365 on the home page as normal.
+// =============================================================================
+
+// ⚠️ LOW SECURITY / temporary use only — set to false once Entra is configured
+const TEMP_TEACHER_ALLOWLIST_MODE = true;
+
+// ---------------------------------------------------------------------------
+// Static default allowlist — add teacher email/UPN strings here.
+// Instructions for non-technical admins:
+//   • Each entry must be the teacher's full UPN/email, e.g. "teacher@school.edu"
+//   • Comparisons are case-insensitive and whitespace-trimmed.
+//   • You can also set allowed emails at runtime via browser localStorage:
+//       Key:   wa_gold_rush_teacher_allowlist
+//       Value: comma- or newline-separated emails, e.g. "alice@school.edu,bob@school.edu"
+//     Entries from localStorage are merged with the static list below.
+// ---------------------------------------------------------------------------
+const TEMP_TEACHER_ALLOWLIST_STATIC = [
+    // Add teacher emails/UPNs below — one per line:
+    // 'teacher@education.wa.edu.au',
+    // 'anotherteacher@school.edu',
+];
+>>>>>>> origin/main
 
 class TeacherDashboard {
     constructor() {
@@ -21,6 +56,178 @@ class TeacherDashboard {
             topMineOwner: null,
             averageRound: 0
         };
+
+        // Auth/session constants aligned with index/dashboard pages
+        this.M365_SESSION_KEY = 'wa_gold_rush_m365_session';
+        this.STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
+        this.TEACHER_DASHBOARD_KEY = 'teacher_dashboard';
+
+        // localStorage key for runtime allowlist override/merge (comma or newline separated emails)
+        this.TEACHER_ALLOWLIST_STORAGE_KEY = 'wa_gold_rush_teacher_allowlist';
+    }
+
+    /**
+     * ===== AUTH HELPERS =====
+     */
+    getM365Session() {
+        try {
+            const session = JSON.parse(sessionStorage.getItem(this.M365_SESSION_KEY));
+            return session && typeof session === 'object' ? session : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    getSignedInUpn() {
+        const m365 = this.getM365Session();
+        if (m365?.studentUpn) return String(m365.studentUpn).toLowerCase();
+
+        // Compatibility fallback
+        try {
+            const legacy = JSON.parse(sessionStorage.getItem(this.STUDENT_SESSION_KEY));
+            if (legacy?.studentUpn) return String(legacy.studentUpn).toLowerCase();
+            if (legacy?.studentId && String(legacy.authProvider || '').toLowerCase() === 'm365') {
+                return String(legacy.studentId).toLowerCase();
+            }
+        } catch (_) {}
+
+        return null;
+    }
+
+    isLikelyTeacherUpn(upn) {
+        if (!upn || typeof upn !== 'string') return false;
+        // Staff accounts should be @education.wa.edu.au and not student subdomain
+        return upn.endsWith('@education.wa.edu.au') && !upn.includes('@student.');
+    }
+
+    /**
+     * Returns the merged teacher allowlist (static defaults + localStorage override/merge).
+     * ⚠️ TEMPORARY ALLOWLIST MODE only — not used when TEMP_TEACHER_ALLOWLIST_MODE is false.
+     *
+     * To add teachers at runtime without editing code:
+     *   Open browser DevTools → Application → Local Storage → set key
+     *   "wa_gold_rush_teacher_allowlist" to comma- or newline-separated email list.
+     */
+    getTeacherAllowlist() {
+        const list = new Set(
+            TEMP_TEACHER_ALLOWLIST_STATIC.map(e => String(e || '').trim().toLowerCase()).filter(Boolean)
+        );
+
+        try {
+            const raw = localStorage.getItem(this.TEACHER_ALLOWLIST_STORAGE_KEY);
+            if (raw) {
+                String(raw).split(/[\n,]+/).forEach(entry => {
+                    const trimmed = entry.trim().toLowerCase();
+                    if (trimmed) list.add(trimmed);
+                });
+            }
+        } catch (_) {}
+
+        return list;
+    }
+
+    /**
+     * Returns true if the given UPN/email is in the teacher allowlist (case-insensitive).
+     * ⚠️ TEMPORARY ALLOWLIST MODE only.
+     */
+    isInTeacherAllowlist(upn) {
+        if (!upn || typeof upn !== 'string') return false;
+        return this.getTeacherAllowlist().has(upn.trim().toLowerCase());
+    }
+
+    /**
+     * Returns true if teacher access should be granted.
+     *
+     * Normal mode (TEMP_TEACHER_ALLOWLIST_MODE = false):
+     *   Requires a valid M365 teacher session (existing behaviour).
+     *
+     * Temporary mode (TEMP_TEACHER_ALLOWLIST_MODE = true):  ⚠️ LOW SECURITY
+     *   Also allows access when the signed-in identity (UPN read from session storage)
+     *   is present in the teacher allowlist, OR when a UPN was entered manually and
+     *   is in the allowlist (see dashboard.html prompt fallback).
+     *   Falls back to normal M365 check so production accounts still work transparently.
+     */
+    hasTeacherSession(overrideUpn) {
+        // Always try normal M365 path first — works regardless of mode
+        const upn = overrideUpn || this.getSignedInUpn();
+        if (this.isLikelyTeacherUpn(upn)) return true;
+
+        // ⚠️ TEMPORARY ALLOWLIST MODE — LOW SECURITY
+        if (TEMP_TEACHER_ALLOWLIST_MODE) {
+            if (upn && this.isInTeacherAllowlist(upn)) return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Returns true if temporary allowlist mode is currently active.
+     * Useful for displaying appropriate UI messages.
+     */
+    isTempAllowlistMode() {
+        return !!TEMP_TEACHER_ALLOWLIST_MODE;
+    }
+
+    toNumber(value, fallback = 0) {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : fallback;
+    }
+
+    parseCsvRows(csvText) {
+        const rows = [];
+        const text = String(csvText || '');
+        let row = [];
+        let field = '';
+        let inQuotes = false;
+        let lineNumber = 1;
+        let rowLineNumber = 1;
+
+        for (let i = 0; i < text.length; i += 1) {
+            const char = text[i];
+            const nextChar = text[i + 1];
+
+            if (char === '"') {
+                if (inQuotes && nextChar === '"') {
+                    field += '"';
+                    i += 1;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+                continue;
+            }
+
+            if (char === ',' && !inQuotes) {
+                row.push(field);
+                field = '';
+                continue;
+            }
+
+            if ((char === '\n' || char === '\r') && !inQuotes) {
+                row.push(field);
+                rows.push({ rowNumber: rowLineNumber, fields: row });
+                row = [];
+                field = '';
+
+                if (char === '\r' && nextChar === '\n') {
+                    i += 1;
+                }
+                lineNumber += 1;
+                rowLineNumber = lineNumber;
+                continue;
+            }
+
+            field += char;
+            if (char === '\n') {
+                lineNumber += 1;
+            }
+        }
+
+        row.push(field);
+        const hasData = row.some(value => String(value || '').trim() !== '');
+        if (hasData) {
+            rows.push({ rowNumber: rowLineNumber, fields: row });
+        }
+        return rows;
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -198,20 +405,18 @@ class TeacherDashboard {
         let rawStudents = [];
 
         if (format === 'csv') {
-            const lines = data.trim().split('\n');
-            if (!lines.length) return { added: [], skipped: [] };
+            const rows = this.parseCsvRows(data);
+            if (!rows.length) return { added: [], skipped: [] };
 
-            const firstFields = lines[0].split(',').map(s => s.trim());
+            const firstFields = rows[0].fields.map(s => String(s || '').trim());
             const firstLevelVal = firstFields.length >= 3 ? parseInt(firstFields[2], 10) : NaN;
             const firstLineIsHeader = isNaN(firstLevelVal) || firstLevelVal < 1 || firstLevelVal > 5;
-            const dataLines = firstLineIsHeader ? lines.slice(1) : lines;
-            const headerOffset = firstLineIsHeader ? 1 : 0;
+            const dataRows = firstLineIsHeader ? rows.slice(1) : rows;
 
-            dataLines.forEach((line, idx) => {
-                const originalRow = idx + 1 + headerOffset;
-                if (line.trim() === '') return;
-
-                const fields = line.split(',').map(s => s.trim());
+            dataRows.forEach((row) => {
+                const originalRow = row.rowNumber;
+                const fields = row.fields.map(s => String(s || '').trim());
+                if (!fields.some(Boolean)) return;
                 if (fields.length < 3) {
                     rawStudents.push({ _row: originalRow, _skipReason: 'fewer than 3 fields' });
                     return;
@@ -333,7 +538,17 @@ class TeacherDashboard {
      * Get all students
      */
     getAllStudents() {
+<<<<<<< HEAD
         return [...this.students].sort((a, b) => b.gameState.netWorth - a.gameState.netWorth);
+=======
+        return this.students
+            .map((student, index) => ({ student, index }))
+            .sort((a, b) => {
+                const diff = this.toNumber(b.student?.gameState?.netWorth) - this.toNumber(a.student?.gameState?.netWorth);
+                return diff !== 0 ? diff : a.index - b.index;
+            })
+            .map(entry => entry.student);
+>>>>>>> origin/main
     }
 
     /**
@@ -360,9 +575,10 @@ class TeacherDashboard {
             return this.classStats;
         }
 
-        const totalNetWorth = this.students.reduce((sum, s) => sum + s.gameState.netWorth, 0);
-        const totalRounds = this.students.reduce((sum, s) => sum + s.gameState.round, 0);
+        const totalNetWorth = this.students.reduce((sum, s) => sum + this.toNumber(s?.gameState?.netWorth), 0);
+        const totalRounds = this.students.reduce((sum, s) => sum + this.toNumber(s?.gameState?.round), 0);
 
+<<<<<<< HEAD
         const sortedByNetWorth = [...this.students].sort((a, b) => b.gameState.netWorth - a.gameState.netWorth);
         const sortedByMines    = [...this.students].sort((a, b) => b.gameState.ownedMines - a.gameState.ownedMines);
 
@@ -374,6 +590,31 @@ class TeacherDashboard {
             mostMinesOwned:   sortedByMines[0]?.gameState.ownedMines || 0,
             topMineOwner:     sortedByMines[0],
             averageRound:     totalRounds / this.students.length
+=======
+        const sortedByNetWorth = [...this.students]
+            .map((student, index) => ({ student, index }))
+            .sort((a, b) => {
+                const diff = this.toNumber(b.student?.gameState?.netWorth) - this.toNumber(a.student?.gameState?.netWorth);
+                return diff !== 0 ? diff : a.index - b.index;
+            })
+            .map(entry => entry.student);
+        const sortedByMines = [...this.students]
+            .map((student, index) => ({ student, index }))
+            .sort((a, b) => {
+                const diff = this.toNumber(b.student?.gameState?.ownedMines) - this.toNumber(a.student?.gameState?.ownedMines);
+                return diff !== 0 ? diff : a.index - b.index;
+            })
+            .map(entry => entry.student);
+
+        this.classStats = {
+            totalStudents: this.students.length,
+            averageNetWorth: totalNetWorth / this.students.length,
+            highestNetWorth: this.toNumber(sortedByNetWorth[0]?.gameState?.netWorth),
+            wealthiestStudent: sortedByNetWorth[0],
+            mostMinesOwned: this.toNumber(sortedByMines[0]?.gameState?.ownedMines),
+            topMineOwner: sortedByMines[0],
+            averageRound: totalRounds / this.students.length
+>>>>>>> origin/main
         };
 
         return this.classStats;
@@ -384,6 +625,7 @@ class TeacherDashboard {
      * @param {{ mode?: string, level?: number, studentId?: string }} [filter]
      * @returns {object[]} Entries sorted by score descending.
      */
+<<<<<<< HEAD
     getLeaderboard(filter) {
         // Use LeaderboardStore if available (shared utility loaded on the page)
         if (typeof LeaderboardStore !== 'undefined') {
@@ -407,6 +649,14 @@ class TeacherDashboard {
         } catch (e) {
             return [];
         }
+=======
+    getLeaderboard() {
+        return this.getAllStudents()
+            .map((student, index) => ({
+                rank: index + 1,
+                ...student
+            }));
+>>>>>>> origin/main
     }
 
     /**
@@ -455,12 +705,12 @@ class TeacherDashboard {
             student.name,
             student.email,
             student.level,
-            student.gameState.netWorth.toFixed(2),
-            student.gameState.cash.toFixed(2),
-            student.gameState.ownedMines,
-            student.gameState.machinery,
-            student.gameState.round,
-            student.gameState.totalProfitLoss.toFixed(2)
+            this.toNumber(student.gameState?.netWorth).toFixed(2),
+            this.toNumber(student.gameState?.cash).toFixed(2),
+            this.toNumber(student.gameState?.ownedMines),
+            this.toNumber(student.gameState?.machinery),
+            this.toNumber(student.gameState?.round),
+            this.toNumber(student.gameState?.totalProfitLoss).toFixed(2)
         ]);
 
         return [headers, ...rows]
@@ -480,7 +730,11 @@ class TeacherDashboard {
                 students:  this.students,
                 savedAt:   new Date().toISOString()
             };
+<<<<<<< HEAD
             localStorage.setItem(STUDENTS_STORE_KEY, JSON.stringify(store));
+=======
+            localStorage.setItem(this.TEACHER_DASHBOARD_KEY, JSON.stringify(data));
+>>>>>>> origin/main
             return true;
         } catch (error) {
             console.error('Failed to save to localStorage:', error);
@@ -494,6 +748,7 @@ class TeacherDashboard {
      */
     loadFromLocalStorage() {
         try {
+<<<<<<< HEAD
             // Try v2 store
             const v2raw = localStorage.getItem(STUDENTS_STORE_KEY);
             if (v2raw) {
@@ -502,6 +757,12 @@ class TeacherDashboard {
                     this.students = v2.students;
                     return true;
                 }
+=======
+            const data = JSON.parse(localStorage.getItem(this.TEACHER_DASHBOARD_KEY));
+            if (data && data.students) {
+                this.students = data.students;
+                return true;
+>>>>>>> origin/main
             }
 
             // Migrate from legacy key
@@ -570,8 +831,12 @@ class TeacherDashboard {
             topMineOwner: null,
             averageRound: 0
         };
+<<<<<<< HEAD
         localStorage.removeItem(STUDENTS_STORE_KEY);
         localStorage.removeItem(TEACHER_LEGACY_KEY);
+=======
+        localStorage.removeItem(this.TEACHER_DASHBOARD_KEY);
+>>>>>>> origin/main
     }
 }
 

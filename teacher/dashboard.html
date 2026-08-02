@@ -4,9 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Goldfields Goldrush W.A. - Teacher Dashboard</title>
+    <script src="https://alcdn.msauth.net/browser/2.39.0/js/msal-browser.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background: #f5f5f5; color: #222; }
+<<<<<<< HEAD
         .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+=======
+        .container { display: none; max-width: 1100px; margin: 0 auto; padding: 20px; }
+        body.authorized .container { display: block; }
+>>>>>>> origin/main
         .card { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
         .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
         input, textarea, select, button { width: 100%; padding: 8px; box-sizing: border-box; margin-top: 4px; }
@@ -29,6 +35,7 @@
         .toggle-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; }
         .toggle-row input[type="checkbox"] { width: auto; margin-top: 2px; }
         .toggle-copy strong { display: block; margin-bottom: 4px; }
+<<<<<<< HEAD
         .tab-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
         .tab-bar button { width: auto; padding: 6px 14px; background: #eee; color: #333; }
         .tab-bar button.active { background: #f4b400; color: #fff; }
@@ -52,6 +59,31 @@
 <div class="container">
     <h1>👨‍🏫 Goldfields Goldrush W.A. — Teacher Dashboard</h1>
     <p><a href="../index.html">← Back to Home</a></p>
+=======
+        #authRequiredMessage { display: none; max-width: 640px; margin: 28px auto; padding: 20px 24px; background: #fff3f3; border: 1px solid #f5c2c7; border-radius: 8px; color: #842029; font-family: Arial, sans-serif; line-height: 1.6; }
+        #authRequiredMessage h2 { margin-top: 0; font-size: 18px; }
+        #authRequiredMessage a { color: #842029; font-weight: bold; }
+        #authRequiredMessage .auth-actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+        #authRequiredMessage .auth-actions a, #authRequiredMessage .auth-actions button { display: inline-block; padding: 8px 16px; border-radius: 6px; font-weight: bold; text-decoration: none; cursor: pointer; font-size: 14px; border: 0; }
+        #authRequiredMessage .btn-home { background: #842029; color: #fff; }
+        #authRequiredMessage .btn-retry { background: #f4b400; color: #fff; }
+        #authRequiredMessage .auth-hint { margin-top: 12px; font-size: 13px; color: #555; background: #fffbe6; border: 1px solid #ffe69c; border-radius: 4px; padding: 8px 12px; }
+        .allowlist-warning { background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; color: #664d03; font-size: 13px; line-height: 1.5; }
+        .allowlist-add-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+        .allowlist-add-row input { width: auto; flex: 1; min-width: 200px; margin: 0; }
+        .allowlist-add-row button { width: auto; }
+        .allowlist-msg { font-size: 13px; font-weight: bold; margin: 4px 0 8px; }
+        .allowlist-msg.success { color: #2e7d32; }
+        .allowlist-msg.error { color: #c62828; }
+        .allowlist-help { margin-top: 12px; font-size: 12px; color: #555; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 8px 12px; line-height: 1.6; }
+    </style>
+</head>
+<body>
+    <div id="authRequiredMessage" role="alert"></div>
+    <div class="container">
+        <h1>👨‍🏫 Goldfields Goldrush W.A. Teacher Dashboard</h1>
+        <p><a href="../index.html">← Back to Home</a></p>
+>>>>>>> origin/main
 
     <!-- ── Class Controls ─────────────────────────────────── -->
     <section class="card">
@@ -182,6 +214,7 @@
                 </thead>
                 <tbody id="leaderboardBody"></tbody>
             </table>
+<<<<<<< HEAD
         </div>
     </section>
 </div>
@@ -215,9 +248,55 @@
             <button id="saveEditBtn"   class="btn"         style="width:auto;padding:8px 20px;">💾 Save</button>
             <button id="cancelEditBtn" class="btn-danger"  style="width:auto;padding:8px 20px;">Cancel</button>
         </div>
+=======
+        </section>
+
+        <section id="teacherAccessSection" class="card" aria-label="Manage Teacher Access" style="display:none;">
+            <h2>🔑 Manage Teacher Access</h2>
+            <div class="allowlist-warning" role="alert">
+                ⚠️ <strong>Temporary low-security mode is active.</strong>
+                This allowlist bypasses Microsoft 365 authentication and is stored <strong>per-browser</strong>
+                (localStorage). Use Entra/M365 authentication when available.
+                To disable temporary mode: set <code>TEMP_TEACHER_ALLOWLIST_MODE = false</code>
+                in <code>teacher/dashboard-state.js</code> and redeploy.
+            </div>
+            <div class="allowlist-add-row">
+                <input id="newTeacherEmail" type="email"
+                    placeholder="teacher@education.wa.edu.au"
+                    aria-label="Teacher email address to add">
+                <button id="addTeacherBtn" class="btn-secondary">Add Teacher</button>
+            </div>
+            <p id="allowlistMsg" class="allowlist-msg" style="display:none;" aria-live="polite"></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Email</th>
+                        <th>Source</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="allowlistBody"></tbody>
+            </table>
+            <div class="allowlist-help">
+                <strong>How to use:</strong>
+                Enter a teacher's full <code>@education.wa.edu.au</code> email above and click
+                <em>Add Teacher</em>. When that teacher opens the dashboard, they will be prompted
+                to enter their email — it must match exactly. This list is saved in
+                <strong>this browser only</strong>; other devices need their own copy.
+                <br><br>
+                <strong>Built-in entries</strong> (from <code>TEMP_TEACHER_ALLOWLIST_STATIC</code>
+                in code) are shown below but cannot be removed here — edit the source file instead.
+                <br><br>
+                <strong>To fully disable temporary mode</strong> once Entra is configured:
+                set <code>TEMP_TEACHER_ALLOWLIST_MODE = false</code> in
+                <code>teacher/dashboard-state.js</code> and redeploy.
+            </div>
+        </section>
+>>>>>>> origin/main
     </div>
 </div>
 
+<<<<<<< HEAD
 <script src="../shared/leaderboard-store.js"></script>
 <script src="dashboard-state.js"></script>
 <script>
@@ -225,6 +304,85 @@
     const STRICT_MODE_KEY = 'wa_gold_rush_strict_mode';
     const dashboard = new TeacherDashboard();
     dashboard.loadFromLocalStorage();
+=======
+    <script src="dashboard-state.js"></script>
+    <script>
+        const CLASS_RECORDS_KEY = 'wa_gold_rush_class_records';
+        const PAUSE_STATE_KEY = 'wa_gold_rush_pause_state';
+        const STRICT_MODE_KEY = 'wa_gold_rush_strict_mode';
+        const dashboard = new TeacherDashboard();
+
+        function enforceTeacherDashboardAccess() {
+            // Normal path: session already present
+            if (dashboard.hasTeacherSession()) {
+                document.body.classList.add('authorized');
+                return true;
+            }
+
+            // Temporary allowlist mode: prompt for email if no session found
+            if (dashboard.isTempAllowlistMode()) {
+                const entered = prompt(
+                    '⚠️ Temporary Access Mode\n\n' +
+                    'Microsoft 365 sign-in is currently unavailable.\n\n' +
+                    'Enter your teacher email address to check the allowlist:'
+                );
+                if (entered && dashboard.hasTeacherSession(entered.trim())) {
+                    document.body.classList.add('authorized');
+                    return true;
+                }
+            }
+
+            // Access denied — show guidance
+            const authMessage = document.getElementById('authRequiredMessage');
+            const signedInUpn = dashboard.getSignedInUpn();
+            const isTempMode = dashboard.isTempAllowlistMode();
+
+            let detail;
+            if (signedInUpn && !dashboard.isLikelyTeacherUpn(signedInUpn) && !isTempMode) {
+                detail = `Signed-in account (<strong>${escHtmlMsg(signedInUpn)}</strong>) does not have teacher access.`;
+            } else if (isTempMode) {
+                detail = 'Your email address was not found in the teacher allowlist.';
+            } else {
+                detail = 'Teacher sign-in is required to open the dashboard.';
+            }
+
+            const allowlistHint = isTempMode
+                ? '<div class="auth-hint">⚠️ <strong>Temporary mode is active.</strong> ' +
+                  'To gain access, ask your administrator to add your email to the teacher allowlist ' +
+                  'in <code>teacher/dashboard-state.js</code> or via the ' +
+                  '<code>wa_gold_rush_teacher_allowlist</code> localStorage key.</div>'
+                : '';
+
+            authMessage.innerHTML = `
+                <h2>🔒 Dashboard Access Denied</h2>
+                <p>${detail}</p>
+                <p>
+                    Microsoft 365 sign-in is the preferred way to access the teacher dashboard.
+                    Please sign in on the home page first.
+                </p>
+                ${allowlistHint}
+                <div class="auth-actions">
+                    <a class="btn-home" href="../index.html">← Return to Home Page</a>
+                    <button class="btn-retry" onclick="location.reload()">Try Again</button>
+                </div>
+            `;
+            authMessage.style.display = 'block';
+
+            // Scroll message into view before redirecting
+            authMessage.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            setTimeout(() => { window.location.replace('../index.html'); }, 4000);
+            return false;
+        }
+
+        function escHtmlMsg(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+>>>>>>> origin/main
 
     // ── Leaderboard filter state ──────────────────────────────────────────────
     let currentLeaderboardFilter = 'all';
@@ -255,6 +413,7 @@
             : 'Competition lock is OFF. Competition features remain open.';
     }
 
+<<<<<<< HEAD
     function renderStats() {
         const stats = dashboard.calculateClassStats();
         const entries = LeaderboardStore.queryEntries();
@@ -262,6 +421,180 @@
         entries.forEach(e => {
             const key = e.strategyLabel || 'Unknown';
             byStrategy[key] = (byStrategy[key] || 0) + 1;
+=======
+        function renderPauseStatus() {
+            let paused = false;
+            try {
+                paused = !!JSON.parse(localStorage.getItem(PAUSE_STATE_KEY))?.paused;
+            } catch (error) {
+                console.error('Failed to load pause state:', error);
+            }
+            document.getElementById('pauseStatus').textContent = paused
+                ? 'Gameplay is currently paused.'
+                : 'Gameplay is active.';
+        }
+
+        function isStrictModeEnabled() {
+            try {
+                return !!JSON.parse(localStorage.getItem(STRICT_MODE_KEY))?.enabled;
+            } catch (error) {
+                return false;
+            }
+        }
+
+        function renderStrictModeStatus() {
+            const strictModeEnabled = isStrictModeEnabled();
+            document.getElementById('strictModeToggle').checked = strictModeEnabled;
+            document.getElementById('strictModeStatus').textContent = strictModeEnabled
+                ? 'Competition lock is ON. Login is required for leaderboard, rankings, and shared records.'
+                : 'Competition lock is OFF. Competition features remain open.';
+        }
+
+        function renderStats() {
+            syncFromRecords();
+            const stats = dashboard.calculateClassStats();
+            const records = getRecords();
+            const byStrategy = {};
+            records.forEach(r => {
+                const key = r.strategyLabel || 'Unknown';
+                byStrategy[key] = (byStrategy[key] || 0) + 1;
+            });
+            const topStrategy = Object.entries(byStrategy).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A';
+
+            document.getElementById('classStats').innerHTML = `
+                Total students: <strong>${stats.totalStudents}</strong><br>
+                Wealthiest player: <strong>${escHtml(stats.wealthiestStudent?.gameState?.companyName || stats.wealthiestStudent?.name || 'N/A')}</strong><br>
+                Most mines owned: <strong>${stats.mostMinesOwned}</strong><br>
+                Most profitable strategy: <strong>${escHtml(topStrategy)}</strong><br>
+                Average class wealth: <strong>$${(stats.averageNetWorth || 0).toFixed(2)}</strong>
+            `;
+        }
+
+        function renderLeaderboard() {
+            const body = document.getElementById('leaderboardBody');
+            const records = getRecords().sort((a, b) => b.netWorth - a.netWorth);
+            if (!records.length) {
+                body.innerHTML = '<tr><td colspan="7">No gameplay records yet.</td></tr>';
+                return;
+            }
+            body.innerHTML = records.map((record, index) => `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td>${escHtml(record.studentName || 'Unknown')}</td>
+                    <td>${escHtml(record.companyName || 'Untitled')}</td>
+                    <td>$${Number(record.netWorth || 0).toFixed(2)}</td>
+                    <td>${record.minesOwned || 0}</td>
+                    <td>${escHtml(record.strategyLabel || 'N/A')}</td>
+                    <td>${escHtml(record.updatedAt ? new Date(record.updatedAt).toLocaleString() : 'N/A')}</td>
+                </tr>
+            `).join('');
+        }
+
+        function escHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function renderRoster() {
+            const body = document.getElementById('rosterBody');
+            const students = dashboard.getAllStudents();
+            if (!students.length) {
+                body.innerHTML = '<tr><td colspan="8">No students added yet.</td></tr>';
+                return;
+            }
+
+            body.innerHTML = students.map(s => {
+                const id = escHtml(s.id);
+                const displayId = escHtml(s.displayId || s.id || '');
+                const name = escHtml(s.name || '');
+                const email = escHtml(s.email || '');
+                const level = Number(s.level) || 1;
+                return `
+                <tr>
+                    <td><input class="edit-input" data-field="displayId" data-id="${id}" value="${displayId}" aria-label="Student ID for ${name || 'student'}"></td>
+                    <td><input class="edit-input" data-field="name" data-id="${id}" value="${name}" aria-label="Name for ${name || 'student'}"></td>
+                    <td><input class="edit-input" data-field="email" data-id="${id}" value="${email}" aria-label="Email for ${name || 'student'}"></td>
+                    <td>
+                        <select class="edit-select" data-field="level" data-id="${id}" aria-label="Assigned level for ${name || 'student'}">
+                            <option value="1" ${level === 1 ? 'selected' : ''}>Level 1</option>
+                            <option value="2" ${level === 2 ? 'selected' : ''}>Level 2</option>
+                            <option value="3" ${level === 3 ? 'selected' : ''}>Level 3</option>
+                            <option value="4" ${level === 4 ? 'selected' : ''}>Level 4</option>
+                            <option value="5" ${level === 5 ? 'selected' : ''}>Level 5</option>
+                        </select>
+                    </td>
+                    <td>$${Number(s.gameState?.netWorth || 0).toFixed(2)}</td>
+                    <td>${Number(s.gameState?.round) || 1}</td>
+                    <td>${escHtml(s.gameState?.lastPlayed ? new Date(s.gameState.lastPlayed).toLocaleString() : 'Never')}</td>
+                    <td>
+                        <div class="inline-actions">
+                            <button class="btn-secondary" data-action="save" data-id="${id}">Save</button>
+                            <button class="btn-danger" data-action="delete" data-id="${id}">Delete</button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+            }).join('');
+        }
+
+        function refresh() {
+            renderPauseStatus();
+            renderStrictModeStatus();
+            renderStats();
+            renderRoster();
+            renderLeaderboard();
+            if (dashboard.isTempAllowlistMode()) renderAllowlistTable();
+        }
+
+        function saveRosterRow(studentId) {
+            const displayIdInput = document.querySelector(`input[data-field="displayId"][data-id="${CSS.escape(studentId)}"]`);
+            const nameInput = document.querySelector(`input[data-field="name"][data-id="${CSS.escape(studentId)}"]`);
+            const emailInput = document.querySelector(`input[data-field="email"][data-id="${CSS.escape(studentId)}"]`);
+            const levelInput = document.querySelector(`select[data-field="level"][data-id="${CSS.escape(studentId)}"]`);
+            const displayId = (displayIdInput?.value || '').trim();
+            const name = (nameInput?.value || '').trim();
+            const email = (emailInput?.value || '').trim();
+            const level = parseInt(levelInput?.value || '1', 10);
+
+            if (!name) {
+                alert('Name cannot be empty.');
+                return;
+            }
+
+            const result = dashboard.updateStudent(studentId, { displayId, name, email, level });
+            if (!result.success) {
+                alert(`Save failed: ${result.error || 'Unknown error'}`);
+                return;
+            }
+            refresh();
+        }
+
+        function deleteRosterRow(studentId) {
+            const student = dashboard.getStudent(studentId);
+            const displayName = student?.name || 'this student';
+            if (!confirm(`Delete ${displayName}? This cannot be undone.`)) return;
+            const result = dashboard.deleteStudent(studentId);
+            if (!result.success) {
+                alert(`Delete failed: ${result.error || 'Unknown error'}`);
+                return;
+            }
+            refresh();
+        }
+
+        document.getElementById('rosterBody').addEventListener('click', (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+            const action = target.getAttribute('data-action');
+            const studentId = target.getAttribute('data-id');
+            if (!action || !studentId) return;
+
+            if (action === 'save') saveRosterRow(studentId);
+            if (action === 'delete') deleteRosterRow(studentId);
+>>>>>>> origin/main
         });
         const topStrategy = Object.entries(byStrategy).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A';
 
@@ -325,6 +658,7 @@
         if (filterKey === 'level1')    filter = { source: 'level1' };
         if (filterKey === 'level2plus') filter = { source: 'level2' };
 
+<<<<<<< HEAD
         const records = LeaderboardStore.queryEntries(Object.keys(filter).length ? filter : undefined);
 
         if (!records.length) {
@@ -554,5 +888,190 @@
     // ── Init ──────────────────────────────────────────────────────────────────
     refresh();
 </script>
+=======
+        document.getElementById('refreshBtn').addEventListener('click', refresh);
+
+        document.getElementById('strictModeToggle').addEventListener('change', (event) => {
+            localStorage.setItem(STRICT_MODE_KEY, JSON.stringify({ enabled: !!event.target.checked }));
+            renderStrictModeStatus();
+        });
+
+        // =========================================================
+        // Teacher Allowlist Manager
+        // =========================================================
+
+        function getAllowlistFromStorage() {
+            try {
+                const raw = localStorage.getItem(dashboard.TEACHER_ALLOWLIST_STORAGE_KEY);
+                if (!raw) return new Set();
+                return new Set(
+                    String(raw).split(/[\n,]+/)
+                        .map(e => e.trim().toLowerCase())
+                        .filter(Boolean)
+                );
+            } catch (_) { return new Set(); }
+        }
+
+        function saveAllowlistToStorage(emailSet) {
+            try {
+                const arr = [...emailSet].filter(Boolean);
+                if (arr.length === 0) {
+                    localStorage.removeItem(dashboard.TEACHER_ALLOWLIST_STORAGE_KEY);
+                } else {
+                    localStorage.setItem(dashboard.TEACHER_ALLOWLIST_STORAGE_KEY, arr.join(','));
+                }
+            } catch (_) {}
+        }
+
+        function getStaticDefaults() {
+            return new Set(
+                TEMP_TEACHER_ALLOWLIST_STATIC
+                    .map(e => String(e || '').trim().toLowerCase())
+                    .filter(Boolean)
+            );
+        }
+
+        function validateTeacherEmail(email) {
+            const emailRe = /^[^\s@]+@[^\s@.][^\s@]*\.[^\s@]+$/;
+            if (!emailRe.test(email)) {
+                return { valid: false, reason: 'Invalid email format.' };
+            }
+            if (!email.endsWith('@education.wa.edu.au')) {
+                return { valid: false, reason: 'Email must be a staff @education.wa.edu.au address.' };
+            }
+            if (email.startsWith('student.') || email.includes('@student.')) {
+                return { valid: false, reason: 'Student addresses cannot be added as teacher accounts.' };
+            }
+            return { valid: true };
+        }
+
+        function showAllowlistMsg(text, isError) {
+            const el = document.getElementById('allowlistMsg');
+            el.textContent = text;
+            el.className = 'allowlist-msg ' + (isError ? 'error' : 'success');
+            el.style.display = text ? 'block' : 'none';
+        }
+
+        function renderAllowlistTable() {
+            const section = document.getElementById('teacherAccessSection');
+            if (!section) return;
+
+            if (!dashboard.isTempAllowlistMode()) {
+                section.style.display = 'none';
+                return;
+            }
+            section.style.display = '';
+
+            const staticDefaults = getStaticDefaults();
+            const localEntries = getAllowlistFromStorage();
+            const localOnly = new Set([...localEntries].filter(e => !staticDefaults.has(e)));
+
+            const tbody = document.getElementById('allowlistBody');
+            const rows = [];
+
+            staticDefaults.forEach(email => {
+                rows.push(`
+                    <tr>
+                        <td>${escHtml(email)}</td>
+                        <td><span class="muted">Built-in (edit code to remove)</span></td>
+                        <td></td>
+                    </tr>
+                `);
+            });
+
+            localOnly.forEach(email => {
+                rows.push(`
+                    <tr>
+                        <td>${escHtml(email)}</td>
+                        <td><span class="muted">This browser</span></td>
+                        <td>
+                            <button class="btn-danger"
+                                style="width:auto;padding:4px 10px;"
+                                data-action="remove-teacher"
+                                data-email="${escHtml(email)}"
+                                aria-label="Remove ${escHtml(email)} from allowlist">
+                                Remove
+                            </button>
+                        </td>
+                    </tr>
+                `);
+            });
+
+            if (rows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" class="muted">No teachers in allowlist yet. Add one above.</td></tr>';
+            } else {
+                tbody.innerHTML = rows.join('');
+            }
+        }
+
+        function addToAllowlist() {
+            const input = document.getElementById('newTeacherEmail');
+            const email = input.value.trim().toLowerCase();
+
+            if (!email) {
+                showAllowlistMsg('Please enter an email address.', true);
+                return;
+            }
+
+            const check = validateTeacherEmail(email);
+            if (!check.valid) {
+                showAllowlistMsg(check.reason, true);
+                return;
+            }
+
+            const staticDefaults = getStaticDefaults();
+            const localEntries = getAllowlistFromStorage();
+
+            if (staticDefaults.has(email) || localEntries.has(email)) {
+                showAllowlistMsg('This email is already in the allowlist.', true);
+                return;
+            }
+
+            localEntries.add(email);
+            saveAllowlistToStorage(localEntries);
+            input.value = '';
+            showAllowlistMsg('Added: ' + email, false);
+            renderAllowlistTable();
+        }
+
+        function removeFromAllowlist(email) {
+            const localEntries = getAllowlistFromStorage();
+            if (!localEntries.has(email)) {
+                showAllowlistMsg('Email not found in local allowlist.', true);
+                return;
+            }
+            if (!confirm('Remove ' + email + ' from the teacher allowlist?')) return;
+            localEntries.delete(email);
+            saveAllowlistToStorage(localEntries);
+            showAllowlistMsg('Removed: ' + email, false);
+            renderAllowlistTable();
+        }
+
+        document.getElementById('addTeacherBtn').addEventListener('click', addToAllowlist);
+
+        document.getElementById('newTeacherEmail').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') addToAllowlist();
+        });
+
+        document.getElementById('allowlistBody').addEventListener('click', (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+            if (target.getAttribute('data-action') !== 'remove-teacher') return;
+            const email = target.getAttribute('data-email');
+            if (email) removeFromAllowlist(email);
+        });
+
+        // =========================================================
+        // End Teacher Allowlist Manager
+        // =========================================================
+
+        (function init() {
+            const ok = enforceTeacherDashboardAccess();
+            if (!ok) return;
+            dashboard.loadFromLocalStorage();
+            refresh();
+        })();
+    </script>
+>>>>>>> origin/main
 </body>
 </html>
