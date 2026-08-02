@@ -102,19 +102,29 @@ document.addEventListener('DOMContentLoaded', async function() {
 });
 
 function setupEventListeners() {
-    document.getElementById('rollButton').addEventListener('click', playRound);
-    document.getElementById('saveButton').addEventListener('click', saveGame);
-    document.getElementById('loadButton').addEventListener('click', loadGame);
-    document.getElementById('resetButton').addEventListener('click', resetGame);
-    document.getElementById('saveMinePlanButton').addEventListener('click', saveMinePlan);
-    document.getElementById('saveIdentityButton').addEventListener('click', saveIdentity);
-    document.getElementById('competitionLogoutButton').addEventListener('click', logoutCompetitionSession);
+    const rollBtn = document.getElementById('rollButton');
+    const saveBtn = document.getElementById('saveButton');
+    const loadBtn = document.getElementById('loadButton');
+    const resetBtn = document.getElementById('resetButton');
+    const saveMinePlanBtn = document.getElementById('saveMinePlanButton');
+    const saveIdentityBtn = document.getElementById('saveIdentityButton');
+    const logoutBtn = document.getElementById('competitionLogoutButton');
+    const confirmPurchaseBtn = document.getElementById('confirmPurchase');
+    const cancelPurchaseBtn = document.getElementById('cancelPurchase');
+
+    if (rollBtn) rollBtn.addEventListener('click', playRound);
+    if (saveBtn) saveBtn.addEventListener('click', saveGame);
+    if (loadBtn) loadBtn.addEventListener('click', loadGame);
+    if (resetBtn) resetBtn.addEventListener('click', resetGame);
+    if (saveMinePlanBtn) saveMinePlanBtn.addEventListener('click', saveMinePlan);
+    if (saveIdentityBtn) saveIdentityBtn.addEventListener('click', saveIdentity);
+    if (logoutBtn) logoutBtn.addEventListener('click', logoutCompetitionSession);
 
     document.querySelectorAll('.modal-close').forEach(btn => {
         btn.addEventListener('click', closeAllModals);
     });
-    document.getElementById('confirmPurchase').addEventListener('click', confirmPurchase);
-    document.getElementById('cancelPurchase').addEventListener('click', closeAllModals);
+    if (confirmPurchaseBtn) confirmPurchaseBtn.addEventListener('click', confirmPurchase);
+    if (cancelPurchaseBtn) cancelPurchaseBtn.addEventListener('click', closeAllModals);
 
     window.addEventListener('click', function(event) {
         if (event.target.classList.contains('modal')) {
@@ -144,6 +154,7 @@ function ensureInvestmentPlansForOwnedMines() {
 
 function renderMines() {
     const container = document.getElementById('mines-container');
+    if (!container) return;
     const ownedMines = gameState.getOwnedMines();
     container.innerHTML = '';
 
@@ -170,6 +181,7 @@ function renderMines() {
 
 function renderMineShop() {
     const shop = document.getElementById('mine-shop');
+    if (!shop) return;
     const availableMines = gameState.getAvailableMinesForPurchase();
     shop.innerHTML = '';
 
@@ -198,6 +210,7 @@ function renderMineShop() {
 
 function renderMachinery() {
     const container = document.getElementById('machinery-list');
+    if (!container) return;
     if (gameState.machinery.length === 0) {
         container.innerHTML = '<p class="empty-state">No machinery owned yet.</p>';
         return;
@@ -205,6 +218,7 @@ function renderMachinery() {
     container.innerHTML = '';
     gameState.machinery.forEach((item, index) => {
         const config = gameState.gameConfig.machinery[item.id];
+        if (!config) return; // skip if config for this machinery no longer exists
         const resaleValue = Math.floor(item.purchasePrice * config.resaleValue);
         const element = document.createElement('div');
         element.className = 'machinery-item';
@@ -227,6 +241,7 @@ function renderMachinery() {
 
 function renderMachineryShop() {
     const shop = document.getElementById('machinery-shop');
+    if (!shop) return;
     const machineryList = Object.entries(gameState.gameConfig.machinery)
         .filter(([id]) => isMachineryAllowed(id));
     shop.innerHTML = '';
@@ -260,17 +275,28 @@ function renderStats() {
     const mineValue = gameState.getMineValue();
     const machineryValue = gameState.getMachineryValue();
 
-    document.getElementById('cash').textContent = `$${gameState.cash.toFixed(2)}`;
-    document.getElementById('netWorth').textContent = `$${netWorth.toFixed(2)}`;
-    document.getElementById('minesOwned').textContent = gameState.getOwnedMines().length;
-    document.getElementById('machineryCount').textContent = gameState.machinery.length;
-    document.getElementById('round').textContent = gameState.round;
+    const cashEl = document.getElementById('cash');
+    const netWorthEl = document.getElementById('netWorth');
+    const minesOwnedEl = document.getElementById('minesOwned');
+    const machineryCountEl = document.getElementById('machineryCount');
+    const roundEl = document.getElementById('round');
+    const summaryCashEl = document.getElementById('summary-cash');
+    const summaryMinesEl = document.getElementById('summary-mines');
+    const summaryMachineryEl = document.getElementById('summary-machinery');
+    const summaryNetWorthEl = document.getElementById('summary-networth');
+    const summaryTotalEl = document.getElementById('summary-total');
 
-    document.getElementById('summary-cash').textContent = `$${gameState.cash.toFixed(2)}`;
-    document.getElementById('summary-mines').textContent = `$${mineValue.toFixed(2)}`;
-    document.getElementById('summary-machinery').textContent = `$${machineryValue.toFixed(2)}`;
-    document.getElementById('summary-networth').textContent = `$${netWorth.toFixed(2)}`;
-    document.getElementById('summary-total').textContent = `$${gameState.totalProfitLoss.toFixed(2)}`;
+    if (cashEl) cashEl.textContent = `$${gameState.cash.toFixed(2)}`;
+    if (netWorthEl) netWorthEl.textContent = `$${netWorth.toFixed(2)}`;
+    if (minesOwnedEl) minesOwnedEl.textContent = gameState.getOwnedMines().length;
+    if (machineryCountEl) machineryCountEl.textContent = gameState.machinery.length;
+    if (roundEl) roundEl.textContent = gameState.round;
+
+    if (summaryCashEl) summaryCashEl.textContent = `$${gameState.cash.toFixed(2)}`;
+    if (summaryMinesEl) summaryMinesEl.textContent = `$${mineValue.toFixed(2)}`;
+    if (summaryMachineryEl) summaryMachineryEl.textContent = `$${machineryValue.toFixed(2)}`;
+    if (summaryNetWorthEl) summaryNetWorthEl.textContent = `$${netWorth.toFixed(2)}`;
+    if (summaryTotalEl) summaryTotalEl.textContent = `$${gameState.totalProfitLoss.toFixed(2)}`;
 }
 
 function renderFeaturesAndCosts() {
@@ -290,7 +316,9 @@ function renderFeaturesAndCosts() {
             .map(e => `${e.diceValue}: ${e.description}`)
             .join(', ')
         : 'Locked until Level 4';
-    document.getElementById('features-costs').innerHTML = `
+    const featuresCostsEl = document.getElementById('features-costs');
+    if (!featuresCostsEl) return;
+    featuresCostsEl.innerHTML = `
         <ul>
             <li><strong>Mines:</strong> ${mines}</li>
             <li><strong>Upgrades:</strong> ${upgrades || 'No mine upgrades at this level'}</li>
@@ -305,16 +333,23 @@ function renderLeaderboard() {
     const competition = getCompetitionContext();
     const isCompetitionLocked = !competition.canUseCompetitionFeatures;
     const lockMessage = document.getElementById('competition-lock-message');
+    const leaderboardSummary = document.getElementById('leaderboard-summary');
+    const leaderboardList = document.getElementById('leaderboard-list');
+
     if (isCompetitionLocked) {
-        lockMessage.textContent = 'Login required for competition features in Strict Classroom Mode. You can continue playing and saving your progress without competition features.';
-        lockMessage.classList.remove('hidden');
-        document.getElementById('leaderboard-summary').textContent = 'Competition leaderboard is locked until you log in from Home.';
-        document.getElementById('leaderboard-list').innerHTML = '<p class="empty-state">Competition login required.</p>';
+        if (lockMessage) {
+            lockMessage.textContent = 'Login required for competition features in Strict Classroom Mode. You can continue playing and saving your progress without competition features.';
+            lockMessage.classList.remove('hidden');
+        }
+        if (leaderboardSummary) leaderboardSummary.textContent = 'Competition leaderboard is locked until you log in from Home.';
+        if (leaderboardList) leaderboardList.innerHTML = '<p class="empty-state">Competition login required.</p>';
         return;
     }
 
-    lockMessage.classList.add('hidden');
-    lockMessage.textContent = '';
+    if (lockMessage) {
+        lockMessage.classList.add('hidden');
+        lockMessage.textContent = '';
+    }
     const records = getClassRecords();
     const leaderboard = [...records].sort((a, b) => b.netWorth - a.netWorth).slice(0, 10);
     const wealthiest = leaderboard[0];
@@ -322,19 +357,21 @@ function renderLeaderboard() {
     const mostMines = [...records].sort((a, b) => b.minesOwned - a.minesOwned)[0];
     const profitable = [...records].sort((a, b) => b.averageRoundProfit - a.averageRoundProfit)[0];
 
-    document.getElementById('leaderboard-summary').innerHTML = `
-        Wealthiest: ${wealthiest ? `${escapeHtml(wealthiest.companyName)} ($${wealthiest.netWorth.toFixed(2)})` : 'N/A'}<br>
-        Most mines: ${mostMines ? `${escapeHtml(mostMines.companyName)} (${mostMines.minesOwned})` : 'N/A'}<br>
-        Most profitable strategy: ${profitable ? `${escapeHtml(profitable.companyName)} (${escapeHtml(profitable.strategyLabel || 'Balanced')})` : 'N/A'}<br>
-        Average class wealth: $${avgWealth.toFixed(2)}
-    `;
+    if (leaderboardSummary) {
+        leaderboardSummary.innerHTML = `
+            Wealthiest: ${wealthiest ? `${escapeHtml(wealthiest.companyName)} ($${wealthiest.netWorth.toFixed(2)})` : 'N/A'}<br>
+            Most mines: ${mostMines ? `${escapeHtml(mostMines.companyName)} (${mostMines.minesOwned})` : 'N/A'}<br>
+            Most profitable strategy: ${profitable ? `${escapeHtml(profitable.companyName)} (${escapeHtml(profitable.strategyLabel || 'Balanced')})` : 'N/A'}<br>
+            Average class wealth: $${avgWealth.toFixed(2)}
+        `;
+    }
 
-    const list = document.getElementById('leaderboard-list');
+    if (!leaderboardList) return;
     if (!leaderboard.length) {
-        list.innerHTML = '<p class="empty-state">No classroom records yet.</p>';
+        leaderboardList.innerHTML = '<p class="empty-state">No classroom records yet.</p>';
         return;
     }
-    list.innerHTML = leaderboard.map((record, index) => `
+    leaderboardList.innerHTML = leaderboard.map((record, index) => `
         <div class="leaderboard-item">
             <span>${index + 1}. ${escapeHtml(record.companyName)}</span>
             <span>$${record.netWorth.toFixed(2)}</span>
@@ -366,57 +403,71 @@ function updateAllUI() {
 
 function openMineModal(mine) {
     currentMineForInvestment = mine;
-    document.getElementById('modalMineTitle').textContent = mine.name;
-    document.getElementById('modalMineDesc').textContent = mine.description;
-    document.getElementById('modalMaxInvestment').textContent = `Max Investment: $${mine.maxInvestmentPerRound}/round`;
+    const mineTitleEl = document.getElementById('modalMineTitle');
+    const mineDescEl = document.getElementById('modalMineDesc');
+    const mineMaxEl = document.getElementById('modalMaxInvestment');
+    if (mineTitleEl) mineTitleEl.textContent = mine.name;
+    if (mineDescEl) mineDescEl.textContent = mine.description;
+    if (mineMaxEl) mineMaxEl.textContent = `Max Investment: $${mine.maxInvestmentPerRound}/round`;
 
     const upgradesContainer = document.getElementById('modalUpgrades');
     const availableUpgrades = Object.entries(gameState.gameConfig.mineUpgrades)
         .filter(([id]) => !mine.upgrades.includes(id) && isMineUpgradeAllowed(id));
-    if (!availableUpgrades.length) {
-        upgradesContainer.innerHTML = '<p class="empty-state">No mine upgrades available at this level, or all unlocked upgrades applied.</p>';
-    } else {
-        upgradesContainer.innerHTML = availableUpgrades.map(([id, upgrade]) => {
-            const canAfford = gameState.cash >= upgrade.cost;
-            return `
-                <div class="upgrade-item">
-                    <div>
-                        <div class="upgrade-name">${upgrade.icon} ${upgrade.name}</div>
-                        <div style="font-size:11px;color:#666;">${upgrade.description}</div>
+    if (upgradesContainer) {
+        if (!availableUpgrades.length) {
+            upgradesContainer.innerHTML = '<p class="empty-state">No mine upgrades available at this level, or all unlocked upgrades applied.</p>';
+        } else {
+            upgradesContainer.innerHTML = availableUpgrades.map(([id, upgrade]) => {
+                const canAfford = gameState.cash >= upgrade.cost;
+                return `
+                    <div class="upgrade-item">
+                        <div>
+                            <div class="upgrade-name">${upgrade.icon} ${upgrade.name}</div>
+                            <div style="font-size:11px;color:#666;">${upgrade.description}</div>
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            <span class="upgrade-cost">$${upgrade.cost}</span>
+                            <button class="shop-btn" ${!canAfford ? 'disabled' : ''} data-upgrade-id="${id}">Apply</button>
+                        </div>
                     </div>
-                    <div style="display:flex;gap:8px;">
-                        <span class="upgrade-cost">$${upgrade.cost}</span>
-                        <button class="shop-btn" ${!canAfford ? 'disabled' : ''} data-upgrade-id="${id}">Apply</button>
-                    </div>
-                </div>
-            `;
-        }).join('');
+                `;
+            }).join('');
 
-        upgradesContainer.querySelectorAll('[data-upgrade-id]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                applyUpgrade(mine.id, e.target.dataset.upgradeId);
+            upgradesContainer.querySelectorAll('[data-upgrade-id]').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    applyUpgrade(mine.id, e.target.dataset.upgradeId);
+                });
             });
-        });
+        }
     }
 
     const currentPlan = gameState.investmentPlans[mine.id] || { safe: 0, medium: 0, deep: 0 };
-    document.getElementById('modalInvestments').innerHTML = Object.entries(gameState.gameConfig.digTypes).map(([digType, dig]) => `
-        <div class="investment-input-group">
-            <label for="inv-${digType}">${dig.icon} ${dig.name}</label>
-            <input type="number" id="inv-${digType}" min="0" step="1" value="${currentPlan[digType] || 0}">
-        </div>
-    `).join('');
+    const modalInvestmentsEl = document.getElementById('modalInvestments');
+    if (modalInvestmentsEl) {
+        modalInvestmentsEl.innerHTML = Object.entries(gameState.gameConfig.digTypes).map(([digType, dig]) => `
+            <div class="investment-input-group">
+                <label for="inv-${digType}">${dig.icon} ${dig.name}</label>
+                <input type="number" id="inv-${digType}" min="0" step="1" value="${currentPlan[digType] || 0}">
+            </div>
+        `).join('');
+    }
 
-    document.getElementById('mineModal').classList.add('active');
+    const mineModal = document.getElementById('mineModal');
+    if (mineModal) mineModal.classList.add('active');
 }
 
 function openPurchaseModal(type, itemId, itemName, cost) {
     pendingPurchase = { type, itemId, itemName, cost };
-    document.getElementById('purchaseTitle').textContent = `Purchase ${itemName}`;
-    document.getElementById('purchaseDesc').textContent = `Are you sure you want to purchase ${itemName}?`;
-    document.getElementById('purchasePrice').textContent = `Cost: $${cost}`;
-    document.getElementById('confirmPurchase').disabled = gameState.cash < cost;
-    document.getElementById('purchaseModal').classList.add('active');
+    const titleEl = document.getElementById('purchaseTitle');
+    const descEl = document.getElementById('purchaseDesc');
+    const priceEl = document.getElementById('purchasePrice');
+    const confirmBtn = document.getElementById('confirmPurchase');
+    const purchaseModal = document.getElementById('purchaseModal');
+    if (titleEl) titleEl.textContent = `Purchase ${itemName}`;
+    if (descEl) descEl.textContent = `Are you sure you want to purchase ${itemName}?`;
+    if (priceEl) priceEl.textContent = `Cost: $${cost}`;
+    if (confirmBtn) confirmBtn.disabled = gameState.cash < cost;
+    if (purchaseModal) purchaseModal.classList.add('active');
 }
 
 function closeAllModals() {
@@ -605,7 +656,9 @@ function playRound() {
 }
 
 function displayDiceRoll(die1, die2, total) {
-    document.getElementById('dice-display').innerHTML = `
+    const diceDisplay = document.getElementById('dice-display');
+    if (!diceDisplay) return;
+    diceDisplay.innerHTML = `
         🎲 Dice 1: <strong>${die1}</strong><br>
         🎲 Dice 2: <strong>${die2}</strong><br>
         ➕ Total: <strong>${total}</strong>
@@ -614,6 +667,7 @@ function displayDiceRoll(die1, die2, total) {
 
 function displayResults(results, totalProfit, eventMessage) {
     const container = document.getElementById('results-container');
+    if (!container) return;
     let html = eventMessage ? `<div class="result-card">${eventMessage}</div>` : '';
     results.forEach(result => {
         const statusClass = result.success ? '' : 'loss';
@@ -635,9 +689,12 @@ function displayResults(results, totalProfit, eventMessage) {
 }
 
 function saveIdentity(showAlert = true) {
-    gameState.player.studentId = document.getElementById('studentIdInput').value.trim();
-    gameState.player.studentName = document.getElementById('studentNameInput').value.trim();
-    gameState.player.companyName = document.getElementById('companyNameInput').value.trim() || DEFAULT_COMPANY_NAME;
+    const studentIdEl = document.getElementById('studentIdInput');
+    const studentNameEl = document.getElementById('studentNameInput');
+    const companyNameEl = document.getElementById('companyNameInput');
+    gameState.player.studentId = studentIdEl ? studentIdEl.value.trim() : gameState.player.studentId;
+    gameState.player.studentName = studentNameEl ? studentNameEl.value.trim() : gameState.player.studentName;
+    gameState.player.companyName = (companyNameEl ? companyNameEl.value.trim() : '') || DEFAULT_COMPANY_NAME;
     gameState.saveToLocalStorage();
     updateAllUI();
     syncPlayerRecord();
@@ -651,9 +708,12 @@ function hydrateIdentityInputs() {
     if (!gameState.player.companyName || gameState.player.companyName === DEFAULT_COMPANY_NAME) {
         gameState.player.companyName = suggested[0] || DEFAULT_COMPANY_NAME;
     }
-    document.getElementById('studentIdInput').value = gameState.player.studentId || '';
-    document.getElementById('studentNameInput').value = gameState.player.studentName || '';
-    document.getElementById('companyNameInput').value = gameState.player.companyName || '';
+    const studentIdEl = document.getElementById('studentIdInput');
+    const studentNameEl = document.getElementById('studentNameInput');
+    const companyNameEl = document.getElementById('companyNameInput');
+    if (studentIdEl) studentIdEl.value = gameState.player.studentId || '';
+    if (studentNameEl) studentNameEl.value = gameState.player.studentName || '';
+    if (companyNameEl) companyNameEl.value = gameState.player.companyName || '';
 }
 
 function parseJsonStorage(storageType, key) {
@@ -737,8 +797,10 @@ function applyCompetitionSessionToIdentity(updateInputs = true) {
     gameState.player.studentId = competition.matchedStudent.displayId || competition.matchedStudent.id;
     gameState.player.studentName = competition.matchedStudent.name;
     if (updateInputs) {
-        document.getElementById('studentIdInput').value = competition.matchedStudent.displayId || competition.matchedStudent.id;
-        document.getElementById('studentNameInput').value = competition.matchedStudent.name;
+        const studentIdEl = document.getElementById('studentIdInput');
+        const studentNameEl = document.getElementById('studentNameInput');
+        if (studentIdEl) studentIdEl.value = competition.matchedStudent.displayId || competition.matchedStudent.id;
+        if (studentNameEl) studentNameEl.value = competition.matchedStudent.name;
     }
     return competition;
 }
@@ -746,6 +808,7 @@ function applyCompetitionSessionToIdentity(updateInputs = true) {
 function updateCompetitionStatus() {
     const competition = applyCompetitionSessionToIdentity(false);
     const statusEl = document.getElementById('competition-status');
+    if (!statusEl) return;
     if (competition.isLoggedIn && competition.matchedStudent) {
         statusEl.textContent = `Competition Status: Logged in as ${competition.matchedStudent.name} (${competition.matchedStudent.displayId || competition.matchedStudent.id})`;
         return;
@@ -761,8 +824,11 @@ function updateCompetitionStatus() {
 
 function logoutCompetitionSession() {
     sessionStorage.removeItem(STUDENT_SESSION_KEY);
-    document.getElementById('studentIdInput').value = '';
-    document.getElementById('studentNameInput').value = '';
+    sessionStorage.removeItem(M365_SESSION_KEY);
+    const studentIdEl = document.getElementById('studentIdInput');
+    const studentNameEl = document.getElementById('studentNameInput');
+    if (studentIdEl) studentIdEl.value = '';
+    if (studentNameEl) studentNameEl.value = '';
     gameState.player.studentId = '';
     gameState.player.studentName = '';
     gameState.saveToLocalStorage();
@@ -889,9 +955,10 @@ function isTeacherPaused() {
 
 function updatePauseStateFromStorage() {
     const paused = isTeacherPaused();
-    document.getElementById('rollButton').disabled = paused;
+    const rollBtn = document.getElementById('rollButton');
     const banner = document.getElementById('pause-banner');
-    banner.classList.toggle('hidden', !paused);
+    if (rollBtn) rollBtn.disabled = paused;
+    if (banner) banner.classList.toggle('hidden', !paused);
 }
 
 function saveGame() {

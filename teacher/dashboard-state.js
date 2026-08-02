@@ -229,6 +229,9 @@ class TeacherDashboard {
     async loadConfig(configPath = '../shared/game-config.json') {
         try {
             const response = await fetch(configPath);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
             this.gameConfig = await response.json();
             return true;
         } catch (error) {
