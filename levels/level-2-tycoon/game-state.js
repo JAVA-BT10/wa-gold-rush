@@ -6,7 +6,7 @@
 class GameState {
     constructor() {
         this.round = 1;
-        this.cash = 100;
+        this.cash = 200;
         this.gameConfig = null;
         this.assignedLevel = 2;
         this.player = {
@@ -29,9 +29,6 @@ class GameState {
         this.machinery = [];
         
         // Upgrade tracking (per mine)
-        this.mineUpgrades = {};
-        
-        // Game history
         this.roundHistory = [];
         this.totalProfitLoss = 0;
         this.investmentPlans = {};
@@ -40,9 +37,12 @@ class GameState {
     /**
      * Initialize game state from config
      */
-    async loadConfig(configPath = 'shared/game-config.json') {
+    async loadConfig(configPath = '../../shared/game-config.json') {
         try {
             const response = await fetch(configPath);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
             this.gameConfig = await response.json();
             this.cash = this.gameConfig?.levels?.['2']?.startingCash || this.cash;
             console.log('Game config loaded:', this.gameConfig);
@@ -84,6 +84,10 @@ class GameState {
      * Get all owned mines
      */
     getOwnedMines() {
+        if (!this.gameConfig?.mines) {
+            return [];
+        }
+
         return Object.entries(this.ownedMines)
             .filter(([id, mine]) => mine.owned)
             .map(([id, mine]) => {
@@ -100,18 +104,23 @@ class GameState {
      * Get all available mines for purchase
      */
     getAvailableMinesForPurchase() {
+        if (!this.gameConfig?.mines) {
+            return [];
+        }
+
         return Object.entries(this.gameConfig.mines)
             .filter(([id]) => (!this.ownedMines[id] || !this.ownedMines[id].owned) && this.isMineUnlocked(id))
             .map(([id, mine]) => mine);
     }
 
     isMineUnlocked(mineId) {
-        if (mineId === 'leonora') {
-            return !!this.ownedMines.kalgoorlie?.owned;
+        if (!this.gameConfig?.mines?.[mineId]) {
+            return false;
         }
-        if (mineId === 'laverton') {
-            return !!this.ownedMines.leonora?.owned;
-        }
+        const level = this.assignedLevel || 2;
+        if (mineId === 'kalgoorlie' && level < 3) return false;
+        if (mineId === 'leonora') return level >= 4 && !!this.ownedMines.kalgoorlie?.owned;
+        if (mineId === 'laverton') return level >= 4 && !!this.ownedMines.leonora?.owned;
         return true;
     }
 
@@ -119,6 +128,10 @@ class GameState {
      * Purchase a new mine
      */
     purchaseMine(mineId) {
+        if (!this.gameConfig?.mines) {
+            return { success: false, error: 'Game configuration not loaded' };
+        }
+
         const mine = this.gameConfig.mines[mineId];
         
         if (!mine) {
@@ -156,6 +169,10 @@ class GameState {
      * Upgrade a mine
      */
     upgradeMine(mineId, upgradeId) {
+        if (!this.gameConfig?.mineUpgrades || !this.gameConfig?.mines) {
+            return { success: false, error: 'Game configuration not loaded' };
+        }
+
         const upgrade = this.gameConfig.mineUpgrades[upgradeId];
         const mine = this.ownedMines[mineId];
         
@@ -195,6 +212,10 @@ class GameState {
      * Purchase machinery
      */
     purchaseMachinery(machineryId) {
+        if (!this.gameConfig?.machinery) {
+            return { success: false, error: 'Game configuration not loaded' };
+        }
+
         const machinery = this.gameConfig.machinery[machineryId];
         
         if (!machinery) {
@@ -235,6 +256,10 @@ class GameState {
      * Sell machinery
      */
     sellMachinery(machineryIndex) {
+        if (!this.gameConfig?.machinery) {
+            return { success: false, error: 'Game configuration not loaded' };
+        }
+
         if (machineryIndex < 0 || machineryIndex >= this.machinery.length) {
             return { success: false, error: 'Machinery not found' };
         }
@@ -263,6 +288,10 @@ class GameState {
      * Get total machinery profit bonus
      */
     getTotalMachineryBonus() {
+        if (!this.gameConfig?.machinery) {
+            return 0;
+        }
+
         let totalBonus = 0;
         this.machinery.forEach(item => {
             const config = this.gameConfig.machinery[item.id];
@@ -275,6 +304,10 @@ class GameState {
      * Calculate mine value (purchase price)
      */
     getMineValue() {
+        if (!this.gameConfig?.mines) {
+            return 0;
+        }
+
         let value = 0;
         Object.entries(this.ownedMines).forEach(([mineId, mine]) => {
             if (mine.owned) {
@@ -288,6 +321,10 @@ class GameState {
      * Calculate machinery value (at resale value)
      */
     getMachineryValue() {
+        if (!this.gameConfig?.machinery) {
+            return 0;
+        }
+
         let value = 0;
         this.machinery.forEach(item => {
             const config = this.gameConfig.machinery[item.id];
@@ -307,7 +344,14 @@ class GameState {
      * Get dig type with applied mine upgrades
      */
     getDigTypeMultiplier(mineId, digType) {
+        if (!this.gameConfig?.digTypes || !this.gameConfig?.mines) {
+            return 0;
+        }
+
         const digConfig = this.gameConfig.digTypes[digType];
+        if (!digConfig) {
+            return 0;
+        }
         let multiplier = digConfig.multiplier;
         
         // Check mine-specific overrides (like Leonora's 500% Deep Vein)
@@ -347,51 +391,6 @@ class GameState {
         }
 
         return profit;
-    }
-
-    /**
-     * Record round results
-     */
-    recordRound(roundResults) {
-        const totalProfit = roundResults.reduce((sum, result) => sum + result.profit, 0);
-        this.cash += totalProfit;
-        this.totalProfitLoss += totalProfit;
-        
-        this.roundHistory.push({
-            round: this.round,
-            results: roundResults,
-            totalProfit: totalProfit,
-            cashAfter: this.cash,
-            netWorth: this.getNetWorth()
-        });
-        
-        this.round++;
-        
-        return {
-            totalProfit: totalProfit,
-            newCash: this.cash,
-            netWorth: this.getNetWorth()
-        };
-    }
-
-    /**
-     * Get game summary
-     */
-    getSummary() {
-        return {
-            round: this.round,
-            cash: this.cash,
-            assignedLevel: this.assignedLevel,
-            player: this.player,
-            ownedMines: this.getOwnedMines(),
-            machinery: this.machinery.map(item => this.gameConfig.machinery[item.id]),
-            mineValue: this.getMineValue(),
-            machineryValue: this.getMachineryValue(),
-            netWorth: this.getNetWorth(),
-            totalProfitLoss: this.totalProfitLoss,
-            roundHistory: this.roundHistory,
-            investmentPlans: this.investmentPlans
-        };
     }
 
     /**
@@ -454,7 +453,7 @@ class GameState {
      */
     reset() {
         this.round = 1;
-        this.cash = this.gameConfig?.levels?.['2']?.startingCash || 100;
+        this.cash = this.gameConfig?.levels?.['2']?.startingCash || 200;
         this.assignedLevel = 2;
         this.player = {
             studentId: '',
@@ -470,7 +469,6 @@ class GameState {
             }
         };
         this.machinery = [];
-        this.mineUpgrades = {};
         this.roundHistory = [];
         this.totalProfitLoss = 0;
         this.investmentPlans = {};

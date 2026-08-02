@@ -6,6 +6,22 @@ body {
     padding: 20px;
 }
 
+.skip-link {
+    position: absolute;
+    top: -40px;
+    left: 10px;
+    background: #1a73e8;
+    color: #fff;
+    padding: 8px 12px;
+    border-radius: 4px;
+    text-decoration: none;
+    z-index: 1000;
+}
+
+.skip-link:focus {
+    top: 10px;
+}
+
 .container {
     max-width: 900px;
     margin: auto;
@@ -100,37 +116,46 @@ h1 {
 }
 
 .btn-play-link,
-.btn-teacher-link {
+.btn-teacher-link,
+.btn-play,
+.btn-teacher {
     display: inline-block;
     text-decoration: none;
     border: none;
     border-radius: 5px;
     font-size: 16px;
     font-weight: bold;
+    cursor: pointer;
     transition: all 0.3s ease;
 }
 
-.btn-play-link {
+.btn-play-link,
+.btn-play {
     background: #f4b400;
     color: white;
     padding: 12px 30px;
 }
 
 .btn-play-link:hover,
-.btn-play-link:focus-visible {
+.btn-play-link:focus-visible,
+.btn-play:hover,
+.btn-play:focus-visible {
     background: #d99800;
     transform: scale(1.05);
     outline: none;
 }
 
-.btn-teacher-link {
+.btn-teacher-link,
+.btn-teacher {
     background: #2e7d32;
     color: white;
     padding: 12px 30px;
 }
 
 .btn-teacher-link:hover,
-.btn-teacher-link:focus-visible {
+.btn-teacher-link:focus-visible,
+.btn-teacher:hover,
+.btn-teacher:focus-visible {
     background: #1b5e20;
     transform: scale(1.05);
     outline: none;
@@ -182,4 +207,57 @@ h1 {
     .container { padding: 20px; }
     h1 { font-size: 36px; }
     .levels-grid { grid-template-columns: 1fr; }
+}
+
+.competition-login {
+    background: #f9f4e3;
+    border: 2px solid #f4b400;
+    border-radius: 10px;
+    padding: 20px;
+    margin-top: 10px;
+}
+
+.competition-login h2 {
+    margin-top: 0;
+    color: #1a1a1a;
+}
+
+.login-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin: 12px 0;
+}
+
+.login-grid label {
+    font-size: 13px;
+    color: #444;
+    font-weight: bold;
+}
+
+.login-grid input {
+    width: 100%;
+    margin-top: 6px;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    box-sizing: border-box;
+}
+
+.login-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.login-actions .btn-play,
+.login-actions .btn-teacher {
+    width: auto;
+}
+
+#competitionLoginMessage {
+    margin: 0;
+    color: #444;
+    font-size: 13px;
 }

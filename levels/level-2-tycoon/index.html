@@ -28,11 +28,11 @@
         <div class="stats-bar">
             <div class="stat-item">
                 <span class="stat-label">Cash</span>
-                <span class="stat-value" id="cash">$200.00</span>
+                <span class="stat-value" id="cash">$0.00</span>
             </div>
             <div class="stat-item">
                 <span class="stat-label">Net Worth</span>
-                <span class="stat-value" id="netWorth">$200.00</span>
+                <span class="stat-value" id="netWorth">$0.00</span>
             </div>
             <div class="stat-item">
                 <span class="stat-label">Mines Owned</span>
@@ -93,12 +93,16 @@
 
                 <section class="panel-section">
                     <h2>🏢 Company & Student Identity</h2>
+                    <p id="competition-status" class="competition-status">Competition Status: Free-play mode</p>
+                    <p class="panel-note">Log in for competition from the <a href="../../index.html">Home page</a>. Your session carries over automatically.</p>
                     <div class="identity-grid">
                         <label>Student ID <input id="studentIdInput" type="text" maxlength="30" placeholder="e.g. STU001"></label>
                         <label>Student Name <input id="studentNameInput" type="text" maxlength="50" placeholder="e.g. Alex"></label>
                         <label>Company Name <input id="companyNameInput" type="text" maxlength="50" placeholder="e.g. Perth Prospectors"></label>
                     </div>
                     <button id="saveIdentityButton" class="btn-secondary">Save Identity</button>
+                    <button id="competitionLogoutButton" class="btn-secondary">Log Out of Competition</button>
+                    <a class="btn-cta-nav" href="../../index.html">🏠 Go to Home Login</a>
                 </section>
 
                 <!-- MACHINERY SHOP -->
@@ -114,11 +118,11 @@
                     <h2>📊 Financial Summary</h2>
                     <div class="summary-row">
                         <span>Cash:</span>
-                        <span class="summary-value" id="summary-cash">$200.00</span>
+                        <span class="summary-value" id="summary-cash">$0.00</span>
                     </div>
                     <div class="summary-row">
                         <span>Mine Value:</span>
-                        <span class="summary-value" id="summary-mines">$100.00</span>
+                        <span class="summary-value" id="summary-mines">$0.00</span>
                     </div>
                     <div class="summary-row">
                         <span>Machinery Value:</span>
@@ -126,7 +130,7 @@
                     </div>
                     <div class="summary-row total">
                         <span>Net Worth:</span>
-                        <span class="summary-value" id="summary-networth">$300.00</span>
+                        <span class="summary-value" id="summary-networth">$0.00</span>
                     </div>
                     <div class="summary-row">
                         <span>Total Profit/Loss:</span>
@@ -141,6 +145,7 @@
 
                 <section class="panel-section">
                     <h2>🏆 Local Classroom Leaderboard</h2>
+                    <p id="competition-lock-message" class="competition-lock-message hidden"></p>
                     <div id="leaderboard-summary" class="leaderboard-summary"></div>
                     <div id="leaderboard-list"></div>
                 </section>

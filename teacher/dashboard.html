@@ -22,6 +22,13 @@
         th { background: #f9f9f9; }
         .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
         .muted { color: #666; font-size: 12px; }
+        .inline-actions { display: flex; gap: 6px; align-items: center; }
+        .inline-actions button { width: auto; padding: 6px 10px; }
+        .edit-input { width: 100%; margin: 0; padding: 6px; }
+        .edit-select { width: 100%; margin: 0; padding: 6px; }
+        .toggle-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; }
+        .toggle-row input[type="checkbox"] { width: auto; margin-top: 2px; }
+        .toggle-copy strong { display: block; margin-bottom: 4px; }
         .tab-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
         .tab-bar button { width: auto; padding: 6px 14px; background: #eee; color: #333; }
         .tab-bar button.active { background: #f4b400; color: #fff; }
@@ -54,13 +61,22 @@
             <button id="resumeClassBtn" class="btn-secondary" style="width:auto;padding:8px 16px;">▶ Resume Gameplay</button>
             <button id="refreshBtn"     class="btn"           style="width:auto;padding:8px 16px;">🔄 Refresh Stats</button>
         </div>
+        <label class="toggle-row" for="strictModeToggle">
+            <input id="strictModeToggle" type="checkbox">
+            <span class="toggle-copy">
+                <strong>Strict Classroom Mode (Competition Lock)</strong>
+                <span class="muted">When ON: students can still play and save, but leaderboard/class rankings/records participation requires login. When OFF: all features remain available without login.</span>
+            </span>
+        </label>
         <p id="pauseStatus" class="muted"></p>
+        <p id="strictModeStatus" class="muted"></p>
     </section>
 
     <!-- ── Add Student ────────────────────────────────────── -->
     <section class="card">
         <h2>Add Student</h2>
         <div class="grid">
+            <label>Student ID (optional) <input id="studentDisplayId" type="text" placeholder="e.g. STU001"></label>
             <label>Name <input id="studentName" type="text" placeholder="Student name"></label>
             <label>Email (optional) <input id="studentEmail" type="email" placeholder="student@example.com"></label>
             <label>Assigned Level
@@ -206,6 +222,7 @@
 <script src="dashboard-state.js"></script>
 <script>
     const PAUSE_STATE_KEY = 'wa_gold_rush_pause_state';
+    const STRICT_MODE_KEY = 'wa_gold_rush_strict_mode';
     const dashboard = new TeacherDashboard();
     dashboard.loadFromLocalStorage();
 
@@ -220,6 +237,22 @@
         document.getElementById('pauseStatus').textContent = paused
             ? '⏸ Gameplay is currently paused.'
             : '▶ Gameplay is active.';
+    }
+
+    function isStrictModeEnabled() {
+        try {
+            return !!JSON.parse(localStorage.getItem(STRICT_MODE_KEY))?.enabled;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function renderStrictModeStatus() {
+        const strictModeEnabled = isStrictModeEnabled();
+        document.getElementById('strictModeToggle').checked = strictModeEnabled;
+        document.getElementById('strictModeStatus').textContent = strictModeEnabled
+            ? 'Competition lock is ON. Login is required for leaderboard, rankings, and shared records.'
+            : 'Competition lock is OFF. Competition features remain open.';
     }
 
     function renderStats() {
@@ -322,6 +355,7 @@
         entries.forEach(e => dashboard.syncFromPlayerRecord(e));
 
         renderPauseStatus();
+        renderStrictModeStatus();
         renderStats();
         renderStudentTable();
         renderLeaderboard(currentLeaderboardFilter);
@@ -347,10 +381,12 @@
         const name = document.getElementById('studentName').value.trim();
         if (!name) { alert('Student name is required.'); return; }
         dashboard.addStudent({
+            displayId: document.getElementById('studentDisplayId').value.trim(),
             name,
             email: document.getElementById('studentEmail').value.trim(),
             level: parseInt(document.getElementById('studentLevel').value, 10)
         });
+        document.getElementById('studentDisplayId').value = '';
         document.getElementById('studentName').value  = '';
         document.getElementById('studentEmail').value = '';
         refresh();
@@ -457,19 +493,27 @@
 
     // ── Bulk import ───────────────────────────────────────────────────────────
 
+    document.getElementById('importFormat').addEventListener('change', function () {
+        const textarea = document.getElementById('bulkInput');
+        if (this.value === 'json') {
+            textarea.placeholder = '[{"name":"Alex","email":"alex@school.edu","level":2},{"name":"Sam","email":"","level":1}]';
+        } else {
+            textarea.placeholder = 'name,email,level\nAlex,alex@school.edu,2\nSam,,1';
+        }
+    });
+
     document.getElementById('importBtn').addEventListener('click', () => {
         const data = document.getElementById('bulkInput').value.trim();
         if (!data) { alert('Paste CSV or JSON data first.'); return; }
         const format = document.getElementById('importFormat').value;
         const resultDiv = document.getElementById('importResult');
         try {
-            const { added, skipped, errors } = dashboard.bulkImportStudents(data, format);
+            const { added, skipped } = dashboard.bulkImportStudents(data, format);
             const lines = [];
             if (added.length)   lines.push(`✅ Added ${added.length} student(s).`);
-            if (skipped.length) lines.push(`⚠️ Skipped ${skipped.length} duplicate(s): ${skipped.join(', ')}`);
-            if (errors.length)  lines.push(`❌ Errors: ${errors.join('; ')}`);
-            resultDiv.innerHTML = lines.join('<br>');
-            resultDiv.className = errors.length ? 'alert-box alert-error' : 'alert-box alert-success';
+            if (skipped.length) lines.push(`⚠️ Skipped ${skipped.length} row(s): ${skipped.map(s => `Row ${s.row}: ${s.reason}`).join('; ')}`);
+            resultDiv.innerHTML = lines.join('<br>') || 'No changes.';
+            resultDiv.className = 'alert-box alert-success';
             refresh();
         } catch (error) {
             resultDiv.textContent = `Import failed: ${error.message}`;
@@ -490,6 +534,11 @@
     });
 
     document.getElementById('refreshBtn').addEventListener('click', refresh);
+
+    document.getElementById('strictModeToggle').addEventListener('change', (event) => {
+        localStorage.setItem(STRICT_MODE_KEY, JSON.stringify({ enabled: !!event.target.checked }));
+        renderStrictModeStatus();
+    });
 
     // ── Leaderboard tabs ──────────────────────────────────────────────────────
 

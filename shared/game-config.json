@@ -12,7 +12,7 @@
       "features": ["dice_rolls", "single_dig_type"]
     },
     "2": {
-      "name": "Mining Tycoon",
+      "name": "Goldfields Venture",
       "description": "Multiple mines, upgrades, machinery, unending growth",
       "maxRounds": null,
       "roundsUnending": true,
@@ -94,7 +94,6 @@
       "riskLevel": "low",
       "description": "Your first mine. Safe and reliable.",
       "successMultiplier": 1.0,
-      "available": true,
       "owned": true
     },
     "coolgardie": {
@@ -109,7 +108,6 @@
       "riskLevel": "medium",
       "description": "Second mine location. Moderate investment potential.",
       "successMultiplier": 1.0,
-      "available": true,
       "owned": false
     },
     "kalgoorlie": {
@@ -124,7 +122,6 @@
       "riskLevel": "medium",
       "description": "Major goldfields location. Higher investment ceiling.",
       "successMultiplier": 1.0,
-      "available": true,
       "owned": false
     },
     "leonora": {
@@ -140,7 +137,6 @@
       "description": "High-risk, high-reward region. Deep Vein Dig is 500%.",
       "successMultiplier": 1.0,
       "deepVeinMultiplier": 5.0,
-      "available": false,
       "owned": false
     },
     "laverton": {
@@ -157,7 +153,6 @@
       "successMultiplier": 1.0,
       "deepVeinMultiplier": 6.0,
       "canLoseTotalInvestment": true,
-      "available": false,
       "owned": false
     }
   },
@@ -244,7 +239,6 @@
     "equipment_breakdown": {
       "id": "equipment_breakdown",
       "name": "Equipment Breakdown",
-      "probability": 0.167,
       "diceValue": 1,
       "cost": 50,
       "effect": "deduct_cash",
@@ -254,7 +248,6 @@
     "fuel_price_increase": {
       "id": "fuel_price_increase",
       "name": "Fuel Price Increase",
-      "probability": 0.167,
       "diceValue": 2,
       "cost": 20,
       "effect": "deduct_cash",
@@ -264,7 +257,6 @@
     "worker_shortage": {
       "id": "worker_shortage",
       "name": "Worker Shortage",
-      "probability": 0.167,
       "diceValue": 3,
       "effect": "halve_profits",
       "description": "All successful claims this round are halved.",
@@ -273,7 +265,6 @@
     "successful_recruitment": {
       "id": "successful_recruitment",
       "name": "Successful Recruitment",
-      "probability": 0.167,
       "diceValue": 4,
       "effect": "double_profits",
       "description": "New staff hired! Double all profits this round.",
@@ -282,7 +273,6 @@
     "gold_rush": {
       "id": "gold_rush",
       "name": "Gold Rush",
-      "probability": 0.167,
       "diceValue": 5,
       "bonusPercentage": 0.20,
       "effect": "bonus_profit",
@@ -292,7 +282,6 @@
     "rich_vein_found": {
       "id": "rich_vein_found",
       "name": "Rich Vein Found",
-      "probability": 0.167,
       "diceValue": 6,
       "effect": "automatic_success",
       "description": "Choose one dig type. It automatically succeeds!",
@@ -351,7 +340,7 @@
 
   "dataPrivacy": {
     "storedOffsite": false,
-    "storage": "localStorage + OneDrive (teacher only)",
+    "storage": "localStorage only",
     "identifyingData": "None stored externally",
     "complianceNotes": "Education department data policies compliant",
     "region": "Australia (Western Australia)"

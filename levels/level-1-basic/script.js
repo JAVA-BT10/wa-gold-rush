@@ -40,7 +40,9 @@ const gameState = {
     round: 1,
     gameOver: false,
     isRolling: false,
-    totalProfitLoss: 0
+    totalProfitLoss: 0,
+    animationIntervalId: null,
+    roundTimeoutId: null
 };
 
 // ===== STUDENT SESSION =====
@@ -285,8 +287,12 @@ function animateDiceRoll() {
 
     diceEl.classList.add('rolling');
 
+    if (gameState.animationIntervalId) {
+        clearInterval(gameState.animationIntervalId);
+    }
+
     // Generate random numbers during animation
-    const interval = setInterval(() => {
+    gameState.animationIntervalId = setInterval(() => {
         const die1 = rollDice();
         const die2 = rollDice();
         const total = die1 + die2;
@@ -298,9 +304,24 @@ function animateDiceRoll() {
 
     // Stop animation after duration
     setTimeout(() => {
-        clearInterval(interval);
+        clearInterval(gameState.animationIntervalId);
+        gameState.animationIntervalId = null;
         diceEl.classList.remove('rolling');
     }, ANIMATION_DURATION);
+}
+
+function clearPendingRoll() {
+    if (gameState.animationIntervalId) {
+        clearInterval(gameState.animationIntervalId);
+        gameState.animationIntervalId = null;
+    }
+
+    if (gameState.roundTimeoutId) {
+        clearTimeout(gameState.roundTimeoutId);
+        gameState.roundTimeoutId = null;
+    }
+
+    gameState.isRolling = false;
 }
 
 function displayDiceRoll(die1, die2, total) {
@@ -357,6 +378,8 @@ function resetGame() {
         return;
     }
 
+    clearPendingRoll();
+
     gameState.cash = INITIAL_CASH;
     gameState.round = 1;
     gameState.gameOver = false;
@@ -376,7 +399,10 @@ function resetGame() {
 
     const diceEl = document.getElementById('dice');
     const resultsContainer = document.getElementById('results-container');
-    if (diceEl) diceEl.innerHTML = '-';
+    if (diceEl) {
+        diceEl.classList.remove('rolling');
+        diceEl.innerHTML = '-';
+    }
     if (resultsContainer) resultsContainer.innerHTML = '<p id="result">Start mining!</p>';
 }
 
@@ -420,7 +446,8 @@ function playRound() {
         animateDiceRoll();
 
         // Wait for animation to complete
-        setTimeout(() => {
+        gameState.roundTimeoutId = setTimeout(() => {
+            gameState.roundTimeoutId = null;
             // Display final dice roll
             displayDiceRoll(die1, die2, total);
 

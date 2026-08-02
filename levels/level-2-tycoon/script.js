@@ -6,11 +6,12 @@
 const CLASS_RECORDS_KEY  = 'wa_gold_rush_class_records';
 const PAUSE_STATE_KEY    = 'wa_gold_rush_pause_state';
 const PLAYER_KEY_STORAGE = 'wa_gold_rush_player_key';
+const STRICT_MODE_KEY = 'wa_gold_rush_strict_mode';
+const TEACHER_DASHBOARD_KEY = 'teacher_dashboard';
+const STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
 const DEFAULT_COMPANY_NAME = 'Untitled Mining Co.';
 const RANDOM_EVENT_MIN_LEVEL = 4;
 const RANDOM_EVENT_ROLL_INTERVAL = 10;
-const MINE_UPGRADE_ORDER = ['silver', 'gold', 'platinum'];
-const MACHINERY_ORDER = ['excavator', 'drilling_rig', 'super_drill'];
 
 let gameState = null;
 let currentMineForInvestment = null;
@@ -39,24 +40,19 @@ function updateAssignedLevelBadge() {
 }
 
 function getAllowedMineUpgradeIds(level = gameState?.assignedLevel || 2) {
-    if (level <= 2) return [];
-    if (level === 3) return MINE_UPGRADE_ORDER.slice(0, 1);
-    if (level === 4) return MINE_UPGRADE_ORDER.slice(0, 2);
-    return [...MINE_UPGRADE_ORDER];
+    return gameState?.getAllowedMineUpgradeIds(level) || [];
 }
 
 function getAllowedMachineryIds(level = gameState?.assignedLevel || 2) {
-    if (level <= 2) return MACHINERY_ORDER.slice(0, 1);
-    if (level === 3) return MACHINERY_ORDER.slice(0, 2);
-    return [...MACHINERY_ORDER];
+    return gameState?.getAllowedMachineryIds(level) || [];
 }
 
 function isMineUpgradeAllowed(upgradeId, level = gameState?.assignedLevel || 2) {
-    return getAllowedMineUpgradeIds(level).includes(upgradeId);
+    return gameState?.isMineUpgradeAllowed(upgradeId, level) || false;
 }
 
 function isMachineryAllowed(machineryId, level = gameState?.assignedLevel || 2) {
-    return getAllowedMachineryIds(level).includes(machineryId);
+    return gameState?.isMachineryAllowed(machineryId, level) || false;
 }
 
 function shouldRollRandomEvent() {
@@ -79,9 +75,6 @@ function resolveConfigPath() {
 document.addEventListener('DOMContentLoaded', async function() {
     gameState = new GameState();
     gameState.assignedLevel = getAssignedLevelFromUrl();
-    gameState.isMineUpgradeAllowed = (upgradeId, level = gameState.assignedLevel) => isMineUpgradeAllowed(upgradeId, level);
-    gameState.isMachineryAllowed = (machineryId, level = gameState.assignedLevel) => isMachineryAllowed(machineryId, level);
-    gameState.canRollRandomEvents = (level = gameState.assignedLevel) => level >= RANDOM_EVENT_MIN_LEVEL;
 
     const configPath = resolveConfigPath();
     if (!configPath) {
@@ -99,6 +92,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     gameState.assignedLevel = getAssignedLevelFromUrl();
     ensureInvestmentPlansForOwnedMines();
     hydrateIdentityInputs();
+    applyCompetitionSessionToIdentity();
     setupEventListeners();
     updatePauseStateFromStorage();
     updateAssignedLevelBadge();
@@ -113,6 +107,7 @@ function setupEventListeners() {
     document.getElementById('resetButton').addEventListener('click', resetGame);
     document.getElementById('saveMinePlanButton').addEventListener('click', saveMinePlan);
     document.getElementById('saveIdentityButton').addEventListener('click', saveIdentity);
+    document.getElementById('competitionLogoutButton').addEventListener('click', logoutCompetitionSession);
 
     document.querySelectorAll('.modal-close').forEach(btn => {
         btn.addEventListener('click', closeAllModals);
@@ -129,6 +124,11 @@ function setupEventListeners() {
     window.addEventListener('storage', function(event) {
         if (event.key === PAUSE_STATE_KEY) {
             updatePauseStateFromStorage();
+        }
+        if ((event.key === STRICT_MODE_KEY) || (event.key === TEACHER_DASHBOARD_KEY) || (event.key === CLASS_RECORDS_KEY)) {
+            applyCompetitionSessionToIdentity(false);
+            updateCompetitionStatus();
+            renderLeaderboard();
         }
     });
 }
@@ -301,6 +301,19 @@ function renderFeaturesAndCosts() {
 }
 
 function renderLeaderboard() {
+    const competition = getCompetitionContext();
+    const isCompetitionLocked = !competition.canUseCompetitionFeatures;
+    const lockMessage = document.getElementById('competition-lock-message');
+    if (isCompetitionLocked) {
+        lockMessage.textContent = 'Login required for competition features in Strict Classroom Mode. You can continue playing and saving your progress without competition features.';
+        lockMessage.classList.remove('hidden');
+        document.getElementById('leaderboard-summary').textContent = 'Competition leaderboard is locked until you log in from Home.';
+        document.getElementById('leaderboard-list').innerHTML = '<p class="empty-state">Competition login required.</p>';
+        return;
+    }
+
+    lockMessage.classList.add('hidden');
+    lockMessage.textContent = '';
     const records = getClassRecords();
     const leaderboard = [...records].sort((a, b) => b.netWorth - a.netWorth).slice(0, 10);
     const wealthiest = leaderboard[0];
@@ -309,9 +322,9 @@ function renderLeaderboard() {
     const profitable = [...records].sort((a, b) => b.averageRoundProfit - a.averageRoundProfit)[0];
 
     document.getElementById('leaderboard-summary').innerHTML = `
-        Wealthiest: ${wealthiest ? `${wealthiest.companyName} ($${wealthiest.netWorth.toFixed(2)})` : 'N/A'}<br>
-        Most mines: ${mostMines ? `${mostMines.companyName} (${mostMines.minesOwned})` : 'N/A'}<br>
-        Most profitable strategy: ${profitable ? `${profitable.companyName} (${profitable.strategyLabel || 'Balanced'})` : 'N/A'}<br>
+        Wealthiest: ${wealthiest ? `${escapeHtml(wealthiest.companyName)} ($${wealthiest.netWorth.toFixed(2)})` : 'N/A'}<br>
+        Most mines: ${mostMines ? `${escapeHtml(mostMines.companyName)} (${mostMines.minesOwned})` : 'N/A'}<br>
+        Most profitable strategy: ${profitable ? `${escapeHtml(profitable.companyName)} (${escapeHtml(profitable.strategyLabel || 'Balanced')})` : 'N/A'}<br>
         Average class wealth: $${avgWealth.toFixed(2)}
     `;
 
@@ -322,14 +335,24 @@ function renderLeaderboard() {
     }
     list.innerHTML = leaderboard.map((record, index) => `
         <div class="leaderboard-item">
-            <span>${index + 1}. ${record.companyName}</span>
+            <span>${index + 1}. ${escapeHtml(record.companyName)}</span>
             <span>$${record.netWorth.toFixed(2)}</span>
         </div>
     `).join('');
 }
 
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function updateAllUI() {
     updateAssignedLevelBadge();
+    updateCompetitionStatus();
     ensureInvestmentPlansForOwnedMines();
     renderMines();
     renderMineShop();
@@ -558,8 +581,8 @@ function playRound() {
     });
 
     gameState.cash += roundProfit;
-    const totalRoundChange = roundProfit + roundEffects.cashPenalty;
-    gameState.totalProfitLoss += totalRoundChange;
+    const totalRoundChange = roundProfit + roundEffects.cashPenalty; // for display only
+    gameState.totalProfitLoss += roundProfit; // cashPenalty already deducted from cash directly
     gameState.roundHistory.push({
         round: gameState.round,
         event: event ? event.id : null,
@@ -658,6 +681,88 @@ function updateIdentityBanner() {
     }
 }
 
+function parseJsonStorage(storageType, key) {
+    try {
+        const raw = storageType.getItem(key);
+        if (!raw) return null;
+        return JSON.parse(raw);
+    } catch (error) {
+        return null;
+    }
+}
+
+function getTeacherStudents() {
+    const data = parseJsonStorage(localStorage, TEACHER_DASHBOARD_KEY);
+    return Array.isArray(data?.students) ? data.students : [];
+}
+
+function getStoredStudentSession() {
+    const session = parseJsonStorage(sessionStorage, STUDENT_SESSION_KEY);
+    return session && typeof session === 'object' ? session : null;
+}
+
+function getMatchedStudentFromSession(session) {
+    if (!session) return null;
+    const sessionId = String(session.studentId || '').trim().toLowerCase();
+    const sessionName = String(session.studentName || '').trim().toLowerCase();
+    if (!sessionId || !sessionName) return null;
+    return getTeacherStudents().find(student =>
+        String(student?.displayId || student?.id || '').trim().toLowerCase() === sessionId &&
+        String(student?.name || '').trim().toLowerCase() === sessionName
+    ) || null;
+}
+
+function isStrictModeEnabled() {
+    return !!parseJsonStorage(localStorage, STRICT_MODE_KEY)?.enabled;
+}
+
+function getCompetitionContext() {
+    const strictModeEnabled = isStrictModeEnabled();
+    const session = getStoredStudentSession();
+    const matchedStudent = getMatchedStudentFromSession(session);
+    const isLoggedIn = !!matchedStudent;
+    return {
+        strictModeEnabled,
+        matchedStudent,
+        isLoggedIn,
+        canUseCompetitionFeatures: !strictModeEnabled || isLoggedIn
+    };
+}
+
+function applyCompetitionSessionToIdentity(updateInputs = true) {
+    const competition = getCompetitionContext();
+    if (!competition.isLoggedIn) return competition;
+    gameState.player.studentId = competition.matchedStudent.displayId || competition.matchedStudent.id;
+    gameState.player.studentName = competition.matchedStudent.name;
+    if (updateInputs) {
+        document.getElementById('studentIdInput').value = competition.matchedStudent.displayId || competition.matchedStudent.id;
+        document.getElementById('studentNameInput').value = competition.matchedStudent.name;
+    }
+    return competition;
+}
+
+function updateCompetitionStatus() {
+    const competition = applyCompetitionSessionToIdentity(false);
+    const statusEl = document.getElementById('competition-status');
+    if (competition.isLoggedIn) {
+        statusEl.textContent = `Competition Status: Logged in as ${competition.matchedStudent.name} (${competition.matchedStudent.displayId || competition.matchedStudent.id})`;
+        return;
+    }
+    statusEl.textContent = competition.strictModeEnabled
+        ? 'Competition Status: Free-play mode (login required for competition features)'
+        : 'Competition Status: Free-play mode';
+}
+
+function logoutCompetitionSession() {
+    sessionStorage.removeItem(STUDENT_SESSION_KEY);
+    document.getElementById('studentIdInput').value = '';
+    document.getElementById('studentNameInput').value = '';
+    gameState.player.studentId = '';
+    gameState.player.studentName = '';
+    gameState.saveToLocalStorage();
+    updateAllUI();
+}
+
 function getOrCreatePlayerKey() {
     // If a full session object exists (set by teacher dashboard or login), return the studentId.
     // Otherwise fall back to a plain UUID stored at the same key.
@@ -735,16 +840,34 @@ function calculateStrategyLabel() {
 }
 
 function syncPlayerRecord() {
+    const competition = getCompetitionContext();
+    if (!competition.canUseCompetitionFeatures) {
+        return;
+    }
+
+    // Don't publish anonymous records — require either a competition login or a non-empty student identity
+    if (!competition.isLoggedIn && !gameState.player.studentId) {
+        return;
+    }
+
     const playerKey = getOrCreatePlayerKey();
     const session   = getPlayerSession();
     const totalRounds = Math.max(1, gameState.round - 1);
+
+    const competition = getCompetitionContext();
+    const studentId = competition.isLoggedIn
+        ? (competition.matchedStudent.displayId || competition.matchedStudent.id)
+        : (gameState.player.studentId || playerKey);
+    const studentName = competition.isLoggedIn
+        ? competition.matchedStudent.name
+        : (gameState.player.studentName || (session?.studentName) || 'Anonymous Student');
 
     // Build a unified v2 leaderboard entry
     const entry = {
         entryId:        null, // will be assigned/preserved by LeaderboardStore
         playerKey,
-        studentId:      gameState.player.studentId || playerKey,
-        studentName:    gameState.player.studentName || (session?.studentName) || 'Anonymous Student',
+        studentId,
+        studentName,
         username:       (session?.username) || '',
         level:          gameState.assignedLevel || 2,
         mode:           'goldfields-venture',
@@ -782,10 +905,14 @@ function syncPlayerRecord() {
 
 function syncTeacherDashboardRecord(record) {
     if (typeof TeacherDashboard === 'undefined') return;
+    const competition = getCompetitionContext();
+    if (!competition.isLoggedIn) return;
     const dashboard = new TeacherDashboard();
     dashboard.loadFromLocalStorage();
-    dashboard.syncFromPlayerRecord(record);
-    dashboard.saveToLocalStorage();
+    const updated = dashboard.syncFromPlayerRecord(record);
+    if (updated) {
+        dashboard.saveToLocalStorage();
+    }
 }
 
 function isTeacherPaused() {
@@ -817,7 +944,15 @@ function loadGame() {
         alert('❌ No save data found');
         return;
     }
-    gameState.assignedLevel = getAssignedLevelFromUrl();
+    const savedLevel = gameState.assignedLevel;
+    const urlLevel = getAssignedLevelFromUrl();
+    if (savedLevel !== urlLevel && !confirm(
+        `This save was created on Level ${savedLevel}, but you are playing Level ${urlLevel}. Continue with Level ${urlLevel}?`
+    )) {
+        // Keep the saved level — already restored by loadFromLocalStorage
+    } else {
+        gameState.assignedLevel = urlLevel;
+    }
     ensureInvestmentPlansForOwnedMines();
     hydrateIdentityInputs();
     updateAssignedLevelBadge();
@@ -827,11 +962,19 @@ function loadGame() {
     alert('✅ Game loaded successfully!');
 }
 
+function removePlayerRecord(playerKey) {
+    const records = getClassRecords();
+    const filtered = records.filter(r => r.playerKey !== playerKey);
+    saveClassRecords(filtered);
+}
+
 function resetGame() {
     if (!confirm('Start a new game? All progress will be lost.')) return;
+    const playerKey = getOrCreatePlayerKey();
     gameState.reset();
     gameState.assignedLevel = getAssignedLevelFromUrl();
     localStorage.removeItem('level2_autosave');
+    removePlayerRecord(playerKey);
     hydrateIdentityInputs();
     updateAssignedLevelBadge();
     updateAllUI();

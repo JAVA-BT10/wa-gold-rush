@@ -94,11 +94,14 @@ class TeacherDashboard {
      */
     addStudent(studentData) {
         const now = new Date().toISOString();
+        const autoId = this.generateStudentId();
+        const rawDisplayId = (typeof studentData.displayId === 'string') ? studentData.displayId.trim() : '';
         const username = studentData.username || this.generateUsername(studentData.name);
         const pin      = studentData.pin      || this.generatePin(4);
 
         const student = {
-            id:           this.generateStudentId(),
+            id:           autoId,
+            displayId:    rawDisplayId || autoId,
             name:         studentData.name  || '',
             email:        studentData.email || '',
             username,
@@ -132,21 +135,6 @@ class TeacherDashboard {
      * @param {object} patch  Partial StudentAccount fields to update.
      * @returns {{ success: boolean, student?: object, error?: string }}
      */
-    updateStudent(studentId, patch) {
-        const student = this.students.find(s => s.id === studentId);
-        if (!student) return { success: false, error: 'Student not found' };
-
-        // Prevent changing id/createdAt
-        const safe = { ...patch };
-        delete safe.id;
-        delete safe.createdAt;
-        safe.updatedAt = new Date().toISOString();
-
-        Object.assign(student, safe);
-        this.saveToLocalStorage();
-        return { success: true, student };
-    }
-
     /**
      * Delete a student by ID.
      * @param {string} studentId
@@ -202,71 +190,123 @@ class TeacherDashboard {
 
     /**
      * Bulk import students from CSV or JSON.
-     * Skips rows with duplicate usernames (deduplication).
      * @param {string} data
      * @param {'csv'|'json'} [format='csv']
-     * @returns {{ added: object[], skipped: string[], errors: string[] }}
+     * @returns {{ added: object[], skipped: object[] }}
      */
     bulkImportStudents(data, format = 'csv') {
-        let rows = [];
+        let rawStudents = [];
 
         if (format === 'csv') {
             const lines = data.trim().split('\n');
-            // Accept header row starting with "name" (case-insensitive) or skip first line
-            const startIdx = /^name/i.test(lines[0]) ? 1 : 0;
-            rows = lines.slice(startIdx).map(line => {
-                const parts = line.split(',').map(s => s.trim().replace(/^"|"$/g, ''));
-                return { name: parts[0], email: parts[1] || '', level: parseInt(parts[2]) || 1 };
+            if (!lines.length) return { added: [], skipped: [] };
+
+            const firstFields = lines[0].split(',').map(s => s.trim());
+            const firstLevelVal = firstFields.length >= 3 ? parseInt(firstFields[2], 10) : NaN;
+            const firstLineIsHeader = isNaN(firstLevelVal) || firstLevelVal < 1 || firstLevelVal > 5;
+            const dataLines = firstLineIsHeader ? lines.slice(1) : lines;
+            const headerOffset = firstLineIsHeader ? 1 : 0;
+
+            dataLines.forEach((line, idx) => {
+                const originalRow = idx + 1 + headerOffset;
+                if (line.trim() === '') return;
+
+                const fields = line.split(',').map(s => s.trim());
+                if (fields.length < 3) {
+                    rawStudents.push({ _row: originalRow, _skipReason: 'fewer than 3 fields' });
+                    return;
+                }
+
+                const [name, email, levelRaw] = fields;
+                const parsedLevel = parseInt(levelRaw, 10);
+                rawStudents.push({
+                    _row: originalRow,
+                    name,
+                    email,
+                    level: (parsedLevel >= 1 && parsedLevel <= 5) ? parsedLevel : 1
+                });
             });
         } else if (format === 'json') {
             const parsed = JSON.parse(data);
-            rows = Array.isArray(parsed) ? parsed : [];
+            if (!Array.isArray(parsed)) {
+                throw new TypeError('JSON must be an array of student objects, e.g. [{"name":"Alex","email":"","level":2}]');
+            }
+
+            rawStudents = parsed.map((item, idx) => {
+                const parsedLevel = parseInt(item.level ?? item.Level ?? item.assignedLevel, 10);
+                return {
+                    _row: idx + 1,
+                    name: (item.name ?? item.Name ?? item.studentName ?? item.student_name ?? '').toString().trim(),
+                    email: (item.email ?? item.Email ?? '').toString().trim(),
+                    level: (parsedLevel >= 1 && parsedLevel <= 5) ? parsedLevel : 1
+                };
+            });
+        } else {
+            throw new TypeError('Unsupported import format. Use csv or json.');
         }
 
-        const added   = [];
+        const added = [];
         const skipped = [];
-        const errors  = [];
 
-        rows.forEach((row, i) => {
-            try {
-                if (!row.name) {
-                    errors.push(`Row ${i + 1}: missing name`);
-                    return;
-                }
-                // Dedupe: skip if the auto-generated username for this name would collide with an existing one.
-                const candidateUsername = row.username || this.generateUsername(row.name);
-                if (this.students.some(s => s.username === candidateUsername)) {
-                    skipped.push(row.name);
-                    return;
-                }
-                added.push(this.addStudent({ ...row, username: candidateUsername }));
-            } catch (e) {
-                errors.push(`Row ${i + 1}: ${e.message}`);
+        rawStudents.forEach(studentData => {
+            if (studentData._skipReason) {
+                skipped.push({ row: studentData._row || '?', reason: studentData._skipReason });
+                return;
             }
+            if (!studentData.name) {
+                skipped.push({ row: studentData._row || '?', reason: 'Missing name' });
+                return;
+            }
+            added.push(this.addStudent(studentData));
         });
 
-        return { added, skipped, errors };
+        return { added, skipped };
     }
 
     // ─── Queries ─────────────────────────────────────────────────────────────────
 
     /**
-     * Update student level assignment
+     * Update student core fields
      */
-    assignLevel(studentId, level) {
+    updateStudent(studentId, updates = {}) {
         const student = this.students.find(s => s.id === studentId);
-        if (student) {
-            student.level = level;
-            student.updatedAt = new Date().toISOString();
-            this.saveToLocalStorage();
-            return { success: true, message: `Assigned Level ${level} to ${student.name}` };
+        if (!student) {
+            return { success: false, error: 'Student not found' };
         }
-        return { success: false, error: 'Student not found' };
+
+        if (typeof updates.displayId === 'string') {
+            const nextDisplayId = updates.displayId.trim();
+            if (nextDisplayId) student.displayId = nextDisplayId;
+        }
+
+        if (typeof updates.name === 'string') {
+            const nextName = updates.name.trim();
+            if (!nextName) return { success: false, error: 'Name cannot be empty' };
+            student.name = nextName;
+        }
+
+        if (typeof updates.email === 'string') {
+            student.email = updates.email.trim();
+        }
+
+        if (updates.level !== undefined) {
+            const nextLevel = parseInt(updates.level, 10);
+            student.level = (nextLevel >= 1 && nextLevel <= 5) ? nextLevel : student.level;
+        }
+
+        if (typeof updates.status === 'string') {
+            student.status = updates.status;
+        }
+
+        if (typeof updates.notes === 'string') {
+            student.notes = updates.notes;
+        }
+
+        student.updatedAt = new Date().toISOString();
+        this.saveToLocalStorage();
+        return { success: true, student };
     }
 
-    /**
-     * Update student game state (from student's localStorage)
-     */
     updateStudentProgress(studentId, gameStateData) {
         const student = this.students.find(s => s.id === studentId);
         if (student) {
@@ -308,11 +348,20 @@ class TeacherDashboard {
      */
     calculateClassStats() {
         if (this.students.length === 0) {
+            this.classStats = {
+                totalStudents: 0,
+                averageNetWorth: 0,
+                highestNetWorth: 0,
+                wealthiestStudent: null,
+                mostMinesOwned: 0,
+                topMineOwner: null,
+                averageRound: 0
+            };
             return this.classStats;
         }
 
         const totalNetWorth = this.students.reduce((sum, s) => sum + s.gameState.netWorth, 0);
-        const totalRounds   = this.students.reduce((sum, s) => sum + s.gameState.round, 0);
+        const totalRounds = this.students.reduce((sum, s) => sum + s.gameState.round, 0);
 
         const sortedByNetWorth = [...this.students].sort((a, b) => b.gameState.netWorth - a.gameState.netWorth);
         const sortedByMines    = [...this.students].sort((a, b) => b.gameState.ownedMines - a.gameState.ownedMines);
@@ -365,37 +414,15 @@ class TeacherDashboard {
      * Accepts both legacy and v2 shaped records.
      */
     syncFromPlayerRecord(record) {
-        const studentId = record.studentId || record.playerKey;
-        let student = this.students.find(s => s.id === studentId);
+        const incomingDisplayId = String(record.studentId || '').trim();
+        if (!incomingDisplayId) return null;
+
+        let student = this.students.find(s =>
+            String(s.displayId || s.id || '').trim().toLowerCase() === incomingDisplayId.toLowerCase()
+        );
 
         if (!student) {
-            student = {
-                id:          studentId,
-                name:        record.studentName || 'Unknown Student',
-                email:       '',
-                username:    record.username || '',
-                pin:         '',
-                level:       Number(record.level) || 2,
-                status:      'active',
-                notes:       '',
-                assignedDate: new Date().toISOString(),
-                createdAt:   new Date().toISOString(),
-                updatedAt:   new Date().toISOString(),
-                lastLoginAt: null,
-                gameState: {
-                    round: 1,
-                    cash: 200,
-                    netWorth: 300,
-                    ownedMines: 1,
-                    machinery: 0,
-                    totalProfitLoss: 0,
-                    averageRoundProfit: 0,
-                    strategyLabel: '',
-                    companyName: '',
-                    lastPlayed: null
-                }
-            };
-            this.students.push(student);
+            return null;
         }
 
         student.name = record.studentName || student.name;
@@ -534,6 +561,15 @@ class TeacherDashboard {
      */
     clearAll() {
         this.students = [];
+        this.classStats = {
+            totalStudents: 0,
+            averageNetWorth: 0,
+            highestNetWorth: 0,
+            wealthiestStudent: null,
+            mostMinesOwned: 0,
+            topMineOwner: null,
+            averageRound: 0
+        };
         localStorage.removeItem(STUDENTS_STORE_KEY);
         localStorage.removeItem(TEACHER_LEGACY_KEY);
     }

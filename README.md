@@ -68,11 +68,12 @@ Access: `/teacher/dashboard.html`
 - Assign students to levels
 - Monitor local shared progress and leaderboard statistics
 - Pause game for lessons
+- Toggle **Strict Classroom Mode (Competition Lock)** to require student login for leaderboard/rankings/shared records while still allowing free-play and saves
 - Track wealthiest player, most mines owned, most profitable strategy, and average class wealth
 
 ## Getting Started
 
-1. **For Students:** Click level in home page (`index.html`)
+1. **For Students:** Click level in home page (`index.html`). Optional competition login on home enables leaderboard/class competition participation.
 2. **For Teachers:** Navigate to `/teacher/dashboard.html`
 3. **For Developers:** See DEVELOPMENT.md
 
