@@ -295,7 +295,9 @@ class GameState {
         let totalBonus = 0;
         this.machinery.forEach(item => {
             const config = this.gameConfig.machinery[item.id];
-            totalBonus += config.profitBonus;
+            if (config) {
+                totalBonus += config.profitBonus;
+            }
         });
         return totalBonus;
     }
@@ -311,7 +313,10 @@ class GameState {
         let value = 0;
         Object.entries(this.ownedMines).forEach(([mineId, mine]) => {
             if (mine.owned) {
-                value += this.gameConfig.mines[mineId].baseValue;
+                const mineConfig = this.gameConfig.mines[mineId];
+                if (mineConfig) {
+                    value += mineConfig.baseValue;
+                }
             }
         });
         return value;
@@ -328,7 +333,9 @@ class GameState {
         let value = 0;
         this.machinery.forEach(item => {
             const config = this.gameConfig.machinery[item.id];
-            value += Math.floor(item.purchasePrice * config.resaleValue);
+            if (config) {
+                value += Math.floor(item.purchasePrice * config.resaleValue);
+            }
         });
         return value;
     }
