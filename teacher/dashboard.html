@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Goldfields Goldrush W.A. - Teacher Dashboard</title>
+    <script src="https://alcdn.msauth.net/browser/2.39.0/js/msal-browser.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background: #f5f5f5; color: #222; }
         .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
@@ -131,6 +132,54 @@
 
     <script src="dashboard-state.js"></script>
     <script>
+        // ===== M365 Teacher Auth Gate =====
+        const APP_CONFIG = {
+            tenantId: 'e08016f9-d1fd-4cbb-83b0-b76eb4361627',
+            clientId: 'REPLACE_WITH_ENTRA_APP_CLIENT_ID',
+            redirectUri: window.location.origin + window.location.pathname
+        };
+
+        function isTeacherUpn(upn) {
+            const v = String(upn || '').toLowerCase();
+            return v.endsWith('@education.wa.edu.au') && !v.includes('@student.');
+        }
+
+        async function requireTeacherAuth() {
+            if (APP_CONFIG.clientId === 'REPLACE_WITH_ENTRA_APP_CLIENT_ID') {
+                alert('Missing Entra Client ID in teacher/dashboard.html');
+                return false;
+            }
+
+            const msalInstance = new msal.PublicClientApplication({
+                auth: {
+                    clientId: APP_CONFIG.clientId,
+                    authority: `https://login.microsoftonline.com/${APP_CONFIG.tenantId}`,
+                    redirectUri: APP_CONFIG.redirectUri
+                },
+                cache: {
+                    cacheLocation: 'sessionStorage',
+                    storeAuthStateInCookie: true
+                }
+            });
+
+            const response = await msalInstance.handleRedirectPromise();
+            if (response?.account) msalInstance.setActiveAccount(response.account);
+
+            const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+            if (!account) {
+                await msalInstance.loginRedirect({ scopes: ['openid', 'profile', 'email', 'User.Read'] });
+                return false;
+            }
+
+            const upn = String(account.username || '').toLowerCase();
+            if (!isTeacherUpn(upn)) {
+                document.body.innerHTML = '<div style="padding:20px;font-family:Arial;">Access denied. Teacher account required.</div>';
+                return false;
+            }
+
+            return true;
+        }
+
         const CLASS_RECORDS_KEY = 'wa_gold_rush_class_records';
         const PAUSE_STATE_KEY = 'wa_gold_rush_pause_state';
         const STRICT_MODE_KEY = 'wa_gold_rush_strict_mode';
@@ -387,11 +436,17 @@
         });
 
         document.getElementById('refreshBtn').addEventListener('click', refresh);
+
         document.getElementById('strictModeToggle').addEventListener('change', (event) => {
             localStorage.setItem(STRICT_MODE_KEY, JSON.stringify({ enabled: !!event.target.checked }));
             renderStrictModeStatus();
         });
-        refresh();
+
+        (async function init() {
+            const ok = await requireTeacherAuth();
+            if (!ok) return;
+            refresh();
+        })();
     </script>
 </body>
 </html>
