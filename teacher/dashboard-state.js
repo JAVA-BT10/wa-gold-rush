@@ -62,6 +62,68 @@ class TeacherDashboard {
         return this.isLikelyTeacherUpn(upn);
     }
 
+    toNumber(value, fallback = 0) {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : fallback;
+    }
+
+    parseCsvRows(csvText) {
+        const rows = [];
+        const text = String(csvText || '');
+        let row = [];
+        let field = '';
+        let inQuotes = false;
+        let lineNumber = 1;
+        let rowLineNumber = 1;
+
+        for (let i = 0; i < text.length; i += 1) {
+            const char = text[i];
+            const nextChar = text[i + 1];
+
+            if (char === '"') {
+                if (inQuotes && nextChar === '"') {
+                    field += '"';
+                    i += 1;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+                continue;
+            }
+
+            if (char === ',' && !inQuotes) {
+                row.push(field);
+                field = '';
+                continue;
+            }
+
+            if ((char === '\n' || char === '\r') && !inQuotes) {
+                row.push(field);
+                rows.push({ rowNumber: rowLineNumber, fields: row });
+                row = [];
+                field = '';
+
+                if (char === '\r' && nextChar === '\n') {
+                    i += 1;
+                }
+                lineNumber += 1;
+                rowLineNumber = lineNumber;
+                continue;
+            }
+
+            field += char;
+            if (char === '\n') {
+                lineNumber += 1;
+            }
+        }
+
+        row.push(field);
+        const hasData = row.some(value => String(value || '').trim() !== '');
+        if (hasData) {
+            rows.push({ rowNumber: rowLineNumber, fields: row });
+        }
+        return rows;
+    }
+
     /**
      * Load game configuration
      */
@@ -122,20 +184,18 @@ class TeacherDashboard {
         let rawStudents = [];
 
         if (format === 'csv') {
-            const lines = data.trim().split('\n');
-            if (!lines.length) return { added: [], skipped: [] };
+            const rows = this.parseCsvRows(data);
+            if (!rows.length) return { added: [], skipped: [] };
 
-            const firstFields = lines[0].split(',').map(s => s.trim());
+            const firstFields = rows[0].fields.map(s => String(s || '').trim());
             const firstLevelVal = firstFields.length >= 3 ? parseInt(firstFields[2], 10) : NaN;
             const firstLineIsHeader = isNaN(firstLevelVal) || firstLevelVal < 1 || firstLevelVal > 5;
-            const dataLines = firstLineIsHeader ? lines.slice(1) : lines;
-            const headerOffset = firstLineIsHeader ? 1 : 0;
+            const dataRows = firstLineIsHeader ? rows.slice(1) : rows;
 
-            dataLines.forEach((line, idx) => {
-                const originalRow = idx + 1 + headerOffset;
-                if (line.trim() === '') return;
-
-                const fields = line.split(',').map(s => s.trim());
+            dataRows.forEach((row) => {
+                const originalRow = row.rowNumber;
+                const fields = row.fields.map(s => String(s || '').trim());
+                if (!fields.some(Boolean)) return;
                 if (fields.length < 3) {
                     rawStudents.push({ _row: originalRow, _skipReason: 'fewer than 3 fields' });
                     return;
@@ -246,7 +306,13 @@ class TeacherDashboard {
      * Get all students
      */
     getAllStudents() {
-        return this.students.sort((a, b) => b.gameState.netWorth - a.gameState.netWorth);
+        return this.students
+            .map((student, index) => ({ student, index }))
+            .sort((a, b) => {
+                const diff = this.toNumber(b.student?.gameState?.netWorth) - this.toNumber(a.student?.gameState?.netWorth);
+                return diff !== 0 ? diff : a.index - b.index;
+            })
+            .map(entry => entry.student);
     }
 
     /**
@@ -273,18 +339,30 @@ class TeacherDashboard {
             return this.classStats;
         }
 
-        const totalNetWorth = this.students.reduce((sum, s) => sum + s.gameState.netWorth, 0);
-        const totalRounds = this.students.reduce((sum, s) => sum + s.gameState.round, 0);
+        const totalNetWorth = this.students.reduce((sum, s) => sum + this.toNumber(s?.gameState?.netWorth), 0);
+        const totalRounds = this.students.reduce((sum, s) => sum + this.toNumber(s?.gameState?.round), 0);
 
-        const sortedByNetWorth = [...this.students].sort((a, b) => b.gameState.netWorth - a.gameState.netWorth);
-        const sortedByMines = [...this.students].sort((a, b) => b.gameState.ownedMines - a.gameState.ownedMines);
+        const sortedByNetWorth = [...this.students]
+            .map((student, index) => ({ student, index }))
+            .sort((a, b) => {
+                const diff = this.toNumber(b.student?.gameState?.netWorth) - this.toNumber(a.student?.gameState?.netWorth);
+                return diff !== 0 ? diff : a.index - b.index;
+            })
+            .map(entry => entry.student);
+        const sortedByMines = [...this.students]
+            .map((student, index) => ({ student, index }))
+            .sort((a, b) => {
+                const diff = this.toNumber(b.student?.gameState?.ownedMines) - this.toNumber(a.student?.gameState?.ownedMines);
+                return diff !== 0 ? diff : a.index - b.index;
+            })
+            .map(entry => entry.student);
 
         this.classStats = {
             totalStudents: this.students.length,
             averageNetWorth: totalNetWorth / this.students.length,
-            highestNetWorth: sortedByNetWorth[0]?.gameState.netWorth || 0,
+            highestNetWorth: this.toNumber(sortedByNetWorth[0]?.gameState?.netWorth),
             wealthiestStudent: sortedByNetWorth[0],
-            mostMinesOwned: sortedByMines[0]?.gameState.ownedMines || 0,
+            mostMinesOwned: this.toNumber(sortedByMines[0]?.gameState?.ownedMines),
             topMineOwner: sortedByMines[0],
             averageRound: totalRounds / this.students.length
         };
@@ -296,8 +374,7 @@ class TeacherDashboard {
      * Get leaderboard (sorted by net worth)
      */
     getLeaderboard() {
-        return [...this.students]
-            .sort((a, b) => b.gameState.netWorth - a.gameState.netWorth)
+        return this.getAllStudents()
             .map((student, index) => ({
                 rank: index + 1,
                 ...student
@@ -359,12 +436,12 @@ class TeacherDashboard {
             student.name,
             student.email,
             student.level,
-            student.gameState.netWorth.toFixed(2),
-            student.gameState.cash.toFixed(2),
-            student.gameState.ownedMines,
-            student.gameState.machinery,
-            student.gameState.round,
-            student.gameState.totalProfitLoss.toFixed(2)
+            this.toNumber(student.gameState?.netWorth).toFixed(2),
+            this.toNumber(student.gameState?.cash).toFixed(2),
+            this.toNumber(student.gameState?.ownedMines),
+            this.toNumber(student.gameState?.machinery),
+            this.toNumber(student.gameState?.round),
+            this.toNumber(student.gameState?.totalProfitLoss).toFixed(2)
         ]);
 
         const csv = [headers, ...rows]

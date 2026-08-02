@@ -7,7 +7,8 @@
     <script src="https://alcdn.msauth.net/browser/2.39.0/js/msal-browser.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background: #f5f5f5; color: #222; }
-        .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+        .container { display: none; max-width: 1100px; margin: 0 auto; padding: 20px; }
+        body.authorized .container { display: block; }
         .card { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
         .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
         input, textarea, select, button { width: 100%; padding: 8px; box-sizing: border-box; margin-top: 4px; }
@@ -26,9 +27,11 @@
         .toggle-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; }
         .toggle-row input[type="checkbox"] { width: auto; margin-top: 2px; }
         .toggle-copy strong { display: block; margin-bottom: 4px; }
+        #authRequiredMessage { display: none; max-width: 640px; margin: 28px auto; padding: 16px; background: #fff3f3; border: 1px solid #f5c2c7; border-radius: 8px; color: #842029; font-family: Arial, sans-serif; }
     </style>
 </head>
 <body>
+    <div id="authRequiredMessage" role="alert"></div>
     <div class="container">
         <h1>👨‍🏫 Goldfields Goldrush W.A. Teacher Dashboard</h1>
         <p><a href="../index.html">← Back to Home</a></p>
@@ -132,59 +135,29 @@
 
     <script src="dashboard-state.js"></script>
     <script>
-        // ===== M365 Teacher Auth Gate =====
-        const APP_CONFIG = {
-            tenantId: 'e08016f9-d1fd-4cbb-83b0-b76eb4361627',
-            clientId: '751db20d-023e-4f06-9c64-31f42fc3a385',
-            redirectUri: window.location.origin + window.location.pathname
-        };
-
-        function isTeacherUpn(upn) {
-            const v = String(upn || '').toLowerCase();
-            return v.endsWith('@education.wa.edu.au') && !v.includes('@student.');
-        }
-
-        async function requireTeacherAuth() {
-            if (APP_CONFIG.clientId === 'REPLACE_WITH_ENTRA_APP_CLIENT_ID') {
-                alert('Missing Entra Client ID in teacher/dashboard.html');
-                return false;
-            }
-
-            const msalInstance = new msal.PublicClientApplication({
-                auth: {
-                    clientId: APP_CONFIG.clientId,
-                    authority: `https://login.microsoftonline.com/${APP_CONFIG.tenantId}`,
-                    redirectUri: APP_CONFIG.redirectUri
-                },
-                cache: {
-                    cacheLocation: 'sessionStorage',
-                    storeAuthStateInCookie: true
-                }
-            });
-
-            const response = await msalInstance.handleRedirectPromise();
-            if (response?.account) msalInstance.setActiveAccount(response.account);
-
-            const account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
-            if (!account) {
-                await msalInstance.loginRedirect({ scopes: ['openid', 'profile', 'email', 'User.Read'] });
-                return false;
-            }
-
-            const upn = String(account.username || '').toLowerCase();
-            if (!isTeacherUpn(upn)) {
-                document.body.innerHTML = '<div style="padding:20px;font-family:Arial;">Access denied. Teacher account required.</div>';
-                return false;
-            }
-
-            return true;
-        }
-
         const CLASS_RECORDS_KEY = 'wa_gold_rush_class_records';
         const PAUSE_STATE_KEY = 'wa_gold_rush_pause_state';
         const STRICT_MODE_KEY = 'wa_gold_rush_strict_mode';
         const dashboard = new TeacherDashboard();
-        dashboard.loadFromLocalStorage();
+
+        function enforceTeacherDashboardAccess() {
+            if (dashboard.hasTeacherSession()) {
+                document.body.classList.add('authorized');
+                return true;
+            }
+
+            const authMessage = document.getElementById('authRequiredMessage');
+            const signedInUpn = dashboard.getSignedInUpn();
+            const detail = signedInUpn && !dashboard.isLikelyTeacherUpn(signedInUpn)
+                ? `Signed in account (${signedInUpn}) does not have teacher access.`
+                : 'Teacher sign-in is required to open the dashboard.';
+            const message = `${detail} Redirecting to Home...`;
+            authMessage.textContent = message;
+            authMessage.style.display = 'block';
+            alert('Teacher sign-in is required to access the dashboard.');
+            window.location.replace('../index.html');
+            return false;
+        }
 
         function getRecords() {
             try {
@@ -442,9 +415,10 @@
             renderStrictModeStatus();
         });
 
-        (async function init() {
-            const ok = await requireTeacherAuth();
+        (function init() {
+            const ok = enforceTeacherDashboardAccess();
             if (!ok) return;
+            dashboard.loadFromLocalStorage();
             refresh();
         })();
     </script>
