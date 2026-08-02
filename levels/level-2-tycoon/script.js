@@ -9,6 +9,7 @@ const PLAYER_KEY_STORAGE = 'wa_gold_rush_player_key';
 const STRICT_MODE_KEY = 'wa_gold_rush_strict_mode';
 const TEACHER_DASHBOARD_KEY = 'teacher_dashboard';
 const STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
+const M365_SESSION_KEY = 'wa_gold_rush_m365_session';
 const DEFAULT_COMPANY_NAME = 'Untitled Mining Co.';
 const RANDOM_EVENT_MIN_LEVEL = 4;
 const RANDOM_EVENT_ROLL_INTERVAL = 10;
@@ -675,9 +676,35 @@ function getStoredStudentSession() {
     return session && typeof session === 'object' ? session : null;
 }
 
+function getStoredM365Session() {
+    const session = parseJsonStorage(sessionStorage, M365_SESSION_KEY);
+    return session && typeof session === 'object' ? session : null;
+}
+
+function normalizeSignedInStudentSession(session = {}) {
+    const upn = String(session.studentUpn || session.studentId || '').trim().toLowerCase();
+    const name = String(session.studentName || '').trim();
+    if (!upn || !name) return null;
+    if (!upn.endsWith('@student.education.wa.edu.au')) return null;
+    return {
+        studentUpn: upn,
+        studentId: upn,
+        studentName: name
+    };
+}
+
+function getSignedInStudentSession() {
+    const m365Session = normalizeSignedInStudentSession(getStoredM365Session());
+    if (m365Session) return m365Session;
+
+    const studentSession = getStoredStudentSession();
+    if (String(studentSession?.authProvider || '').toLowerCase() !== 'm365') return null;
+    return normalizeSignedInStudentSession(studentSession);
+}
+
 function getMatchedStudentFromSession(session) {
     if (!session) return null;
-    const sessionId = String(session.studentId || '').trim().toLowerCase();
+    const sessionId = String(session.studentId || session.studentUpn || '').trim().toLowerCase();
     const sessionName = String(session.studentName || '').trim().toLowerCase();
     if (!sessionId || !sessionName) return null;
     return getTeacherStudents().find(student =>
@@ -692,11 +719,12 @@ function isStrictModeEnabled() {
 
 function getCompetitionContext() {
     const strictModeEnabled = isStrictModeEnabled();
-    const session = getStoredStudentSession();
+    const session = getSignedInStudentSession();
     const matchedStudent = getMatchedStudentFromSession(session);
-    const isLoggedIn = !!matchedStudent;
+    const isLoggedIn = !!session;
     return {
         strictModeEnabled,
+        session,
         matchedStudent,
         isLoggedIn,
         canUseCompetitionFeatures: !strictModeEnabled || isLoggedIn
@@ -705,7 +733,7 @@ function getCompetitionContext() {
 
 function applyCompetitionSessionToIdentity(updateInputs = true) {
     const competition = getCompetitionContext();
-    if (!competition.isLoggedIn) return competition;
+    if (!competition.isLoggedIn || !competition.matchedStudent) return competition;
     gameState.player.studentId = competition.matchedStudent.displayId || competition.matchedStudent.id;
     gameState.player.studentName = competition.matchedStudent.name;
     if (updateInputs) {
@@ -718,8 +746,12 @@ function applyCompetitionSessionToIdentity(updateInputs = true) {
 function updateCompetitionStatus() {
     const competition = applyCompetitionSessionToIdentity(false);
     const statusEl = document.getElementById('competition-status');
-    if (competition.isLoggedIn) {
+    if (competition.isLoggedIn && competition.matchedStudent) {
         statusEl.textContent = `Competition Status: Logged in as ${competition.matchedStudent.name} (${competition.matchedStudent.displayId || competition.matchedStudent.id})`;
+        return;
+    }
+    if (competition.isLoggedIn) {
+        statusEl.textContent = `Competition Status: Logged in as ${competition.session.studentName} (${competition.session.studentUpn})`;
         return;
     }
     statusEl.textContent = competition.strictModeEnabled
@@ -785,6 +817,11 @@ function calculateStrategyLabel() {
 function syncPlayerRecord() {
     const competition = getCompetitionContext();
     if (!competition.canUseCompetitionFeatures) {
+        const lockMessage = document.getElementById('competition-lock-message');
+        if (lockMessage) {
+            lockMessage.textContent = 'Login required to publish leaderboard/class records while Strict Classroom Mode is on. You can continue playing and saving locally.';
+            lockMessage.classList.remove('hidden');
+        }
         return;
     }
 
@@ -796,12 +833,14 @@ function syncPlayerRecord() {
     const playerKey = getOrCreatePlayerKey();
     const records = getClassRecords();
     const totalRounds = Math.max(1, gameState.round - 1);
+    const sessionStudentId = String(competition.session?.studentId || competition.session?.studentUpn || '').trim();
+    const sessionStudentName = String(competition.session?.studentName || '').trim();
 
     const studentId = competition.isLoggedIn
-        ? (competition.matchedStudent.displayId || competition.matchedStudent.id)
+        ? (competition.matchedStudent?.displayId || competition.matchedStudent?.id || sessionStudentId || gameState.player.studentId || playerKey)
         : (gameState.player.studentId || playerKey);
     const studentName = competition.isLoggedIn
-        ? competition.matchedStudent.name
+        ? (competition.matchedStudent?.name || sessionStudentName || gameState.player.studentName || 'Signed-in Student')
         : (gameState.player.studentName || 'Anonymous Student');
 
     const record = {
