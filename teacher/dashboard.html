@@ -35,6 +35,14 @@
         #authRequiredMessage .btn-home { background: #842029; color: #fff; }
         #authRequiredMessage .btn-retry { background: #f4b400; color: #fff; }
         #authRequiredMessage .auth-hint { margin-top: 12px; font-size: 13px; color: #555; background: #fffbe6; border: 1px solid #ffe69c; border-radius: 4px; padding: 8px 12px; }
+        .allowlist-warning { background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; color: #664d03; font-size: 13px; line-height: 1.5; }
+        .allowlist-add-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+        .allowlist-add-row input { width: auto; flex: 1; min-width: 200px; margin: 0; }
+        .allowlist-add-row button { width: auto; }
+        .allowlist-msg { font-size: 13px; font-weight: bold; margin: 4px 0 8px; }
+        .allowlist-msg.success { color: #2e7d32; }
+        .allowlist-msg.error { color: #c62828; }
+        .allowlist-help { margin-top: 12px; font-size: 12px; color: #555; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 8px 12px; line-height: 1.6; }
     </style>
 </head>
 <body>
@@ -137,6 +145,48 @@
                 </thead>
                 <tbody id="leaderboardBody"></tbody>
             </table>
+        </section>
+
+        <section id="teacherAccessSection" class="card" aria-label="Manage Teacher Access" style="display:none;">
+            <h2>🔑 Manage Teacher Access</h2>
+            <div class="allowlist-warning" role="alert">
+                ⚠️ <strong>Temporary low-security mode is active.</strong>
+                This allowlist bypasses Microsoft 365 authentication and is stored <strong>per-browser</strong>
+                (localStorage). Use Entra/M365 authentication when available.
+                To disable temporary mode: set <code>TEMP_TEACHER_ALLOWLIST_MODE = false</code>
+                in <code>teacher/dashboard-state.js</code> and redeploy.
+            </div>
+            <div class="allowlist-add-row">
+                <input id="newTeacherEmail" type="email"
+                    placeholder="teacher@education.wa.edu.au"
+                    aria-label="Teacher email address to add">
+                <button id="addTeacherBtn" class="btn-secondary">Add Teacher</button>
+            </div>
+            <p id="allowlistMsg" class="allowlist-msg" style="display:none;" aria-live="polite"></p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Email</th>
+                        <th>Source</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="allowlistBody"></tbody>
+            </table>
+            <div class="allowlist-help">
+                <strong>How to use:</strong>
+                Enter a teacher's full <code>@education.wa.edu.au</code> email above and click
+                <em>Add Teacher</em>. When that teacher opens the dashboard, they will be prompted
+                to enter their email — it must match exactly. This list is saved in
+                <strong>this browser only</strong>; other devices need their own copy.
+                <br><br>
+                <strong>Built-in entries</strong> (from <code>TEMP_TEACHER_ALLOWLIST_STATIC</code>
+                in code) are shown below but cannot be removed here — edit the source file instead.
+                <br><br>
+                <strong>To fully disable temporary mode</strong> once Entra is configured:
+                set <code>TEMP_TEACHER_ALLOWLIST_MODE = false</code> in
+                <code>teacher/dashboard-state.js</code> and redeploy.
+            </div>
         </section>
     </div>
 
@@ -360,6 +410,7 @@
             renderStats();
             renderRoster();
             renderLeaderboard();
+            if (dashboard.isTempAllowlistMode()) renderAllowlistTable();
         }
 
         function saveRosterRow(studentId) {
@@ -473,6 +524,175 @@
             localStorage.setItem(STRICT_MODE_KEY, JSON.stringify({ enabled: !!event.target.checked }));
             renderStrictModeStatus();
         });
+
+        // =========================================================
+        // Teacher Allowlist Manager
+        // =========================================================
+
+        function getAllowlistFromStorage() {
+            try {
+                const raw = localStorage.getItem(dashboard.TEACHER_ALLOWLIST_STORAGE_KEY);
+                if (!raw) return new Set();
+                return new Set(
+                    String(raw).split(/[\n,]+/)
+                        .map(e => e.trim().toLowerCase())
+                        .filter(Boolean)
+                );
+            } catch (_) { return new Set(); }
+        }
+
+        function saveAllowlistToStorage(emailSet) {
+            try {
+                const arr = [...emailSet].filter(Boolean);
+                if (arr.length === 0) {
+                    localStorage.removeItem(dashboard.TEACHER_ALLOWLIST_STORAGE_KEY);
+                } else {
+                    localStorage.setItem(dashboard.TEACHER_ALLOWLIST_STORAGE_KEY, arr.join(','));
+                }
+            } catch (_) {}
+        }
+
+        function getStaticDefaults() {
+            return new Set(
+                TEMP_TEACHER_ALLOWLIST_STATIC
+                    .map(e => String(e || '').trim().toLowerCase())
+                    .filter(Boolean)
+            );
+        }
+
+        function validateTeacherEmail(email) {
+            const emailRe = /^[^\s@]+@[^\s@.][^\s@]*\.[^\s@]+$/;
+            if (!emailRe.test(email)) {
+                return { valid: false, reason: 'Invalid email format.' };
+            }
+            if (!email.endsWith('@education.wa.edu.au')) {
+                return { valid: false, reason: 'Email must be a staff @education.wa.edu.au address.' };
+            }
+            if (email.startsWith('student.') || email.includes('@student.')) {
+                return { valid: false, reason: 'Student addresses cannot be added as teacher accounts.' };
+            }
+            return { valid: true };
+        }
+
+        function showAllowlistMsg(text, isError) {
+            const el = document.getElementById('allowlistMsg');
+            el.textContent = text;
+            el.className = 'allowlist-msg ' + (isError ? 'error' : 'success');
+            el.style.display = text ? 'block' : 'none';
+        }
+
+        function renderAllowlistTable() {
+            const section = document.getElementById('teacherAccessSection');
+            if (!section) return;
+
+            if (!dashboard.isTempAllowlistMode()) {
+                section.style.display = 'none';
+                return;
+            }
+            section.style.display = '';
+
+            const staticDefaults = getStaticDefaults();
+            const localEntries = getAllowlistFromStorage();
+            const localOnly = new Set([...localEntries].filter(e => !staticDefaults.has(e)));
+
+            const tbody = document.getElementById('allowlistBody');
+            const rows = [];
+
+            staticDefaults.forEach(email => {
+                rows.push(`
+                    <tr>
+                        <td>${escHtml(email)}</td>
+                        <td><span class="muted">Built-in (edit code to remove)</span></td>
+                        <td></td>
+                    </tr>
+                `);
+            });
+
+            localOnly.forEach(email => {
+                rows.push(`
+                    <tr>
+                        <td>${escHtml(email)}</td>
+                        <td><span class="muted">This browser</span></td>
+                        <td>
+                            <button class="btn-danger"
+                                style="width:auto;padding:4px 10px;"
+                                data-action="remove-teacher"
+                                data-email="${escHtml(email)}"
+                                aria-label="Remove ${escHtml(email)} from allowlist">
+                                Remove
+                            </button>
+                        </td>
+                    </tr>
+                `);
+            });
+
+            if (rows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" class="muted">No teachers in allowlist yet. Add one above.</td></tr>';
+            } else {
+                tbody.innerHTML = rows.join('');
+            }
+        }
+
+        function addToAllowlist() {
+            const input = document.getElementById('newTeacherEmail');
+            const email = input.value.trim().toLowerCase();
+
+            if (!email) {
+                showAllowlistMsg('Please enter an email address.', true);
+                return;
+            }
+
+            const check = validateTeacherEmail(email);
+            if (!check.valid) {
+                showAllowlistMsg(check.reason, true);
+                return;
+            }
+
+            const staticDefaults = getStaticDefaults();
+            const localEntries = getAllowlistFromStorage();
+
+            if (staticDefaults.has(email) || localEntries.has(email)) {
+                showAllowlistMsg('This email is already in the allowlist.', true);
+                return;
+            }
+
+            localEntries.add(email);
+            saveAllowlistToStorage(localEntries);
+            input.value = '';
+            showAllowlistMsg('Added: ' + email, false);
+            renderAllowlistTable();
+        }
+
+        function removeFromAllowlist(email) {
+            const localEntries = getAllowlistFromStorage();
+            if (!localEntries.has(email)) {
+                showAllowlistMsg('Email not found in local allowlist.', true);
+                return;
+            }
+            if (!confirm('Remove ' + email + ' from the teacher allowlist?')) return;
+            localEntries.delete(email);
+            saveAllowlistToStorage(localEntries);
+            showAllowlistMsg('Removed: ' + email, false);
+            renderAllowlistTable();
+        }
+
+        document.getElementById('addTeacherBtn').addEventListener('click', addToAllowlist);
+
+        document.getElementById('newTeacherEmail').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') addToAllowlist();
+        });
+
+        document.getElementById('allowlistBody').addEventListener('click', (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+            if (target.getAttribute('data-action') !== 'remove-teacher') return;
+            const email = target.getAttribute('data-email');
+            if (email) removeFromAllowlist(email);
+        });
+
+        // =========================================================
+        // End Teacher Allowlist Manager
+        // =========================================================
 
         (function init() {
             const ok = enforceTeacherDashboardAccess();
