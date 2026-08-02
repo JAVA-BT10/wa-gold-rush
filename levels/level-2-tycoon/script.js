@@ -897,13 +897,8 @@ function syncPlayerRecord() {
         ? (competition.matchedStudent?.displayId || competition.matchedStudent?.id || sessionStudentId || gameState.player.studentId || playerKey)
         : (gameState.player.studentId || playerKey);
     const studentName = competition.isLoggedIn
-<<<<<<< HEAD
-        ? competition.matchedStudent.name
-        : (gameState.player.studentName || (session?.studentName) || 'Anonymous Student');
-=======
         ? (competition.matchedStudent?.name || sessionStudentName || gameState.player.studentName || 'Signed-in Student')
-        : (gameState.player.studentName || 'Anonymous Student');
->>>>>>> origin/main
+        : (gameState.player.studentName || (session?.studentName) || 'Anonymous Student');
 
     // Build a unified v2 leaderboard entry
     const entry = {

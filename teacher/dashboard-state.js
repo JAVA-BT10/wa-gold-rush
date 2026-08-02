@@ -4,11 +4,10 @@
  * class statistics, and unified cross-level leaderboard.
  */
 
-<<<<<<< HEAD
 const STUDENTS_STORE_KEY  = 'wa_gold_rush_students_v2';
 const TEACHER_LEGACY_KEY  = 'teacher_dashboard';
 const MAX_USERNAME_LENGTH = 12;
-=======
+
 // =============================================================================
 // ⚠️  TEMPORARY ALLOWLIST MODE — LOW SECURITY — TEMPORARY USE ONLY ⚠️
 //
@@ -41,7 +40,6 @@ const TEMP_TEACHER_ALLOWLIST_STATIC = [
     // 'teacher@education.wa.edu.au',
     // 'anotherteacher@school.edu',
 ];
->>>>>>> origin/main
 
 class TeacherDashboard {
     constructor() {
@@ -538,9 +536,6 @@ class TeacherDashboard {
      * Get all students
      */
     getAllStudents() {
-<<<<<<< HEAD
-        return [...this.students].sort((a, b) => b.gameState.netWorth - a.gameState.netWorth);
-=======
         return this.students
             .map((student, index) => ({ student, index }))
             .sort((a, b) => {
@@ -548,7 +543,6 @@ class TeacherDashboard {
                 return diff !== 0 ? diff : a.index - b.index;
             })
             .map(entry => entry.student);
->>>>>>> origin/main
     }
 
     /**
@@ -578,19 +572,6 @@ class TeacherDashboard {
         const totalNetWorth = this.students.reduce((sum, s) => sum + this.toNumber(s?.gameState?.netWorth), 0);
         const totalRounds = this.students.reduce((sum, s) => sum + this.toNumber(s?.gameState?.round), 0);
 
-<<<<<<< HEAD
-        const sortedByNetWorth = [...this.students].sort((a, b) => b.gameState.netWorth - a.gameState.netWorth);
-        const sortedByMines    = [...this.students].sort((a, b) => b.gameState.ownedMines - a.gameState.ownedMines);
-
-        this.classStats = {
-            totalStudents:    this.students.length,
-            averageNetWorth:  totalNetWorth / this.students.length,
-            highestNetWorth:  sortedByNetWorth[0]?.gameState.netWorth || 0,
-            wealthiestStudent: sortedByNetWorth[0],
-            mostMinesOwned:   sortedByMines[0]?.gameState.ownedMines || 0,
-            topMineOwner:     sortedByMines[0],
-            averageRound:     totalRounds / this.students.length
-=======
         const sortedByNetWorth = [...this.students]
             .map((student, index) => ({ student, index }))
             .sort((a, b) => {
@@ -614,7 +595,6 @@ class TeacherDashboard {
             mostMinesOwned: this.toNumber(sortedByMines[0]?.gameState?.ownedMines),
             topMineOwner: sortedByMines[0],
             averageRound: totalRounds / this.students.length
->>>>>>> origin/main
         };
 
         return this.classStats;
@@ -625,7 +605,6 @@ class TeacherDashboard {
      * @param {{ mode?: string, level?: number, studentId?: string }} [filter]
      * @returns {object[]} Entries sorted by score descending.
      */
-<<<<<<< HEAD
     getLeaderboard(filter) {
         // Use LeaderboardStore if available (shared utility loaded on the page)
         if (typeof LeaderboardStore !== 'undefined') {
@@ -649,14 +628,6 @@ class TeacherDashboard {
         } catch (e) {
             return [];
         }
-=======
-    getLeaderboard() {
-        return this.getAllStudents()
-            .map((student, index) => ({
-                rank: index + 1,
-                ...student
-            }));
->>>>>>> origin/main
     }
 
     /**
@@ -730,11 +701,7 @@ class TeacherDashboard {
                 students:  this.students,
                 savedAt:   new Date().toISOString()
             };
-<<<<<<< HEAD
             localStorage.setItem(STUDENTS_STORE_KEY, JSON.stringify(store));
-=======
-            localStorage.setItem(this.TEACHER_DASHBOARD_KEY, JSON.stringify(data));
->>>>>>> origin/main
             return true;
         } catch (error) {
             console.error('Failed to save to localStorage:', error);
@@ -748,7 +715,6 @@ class TeacherDashboard {
      */
     loadFromLocalStorage() {
         try {
-<<<<<<< HEAD
             // Try v2 store
             const v2raw = localStorage.getItem(STUDENTS_STORE_KEY);
             if (v2raw) {
@@ -757,12 +723,6 @@ class TeacherDashboard {
                     this.students = v2.students;
                     return true;
                 }
-=======
-            const data = JSON.parse(localStorage.getItem(this.TEACHER_DASHBOARD_KEY));
-            if (data && data.students) {
-                this.students = data.students;
-                return true;
->>>>>>> origin/main
             }
 
             // Migrate from legacy key
@@ -831,12 +791,8 @@ class TeacherDashboard {
             topMineOwner: null,
             averageRound: 0
         };
-<<<<<<< HEAD
         localStorage.removeItem(STUDENTS_STORE_KEY);
         localStorage.removeItem(TEACHER_LEGACY_KEY);
-=======
-        localStorage.removeItem(this.TEACHER_DASHBOARD_KEY);
->>>>>>> origin/main
     }
 }
 
