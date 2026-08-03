@@ -89,16 +89,37 @@ document.addEventListener('DOMContentLoaded', async function() {
         return;
     }
 
-    gameState.loadFromLocalStorage();
-    gameState.assignedLevel = getAssignedLevelFromUrl();
-    ensureInvestmentPlansForOwnedMines();
-    hydrateIdentityInputs();
-    applyCompetitionSessionToIdentity();
-    setupEventListeners();
-    updatePauseStateFromStorage();
-    updateAssignedLevelBadge();
-    updateAllUI();
-    syncPlayerRecord();
+    try {
+        gameState.loadFromLocalStorage();
+        gameState.assignedLevel = getAssignedLevelFromUrl();
+        ensureInvestmentPlansForOwnedMines();
+        hydrateIdentityInputs();
+        applyCompetitionSessionToIdentity();
+        setupEventListeners();
+        updatePauseStateFromStorage();
+        updateAssignedLevelBadge();
+        updateAllUI();
+        syncPlayerRecord();
+    } catch (err) {
+        console.error('Level 2 init error:', err);
+        // Attempt to recover by resetting to a clean state and re-running setup
+        try {
+            gameState.reset();
+            gameState.assignedLevel = getAssignedLevelFromUrl();
+            ensureInvestmentPlansForOwnedMines();
+            hydrateIdentityInputs();
+            setupEventListeners();
+            updatePauseStateFromStorage();
+            updateAssignedLevelBadge();
+            updateAllUI();
+        } catch (recoveryErr) {
+            console.error('Level 2 recovery failed:', recoveryErr);
+            const minesContainer = document.getElementById('mines-container');
+            if (minesContainer) {
+                minesContainer.innerHTML = '<p class="empty-state">Game failed to initialize. Please refresh the page or click "New Game".</p>';
+            }
+        }
+    }
 });
 
 function setupEventListeners() {
@@ -211,7 +232,7 @@ function renderMineShop() {
 function renderMachinery() {
     const container = document.getElementById('machinery-list');
     if (!container) return;
-    if (gameState.machinery.length === 0) {
+    if (!Array.isArray(gameState.machinery) || gameState.machinery.length === 0) {
         container.innerHTML = '<p class="empty-state">No machinery owned yet.</p>';
         return;
     }
@@ -250,7 +271,7 @@ function renderMachineryShop() {
         return;
     }
     machineryList.forEach(([id, machinery]) => {
-        const ownedCount = gameState.machinery.filter(m => m.id === id).length;
+        const ownedCount = Array.isArray(gameState.machinery) ? gameState.machinery.filter(m => m.id === id).length : 0;
         const canPurchase = ownedCount < machinery.purchaseLimit && gameState.cash >= machinery.cost;
         const item = document.createElement('div');
         item.className = `shop-item ${!canPurchase ? 'unavailable' : ''}`;
@@ -289,14 +310,14 @@ function renderStats() {
     if (cashEl) cashEl.textContent = `$${gameState.cash.toFixed(2)}`;
     if (netWorthEl) netWorthEl.textContent = `$${netWorth.toFixed(2)}`;
     if (minesOwnedEl) minesOwnedEl.textContent = gameState.getOwnedMines().length;
-    if (machineryCountEl) machineryCountEl.textContent = gameState.machinery.length;
+    if (machineryCountEl) machineryCountEl.textContent = Array.isArray(gameState.machinery) ? gameState.machinery.length : 0;
     if (roundEl) roundEl.textContent = gameState.round;
 
     if (summaryCashEl) summaryCashEl.textContent = `$${gameState.cash.toFixed(2)}`;
     if (summaryMinesEl) summaryMinesEl.textContent = `$${mineValue.toFixed(2)}`;
     if (summaryMachineryEl) summaryMachineryEl.textContent = `$${machineryValue.toFixed(2)}`;
     if (summaryNetWorthEl) summaryNetWorthEl.textContent = `$${netWorth.toFixed(2)}`;
-    if (summaryTotalEl) summaryTotalEl.textContent = `$${gameState.totalProfitLoss.toFixed(2)}`;
+    if (summaryTotalEl) summaryTotalEl.textContent = `$${(typeof gameState.totalProfitLoss === 'number' ? gameState.totalProfitLoss : 0).toFixed(2)}`;
 }
 
 function renderFeaturesAndCosts() {
@@ -634,7 +655,13 @@ function playRound() {
 
     gameState.cash += roundProfit;
     const totalRoundChange = roundProfit + roundEffects.cashPenalty; // for display only
+    if (typeof gameState.totalProfitLoss !== 'number') {
+        gameState.totalProfitLoss = 0;
+    }
     gameState.totalProfitLoss += roundProfit; // cashPenalty already deducted from cash directly
+    if (!Array.isArray(gameState.roundHistory)) {
+        gameState.roundHistory = [];
+    }
     gameState.roundHistory.push({
         round: gameState.round,
         event: event ? event.id : null,
@@ -866,7 +893,7 @@ function saveClassRecords(records) {
 
 function calculateStrategyLabel() {
     const totals = { safe: 0, medium: 0, deep: 0 };
-    gameState.roundHistory.forEach(round => {
+    (Array.isArray(gameState.roundHistory) ? gameState.roundHistory : []).forEach(round => {
         (round.results || []).forEach(result => {
             if (result.digKey && result.digKey in totals) {
                 totals[result.digKey] += result.amount || 0;
@@ -918,7 +945,7 @@ function syncPlayerRecord() {
         cash: gameState.cash,
         netWorth: gameState.getNetWorth(),
         minesOwned: gameState.getOwnedMines().length,
-        machineryOwned: gameState.machinery.length,
+        machineryOwned: Array.isArray(gameState.machinery) ? gameState.machinery.length : 0,
         totalProfitLoss: gameState.totalProfitLoss,
         averageRoundProfit: gameState.totalProfitLoss / totalRounds,
         strategyLabel: calculateStrategyLabel(),

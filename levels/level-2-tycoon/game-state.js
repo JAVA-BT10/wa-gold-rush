@@ -84,18 +84,20 @@ class GameState {
      * Get all owned mines
      */
     getOwnedMines() {
-        if (!this.gameConfig?.mines) {
+        if (!this.gameConfig?.mines || !this.ownedMines) {
             return [];
         }
 
         return Object.entries(this.ownedMines)
-            .filter(([id, mine]) => mine.owned)
+            .filter(([id, mine]) => mine?.owned)
             .map(([id, mine]) => {
-                const config = this.gameConfig.mines[id];
+                const config = this.gameConfig.mines[id] || {};
+                const upgrades = Array.isArray(mine?.upgrades) ? mine.upgrades : [];
                 return {
                     ...config,
                     ...mine,
-                    currentUpgrades: mine.upgrades || []
+                    upgrades,
+                    currentUpgrades: upgrades
                 };
             });
     }
@@ -104,7 +106,7 @@ class GameState {
      * Get all available mines for purchase
      */
     getAvailableMinesForPurchase() {
-        if (!this.gameConfig?.mines) {
+        if (!this.gameConfig?.mines || !this.ownedMines) {
             return [];
         }
 
@@ -119,8 +121,8 @@ class GameState {
         }
         const level = this.assignedLevel || 2;
         if (mineId === 'kalgoorlie' && level < 3) return false;
-        if (mineId === 'leonora') return level >= 4 && !!this.ownedMines.kalgoorlie?.owned;
-        if (mineId === 'laverton') return level >= 4 && !!this.ownedMines.leonora?.owned;
+        if (mineId === 'leonora') return level >= 4 && !!(this.ownedMines?.kalgoorlie?.owned);
+        if (mineId === 'laverton') return level >= 4 && !!(this.ownedMines?.leonora?.owned);
         return true;
     }
 
@@ -225,6 +227,10 @@ class GameState {
         if (!this.isMachineryAllowed(machineryId)) {
             return { success: false, error: `${machinery.name} is locked for Level ${this.assignedLevel}` };
         }
+
+        if (!Array.isArray(this.machinery)) {
+            this.machinery = [];
+        }
         
         // Check purchase limit
         const ownedCount = this.machinery.filter(m => m.id === machineryId).length;
@@ -256,7 +262,7 @@ class GameState {
      * Sell machinery
      */
     sellMachinery(machineryIndex) {
-        if (!this.gameConfig?.machinery) {
+        if (!this.gameConfig?.machinery || !Array.isArray(this.machinery)) {
             return { success: false, error: 'Game configuration not loaded' };
         }
 
@@ -288,7 +294,7 @@ class GameState {
      * Get total machinery profit bonus
      */
     getTotalMachineryBonus() {
-        if (!this.gameConfig?.machinery) {
+        if (!this.gameConfig?.machinery || !Array.isArray(this.machinery)) {
             return 0;
         }
 
@@ -306,13 +312,13 @@ class GameState {
      * Calculate mine value (purchase price)
      */
     getMineValue() {
-        if (!this.gameConfig?.mines) {
+        if (!this.gameConfig?.mines || !this.ownedMines) {
             return 0;
         }
 
         let value = 0;
         Object.entries(this.ownedMines).forEach(([mineId, mine]) => {
-            if (mine.owned) {
+            if (mine?.owned) {
                 const mineConfig = this.gameConfig.mines[mineId];
                 if (mineConfig) {
                     value += mineConfig.baseValue;
@@ -326,7 +332,7 @@ class GameState {
      * Calculate machinery value (at resale value)
      */
     getMachineryValue() {
-        if (!this.gameConfig?.machinery) {
+        if (!this.gameConfig?.machinery || !Array.isArray(this.machinery)) {
             return 0;
         }
 
@@ -436,18 +442,27 @@ class GameState {
                 return { success: false, error: 'No save data found' };
             }
             
-            this.round = saveData.gameState.round;
-            this.cash = saveData.gameState.cash;
-            this.assignedLevel = saveData.gameState.assignedLevel || this.assignedLevel;
+            const gs = saveData.gameState;
+            if (!gs || typeof gs !== 'object') {
+                return { success: false, error: 'Invalid save data format' };
+            }
+
+            this.round = typeof gs.round === 'number' ? gs.round : this.round;
+            this.cash = typeof gs.cash === 'number' ? gs.cash : this.cash;
+            this.assignedLevel = gs.assignedLevel || this.assignedLevel;
             this.player = {
                 ...this.player,
-                ...(saveData.gameState.player || {})
+                ...(gs.player || {})
             };
-            this.ownedMines = saveData.gameState.ownedMines;
-            this.machinery = saveData.gameState.machinery;
-            this.roundHistory = saveData.gameState.roundHistory;
-            this.totalProfitLoss = saveData.gameState.totalProfitLoss;
-            this.investmentPlans = saveData.gameState.investmentPlans || {};
+            // Use saved value only if it is a valid non-null object/array to prevent
+            // undefined/null from corrupting state when loading old or partial saves.
+            this.ownedMines = (gs.ownedMines != null && typeof gs.ownedMines === 'object' && !Array.isArray(gs.ownedMines))
+                ? gs.ownedMines
+                : this.ownedMines;
+            this.machinery = Array.isArray(gs.machinery) ? gs.machinery : this.machinery;
+            this.roundHistory = Array.isArray(gs.roundHistory) ? gs.roundHistory : this.roundHistory;
+            this.totalProfitLoss = typeof gs.totalProfitLoss === 'number' ? gs.totalProfitLoss : this.totalProfitLoss;
+            this.investmentPlans = (gs.investmentPlans && typeof gs.investmentPlans === 'object') ? gs.investmentPlans : {};
             
             return { success: true, message: 'Game loaded from save' };
         } catch (error) {
