@@ -768,7 +768,8 @@ function getStoredM365Session() {
     return session && typeof session === 'object' ? session : null;
 }
 
-function normalizeSignedInStudentSession(session = {}) {
+function normalizeSignedInStudentSession(session) {
+    if (!session || typeof session !== 'object' || Array.isArray(session)) return null;
     const upn = String(session.studentUpn || session.studentId || '').trim().toLowerCase();
     const name = String(session.studentName || '').trim();
     if (!upn || !name) return null;
@@ -781,12 +782,16 @@ function normalizeSignedInStudentSession(session = {}) {
 }
 
 function getSignedInStudentSession() {
-    const m365Session = normalizeSignedInStudentSession(getStoredM365Session());
-    if (m365Session) return m365Session;
+    try {
+        const m365Session = normalizeSignedInStudentSession(getStoredM365Session());
+        if (m365Session) return m365Session;
 
-    const studentSession = getStoredStudentSession();
-    if (String(studentSession?.authProvider || '').toLowerCase() !== 'm365') return null;
-    return normalizeSignedInStudentSession(studentSession);
+        const studentSession = getStoredStudentSession();
+        if (String(studentSession?.authProvider || '').toLowerCase() !== 'm365') return null;
+        return normalizeSignedInStudentSession(studentSession);
+    } catch (e) {
+        return null;
+    }
 }
 
 function getMatchedStudentFromSession(session) {
