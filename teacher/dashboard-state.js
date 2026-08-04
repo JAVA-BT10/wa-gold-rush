@@ -515,9 +515,8 @@ class TeacherDashboard {
     getLevelLeaderboard(level) {
         const levelNum = Number(level) || 0;
         const relevant = this.students
-            .filter(s => s.level === levelNum && s.gameState)
             .map(s => ({
-                leaderboardName: s.leaderboardName || s.name || s.studentCode || 'Unknown',
+                leaderboardName: s.leaderboardName || s.studentCode || 'Unknown',
                 studentCode:     s.studentCode     || s.displayId || '',
                 classCode:       s.classCode       || '',
                 netWorth:        this.toNumber(s.gameState?.netWorth),
