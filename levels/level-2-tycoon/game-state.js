@@ -10,6 +10,8 @@ class GameState {
         this.gameConfig = null;
         this.assignedLevel = 2;
         this.player = {
+            studentCode: '',
+            leaderboardName: '',
             studentId: '',
             studentName: '',
             companyName: 'Untitled Mining Co.'
@@ -407,6 +409,19 @@ class GameState {
     }
 
     /**
+     * Record an investment action for the Investment Profile tracker.
+     * Delegates to InvestmentProfile module if available.
+     * @param {string} bucket — one of: highRisk, lowRisk, profitChasing, assetBuilding, futureProofing
+     * @param {number} [weight]
+     */
+    recordInvestmentAction(bucket, weight) {
+        if (typeof InvestmentProfile !== 'undefined') {
+            const code = this.player?.studentCode || 'anon';
+            InvestmentProfile.recordAction(code, this.assignedLevel, bucket, weight || 1);
+        }
+    }
+
+    /**
      * Save game state to localStorage
      */
     saveToLocalStorage(slotName = 'level2_autosave') {
@@ -478,6 +493,8 @@ class GameState {
         this.cash = this.gameConfig?.levels?.['2']?.startingCash || 200;
         this.assignedLevel = 2;
         this.player = {
+            studentCode: '',
+            leaderboardName: '',
             studentId: '',
             studentName: '',
             companyName: 'Untitled Mining Co.'

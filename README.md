@@ -138,3 +138,124 @@ Do **not** delete the allowlist or the M365 code — just setting the flag to `f
 ---
 
 **Status:** Level 1 ✅ Complete | Levels 2-5 ✅ Bundled in Goldfields Venture mode
+
+---
+
+## 🆕 SharePoint / Power Automate Login & Data Flow (Stage 1)
+
+### New Login Flow
+
+Microsoft 365 / MSAL sign-in has been replaced by a lightweight **StudentCode** login:
+
+1. From the Home page, students enter:
+   - **Student Code** *(required)* — their unique login key, e.g. `SC-Y6-1042`
+   - **Leaderboard Name** *(required)* — pseudonym shown publicly on leaderboards
+   - **Student ID** *(optional)* — school ID, teacher-facing only
+   - **Class Code** *(optional)* — e.g. `6B`
+2. Session is saved to `localStorage` so gameplay continues across page loads.
+3. Students can log out from the Home page at any time.
+
+### Data Fields & Privacy Model
+
+| Field | Stored Where | Visible To |
+|---|---|---|
+| `StudentCode` | localStorage + SharePoint | Teacher & student |
+| `LeaderboardName` | localStorage + SharePoint | Public (leaderboard only) |
+| `StudentID` | localStorage + SharePoint | Teacher only |
+| `StudentName` | localStorage + SharePoint | Teacher only |
+| `ClassCode` | localStorage + SharePoint | Teacher |
+| Progress/Score | localStorage + SharePoint | Teacher + student |
+
+Leaderboard displays **only** `LeaderboardName` — never `StudentName` or `StudentID`.
+
+### Configuring Power Automate Endpoints
+
+Edit `shared/sharepoint-sync.js` and set the `CONFIG` object at the top of the file:
+
+```js
+const CONFIG = {
+    profileEndpoint:  'https://prod-XX.australiasoutheast.logic.azure.com/...',  // student upsert flow
+    progressEndpoint: 'https://prod-XX.australiasoutheast.logic.azure.com/...',  // level result flow
+    gameKey: 'your-shared-secret',  // sent as X-Game-Key header
+};
+```
+
+If both endpoints are left blank, the game runs fully offline with no sync (all progress in localStorage).
+
+#### Power Automate: student/profile upsert flow
+Trigger: **When an HTTP request is received**  
+Expected JSON body:
+```json
+{
+  "StudentCode": "SC-Y6-1042",
+  "LeaderboardName": "Golddigger",
+  "StudentID": "123456",
+  "StudentName": "Alex Smith",
+  "ClassCode": "6B",
+  "LastPlayedUtc": "2025-01-01T00:00:00.000Z"
+}
+```
+Action: upsert SharePoint List row by `StudentCode`.
+
+#### Power Automate: level progress/result upsert flow
+Expected JSON body:
+```json
+{
+  "StudentCode": "SC-Y6-1042",
+  "Level": 2,
+  "Score": 1234.56,
+  "NetWorth": 1234.56,
+  "Round": 7,
+  "MinesOwned": 3,
+  "StrategyLabel": "Asset Building",
+  "InvestmentProfile": { "highRisk": 2, "lowRisk": 5, "profitChasing": 1, "assetBuilding": 4, "futureProofing": 2 },
+  "LastPlayedUtc": "2025-01-01T00:00:00.000Z"
+}
+```
+
+### CSV Import Formats
+
+#### Students (`teacher/dashboard.html` → Bulk Import)
+```csv
+StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level
+SC-Y6-001,Golddigger,123456,Alex Smith,6B,2
+SC-Y6-002,TinPan,654321,Jordan Lee,6B,3
+```
+Legacy format (`name,email,level`) is also accepted.
+
+#### Teachers (`teacher/dashboard.html` → Teacher Import)
+```csv
+TeacherEmail,TeacherName,ClassCode,Role
+teacher@education.wa.edu.au,Ms Smith,6B,teacher
+admin@education.wa.edu.au,Mr Jones,,admin
+```
+
+### Level-Specific Leaderboards
+
+Each level (1–6) has its own leaderboard in the Teacher Dashboard:
+- **Top 20** — sorted by net worth
+- **All-Time Level Record** — highest net worth ever for that level
+
+The in-game classroom leaderboard (Level 2–5 Goldfields Venture) shows public `LeaderboardName`.
+
+### Investment Profile
+
+Per student, per level:
+
+| Bucket | Triggered By |
+|---|---|
+| High Risk | Deep Vein Dig investments |
+| Profit Chasing | Medium dig investments |
+| Low Risk | Safe dig investments |
+| Asset Building | Mine & machinery purchases |
+| Future Proofing | Mine upgrades |
+
+A donut chart and rating label appear on:
+- The Home page login panel (after sign-in)
+- The Level 2–5 game panel (Company & Identity section)
+
+### Known Temporary Constraints
+
+- SharePoint sync is disabled until Power Automate endpoints are configured in `shared/sharepoint-sync.js`.
+- Teacher dashboard access is open (no passcode) by default. Set `TEACHER_PASSCODE_MODE = true` and `TEACHER_PASSCODE_STATIC = 'yourpasscode'` in `teacher/dashboard-state.js` to require a passcode.
+- Level 6 is a placeholder card — gameplay not yet implemented.
