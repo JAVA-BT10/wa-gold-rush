@@ -58,7 +58,7 @@ class TeacherDashboard {
         const expected = (
             localStorage.getItem(this.PASSCODE_STORAGE_KEY) || TEACHER_PASSCODE_STATIC
         ).trim();
-        if (!expected) return true; // no passcode configured → open access
+        if (!expected) return false; // passcode mode enabled but no passcode configured
         return String(entered || '').trim() === expected;
     }
 
