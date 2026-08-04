@@ -94,13 +94,24 @@
                     <p id="competition-status" class="competition-status">Competition Status: Free-play mode</p>
                     <p class="panel-note">Log in for competition from the <a href="../../index.html">Home page</a>. Your session carries over automatically.</p>
                     <div class="identity-grid">
-                        <label>Student ID <input id="studentIdInput" type="text" maxlength="30" placeholder="e.g. STU001"></label>
+                        <label>Student Code <input id="studentCodeInput" type="text" maxlength="40" placeholder="e.g. SC-Y6-1042"></label>
+                        <label>Leaderboard Name <input id="leaderboardNameInput" type="text" maxlength="30" placeholder="Your public nickname"></label>
+                        <label>Student ID <input id="studentIdInput" type="text" maxlength="30" placeholder="e.g. 123456"></label>
                         <label>Student Name <input id="studentNameInput" type="text" maxlength="50" placeholder="e.g. Alex"></label>
                         <label>Company Name <input id="companyNameInput" type="text" maxlength="50" placeholder="e.g. Perth Prospectors"></label>
                     </div>
                     <button id="saveIdentityButton" class="btn-secondary">Save Identity</button>
                     <button id="competitionLogoutButton" class="btn-secondary">Log Out of Competition</button>
                     <a class="btn-cta-nav" href="../../index.html">🏠 Go to Home Login</a>
+                </section>
+
+                <!-- INVESTMENT PROFILE MINI PANEL -->
+                <section class="panel-section" id="investmentProfileSection" style="display:none;">
+                    <h2>📊 Investment Profile</h2>
+                    <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+                        <canvas id="investmentProfileChart" aria-label="Investment strategy chart" role="img"></canvas>
+                        <div id="investmentProfileDetails" style="flex:1;min-width:140px;font-size:13px;line-height:1.7;"></div>
+                    </div>
                 </section>
 
                 <!-- MACHINERY SHOP -->
@@ -200,6 +211,8 @@
 
     <script src="game-state.js"></script>
     <script src="../../teacher/dashboard-state.js"></script>
+    <script src="../../shared/investment-profile.js"></script>
+    <script src="../../shared/sharepoint-sync.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

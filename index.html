@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Goldfields Goldrush W.A. - Level Selector</title>
-    <script src="https://alcdn.msauth.net/browser/2.39.0/js/msal-browser.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -185,6 +184,7 @@
             text-align: center;
         }
 
+        /* ---- Student Login Panel ---- */
         .competition-login {
             background: #f9f4e3;
             border: 2px solid #f4b400;
@@ -200,9 +200,32 @@
 
         .login-grid {
             display: grid;
-            grid-template-columns: 1fr;
-            gap: 12px;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
             margin: 12px 0;
+        }
+
+        .login-grid label {
+            display: flex;
+            flex-direction: column;
+            font-size: 13px;
+            font-weight: bold;
+            color: #444;
+            gap: 4px;
+        }
+
+        .login-grid input {
+            padding: 8px 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 14px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .login-grid input:focus {
+            outline: 2px solid #f4b400;
+            border-color: #f4b400;
         }
 
         .login-actions {
@@ -212,17 +235,90 @@
             margin-bottom: 10px;
         }
 
-        .login-actions .btn-play,
-        .login-actions .btn-teacher {
-            width: auto;
+        .btn-secondary {
+            display: inline-block;
+            background: #e0e0e0;
+            color: #333;
+            border: none;
+            padding: 10px 22px;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
         }
 
-        #competitionLoginMessage {
-            margin: 0;
-            color: #444;
+        .btn-secondary:hover { background: #bdbdbd; }
+
+        #loginStatus {
+            margin: 6px 0 0;
             font-size: 13px;
+            color: #555;
         }
 
+        .sync-status {
+            font-size: 11px;
+            color: #888;
+            margin-top: 4px;
+        }
+
+        .signed-in-chip {
+            display: inline-block;
+            background: #e8f5e9;
+            color: #1b5e20;
+            border: 1px solid #a5d6a7;
+            border-radius: 999px;
+            padding: 6px 10px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-top: 6px;
+        }
+
+        /* ---- Investment Profile Panel ---- */
+        #investmentProfilePanel {
+            display: none;
+            margin-top: 16px;
+            padding: 14px;
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+        }
+
+        #investmentProfilePanel h3 {
+            margin: 0 0 10px;
+            font-size: 15px;
+            color: #333;
+        }
+
+        .profile-layout {
+            display: flex;
+            gap: 16px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+        }
+
+        #investmentChart {
+            flex-shrink: 0;
+        }
+
+        .profile-details {
+            flex: 1;
+            min-width: 160px;
+        }
+
+        .profile-rating {
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 6px;
+        }
+
+        .profile-legend {
+            font-size: 12px;
+            line-height: 1.8;
+        }
+
+        /* ---- Teacher section ---- */
         .admin-section h2 {
             color: #666;
             margin-top: 0;
@@ -247,30 +343,11 @@
             transform: scale(1.05);
         }
 
-        .signed-in-chip {
-            display: inline-block;
-            background: #e8f5e9;
-            color: #1b5e20;
-            border: 1px solid #a5d6a7;
-            border-radius: 999px;
-            padding: 6px 10px;
-            font-size: 12px;
-            font-weight: bold;
-            margin-top: 6px;
-        }
-
         @media (max-width: 600px) {
-            .container {
-                padding: 20px;
-            }
-
-            h1 {
-                font-size: 36px;
-            }
-
-            .levels-grid {
-                grid-template-columns: 1fr;
-            }
+            .container { padding: 20px; }
+            h1 { font-size: 36px; }
+            .levels-grid { grid-template-columns: 1fr; }
+            .login-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -280,7 +357,7 @@
     <div class="container">
         <header>
             <h1>⛏️ Goldfields Goldrush W.A.</h1>
-            <p class="subtitle">Educational Mathematics Game - Level 1 Classic + Levels 2–5 Goldfields Venture Progression</p>
+            <p class="subtitle">Educational Mathematics Game — Level 1 Classic + Levels 2–6 Goldfields Venture Progression</p>
         </header>
 
         <main id="main-content">
@@ -354,210 +431,253 @@
                     </ul>
                     <a class="btn-play" href="levels/level-2-tycoon/index.html?level=5">Open in Goldfields Venture</a>
                 </article>
+
+                <article class="level-card coming-soon">
+                    <span class="status-badge status-coming">🔜 Coming Soon</span>
+                    <div class="level-number">6</div>
+                    <h2 class="level-title">Empire Builder</h2>
+                    <div class="level-description">Full portfolio management: inter-region transport, export contracts, and multi-company competition.</div>
+                    <ul class="level-features">
+                        <li>🌏 Export contracts</li>
+                        <li>🚂 Transport networks</li>
+                        <li>🏦 Borrowing &amp; leverage</li>
+                        <li>🥇 Class championship</li>
+                    </ul>
+                    <span class="btn-play" aria-disabled="true" style="opacity:0.5;cursor:not-allowed;">Coming Soon</span>
+                </article>
             </section>
 
-            <section class="competition-login" aria-label="Competition login">
-                <h2>🏆 Student Competition Login</h2>
-                <p>Sign in with your school Microsoft 365 account to participate in shared leaderboard, class rankings, and progress sync.</p>
-                <div class="login-grid">
-                    <div id="signedInChip" class="signed-in-chip" style="display:none;"></div>
+            <!-- Student Login Panel -->
+            <section class="competition-login" aria-label="Student competition login">
+                <h2>🏆 Student Login</h2>
+                <p>Enter your Student Code to join the leaderboard and track your progress across levels.</p>
+
+                <div id="loggedOutView">
+                    <div class="login-grid">
+                        <label for="inputStudentCode">Student Code <span style="color:#c62828">*</span>
+                            <input id="inputStudentCode" type="text" placeholder="e.g. SC-Y6-1042" autocomplete="off" maxlength="40">
+                        </label>
+                        <label for="inputLeaderboardName">Leaderboard Name <span style="color:#c62828">*</span>
+                            <input id="inputLeaderboardName" type="text" placeholder="Your public nickname" autocomplete="off" maxlength="30">
+                        </label>
+                        <label for="inputStudentID">Student ID <span style="color:#888;font-weight:normal">(optional)</span>
+                            <input id="inputStudentID" type="text" placeholder="School ID" autocomplete="off" maxlength="20">
+                        </label>
+                        <label for="inputClassCode">Class Code <span style="color:#888;font-weight:normal">(optional)</span>
+                            <input id="inputClassCode" type="text" placeholder="e.g. 6B" autocomplete="off" maxlength="20">
+                        </label>
+                    </div>
+                    <div class="login-actions">
+                        <button id="loginBtn" class="btn-play" type="button">Join Leaderboard</button>
+                    </div>
+                    <p id="loginStatus"></p>
                 </div>
-                <div class="login-actions">
-                    <button id="competitionLoginBtn" class="btn-play" type="button">Sign in with Microsoft 365</button>
-                    <button id="competitionLogoutBtn" class="btn-teacher" type="button">Log Out</button>
+
+                <div id="loggedInView" style="display:none;">
+                    <div id="signedInChip" class="signed-in-chip"></div>
+                    <p id="loginStatus2" style="font-size:13px;color:#555;margin:6px 0 0;"></p>
+                    <p class="sync-status" id="syncStatus"></p>
+                    <div class="login-actions" style="margin-top:10px;">
+                        <button id="logoutBtn" class="btn-secondary" type="button">Log Out</button>
+                    </div>
+
+                    <!-- Investment Profile Panel -->
+                    <div id="investmentProfilePanel">
+                        <h3>📊 My Investment Profile</h3>
+                        <div class="profile-layout">
+                            <canvas id="investmentChart" aria-label="Investment strategy donut chart" role="img"></canvas>
+                            <div class="profile-details">
+                                <div class="profile-rating" id="profileRating"></div>
+                                <div class="profile-legend" id="profileLegend"></div>
+                                <p class="muted" id="profileNote" style="font-size:11px;color:#888;margin-top:6px;"></p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <p id="competitionLoginMessage">Competition Status: Not signed in</p>
             </section>
 
             <div class="divider"></div>
 
             <section class="admin-section" aria-label="Teacher and administrator tools">
-                <h2>👨‍🏫 Teachers & Administrators</h2>
+                <h2>👨‍🏫 Teachers &amp; Administrators</h2>
                 <p>Manage student accounts, assign levels, and monitor progress</p>
                 <a class="btn-teacher" href="teacher/dashboard.html">Access Teacher Dashboard</a>
             </section>
         </main>
     </div>
 
+    <script src="shared/investment-profile.js"></script>
+    <script src="shared/sharepoint-sync.js"></script>
     <script>
+        // =====================================================================
+        // Session keys
+        // =====================================================================
         const STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
-        const M365_SESSION_KEY = 'wa_gold_rush_m365_session';
 
-        const APP_CONFIG = {
-            tenantId: 'e08016f9-d1fd-4cbb-83b0-b76eb4361627',
-            clientId: '751db20d-023e-4f06-9c64-31f42fc3a385',
-            authorityBase: 'https://login.microsoftonline.com/',
-            redirectUri: window.location.origin + window.location.pathname,
-            allowedDomains: ['education.wa.edu.au', 'student.education.wa.edu.au']
-        };
-
-        const msalConfig = {
-            auth: {
-                clientId: APP_CONFIG.clientId,
-                authority: `${APP_CONFIG.authorityBase}${APP_CONFIG.tenantId}`,
-                redirectUri: APP_CONFIG.redirectUri
-            },
-            cache: {
-                cacheLocation: 'sessionStorage',
-                storeAuthStateInCookie: true
-            }
-        };
-
-        const loginRequest = {
-            scopes: ['openid', 'profile', 'email', 'User.Read']
-        };
-
-        const competitionLoginBtn = document.getElementById('competitionLoginBtn');
-        const competitionLogoutBtn = document.getElementById('competitionLogoutBtn');
-        const competitionLoginMessage = document.getElementById('competitionLoginMessage');
-        const signedInChip = document.getElementById('signedInChip');
-
-        let msalInstance = null;
-
-        function safeSetMessage(text) {
-            competitionLoginMessage.textContent = text;
+        // =====================================================================
+        // Helpers
+        // =====================================================================
+        function escHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
-        function setSignedInChip(text) {
-            if (!text) {
-                signedInChip.style.display = 'none';
-                signedInChip.textContent = '';
+        function getSession() {
+            try {
+                const raw = localStorage.getItem(STUDENT_SESSION_KEY);
+                if (!raw) return null;
+                const s = JSON.parse(raw);
+                return s && s.studentCode ? s : null;
+            } catch (_) { return null; }
+        }
+
+        function saveSession(session) {
+            try {
+                localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(session));
+            } catch (_) {}
+        }
+
+        function clearSession() {
+            try { localStorage.removeItem(STUDENT_SESSION_KEY); } catch (_) {}
+        }
+
+        // =====================================================================
+        // Investment Profile rendering
+        // =====================================================================
+        function renderInvestmentProfile(session) {
+            const panel = document.getElementById('investmentProfilePanel');
+            if (!panel || typeof InvestmentProfile === 'undefined') return;
+
+            const code = session.studentCode;
+            const level = Number(session.lastLevel) || 2;
+
+            panel.style.display = 'block';
+
+            const canvas = document.getElementById('investmentChart');
+            InvestmentProfile.renderChart(canvas, code, level, { size: 110 });
+
+            const profile = InvestmentProfile.compute(code, level);
+
+            document.getElementById('profileRating').textContent =
+                `${profile.ratingEmoji} ${profile.ratingLabel}`;
+
+            document.getElementById('profileLegend').innerHTML =
+                InvestmentProfile.legendHtml(code, level);
+
+            const note = profile.total === 0
+                ? 'Play a level to build your investment profile.'
+                : `Dominant strategy: ${profile.dominantLabel} (${Math.round(profile.percentages[profile.dominantBucket] * 100)}%)`;
+            document.getElementById('profileNote').textContent = note;
+        }
+
+        // =====================================================================
+        // Render logged-in / logged-out state
+        // =====================================================================
+        function renderLoggedIn(session) {
+            document.getElementById('loggedOutView').style.display = 'none';
+            document.getElementById('loggedInView').style.display = '';
+
+            document.getElementById('signedInChip').textContent =
+                `⛏️ ${escHtml(session.leaderboardName)} (${escHtml(session.studentCode)})`;
+
+            document.getElementById('loginStatus2').textContent =
+                session.classCode
+                    ? `Class: ${session.classCode} · Ready to play!`
+                    : 'Ready to play!';
+
+            renderInvestmentProfile(session);
+            updateSyncStatus();
+        }
+
+        function renderLoggedOut() {
+            document.getElementById('loggedOutView').style.display = '';
+            document.getElementById('loggedInView').style.display = 'none';
+            document.getElementById('loginStatus').textContent = '';
+        }
+
+        function updateSyncStatus() {
+            const el = document.getElementById('syncStatus');
+            if (!el || typeof SharePointSync === 'undefined') return;
+            const q = SharePointSync.queueLength();
+            el.textContent = q > 0
+                ? `⚠️ ${q} progress update${q > 1 ? 's' : ''} waiting to sync`
+                : '';
+        }
+
+        // =====================================================================
+        // Login
+        // =====================================================================
+        document.getElementById('loginBtn').addEventListener('click', async () => {
+            const studentCode     = document.getElementById('inputStudentCode').value.trim();
+            const leaderboardName = document.getElementById('inputLeaderboardName').value.trim();
+            const studentId       = document.getElementById('inputStudentID').value.trim();
+            const classCode       = document.getElementById('inputClassCode').value.trim();
+
+            const statusEl = document.getElementById('loginStatus');
+
+            if (!studentCode) {
+                statusEl.textContent = '⚠️ Student Code is required.';
+                document.getElementById('inputStudentCode').focus();
                 return;
             }
-            signedInChip.style.display = 'inline-block';
-            signedInChip.textContent = text;
-        }
-
-        function getStoredSession() {
-            try {
-                const raw = sessionStorage.getItem(M365_SESSION_KEY);
-                if (!raw) return null;
-                return JSON.parse(raw);
-            } catch {
-                return null;
+            if (!leaderboardName) {
+                statusEl.textContent = '⚠️ Leaderboard Name is required.';
+                document.getElementById('inputLeaderboardName').focus();
+                return;
             }
-        }
-
-        function clearAllSessions() {
-            sessionStorage.removeItem(M365_SESSION_KEY);
-            sessionStorage.removeItem(STUDENT_SESSION_KEY);
-        }
-
-        function saveSessionFromAccount(account) {
-            const upn = String(account?.username || '').trim().toLowerCase();
-            const name = String(account?.name || upn).trim();
 
             const session = {
-                provider: 'm365',
-                studentUpn: upn,
-                studentName: name,
+                studentCode,
+                leaderboardName,
+                studentId,
+                classCode,
                 loginAtUtc: new Date().toISOString(),
-                tenantId: APP_CONFIG.tenantId
+                lastLevel: 2
             };
 
-            sessionStorage.setItem(M365_SESSION_KEY, JSON.stringify(session));
-            sessionStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify({
-                studentId: upn,
-                studentName: name,
-                studentUpn: upn,
-                authProvider: 'm365'
-            }));
+            saveSession(session);
+            statusEl.textContent = '';
+            renderLoggedIn(session);
 
-            return session;
-        }
-
-        function isAllowedDomain(upn) {
-            const domain = upn.split('@')[1] || '';
-            return APP_CONFIG.allowedDomains.includes(domain.toLowerCase());
-        }
-
-        function renderSignedOutState() {
-            setSignedInChip('');
-            safeSetMessage('Competition Status: Not signed in');
-        }
-
-        function renderSignedInState(session) {
-            setSignedInChip(`Signed in: ${session.studentName}`);
-            safeSetMessage(`Competition Status: Logged in as ${session.studentName} (${session.studentUpn})`);
-        }
-
-        async function ensureMsal() {
-            if (!msalInstance) {
-                msalInstance = new msal.PublicClientApplication(msalConfig);
-            }
-            return msalInstance;
-        }
-
-        async function processRedirect() {
-            const instance = await ensureMsal();
-            const response = await instance.handleRedirectPromise();
-            if (response && response.account) {
-                instance.setActiveAccount(response.account);
-                const upn = String(response.account.username || '').toLowerCase();
-                if (!isAllowedDomain(upn)) {
-                    clearAllSessions();
-                    safeSetMessage('Signed in account is not an allowed school domain.');
-                    return;
-                }
-                const session = saveSessionFromAccount(response.account);
-                renderSignedInState(session);
-            }
-        }
-
-        async function bootstrapAuthState() {
+            // Non-blocking sync — gameplay is not affected if this fails
             try {
-                await processRedirect();
-                const existing = getStoredSession();
-                if (existing?.studentUpn) {
-                    renderSignedInState(existing);
-                    return;
+                const result = await SharePointSync.syncProfile({
+                    studentCode,
+                    leaderboardName,
+                    studentId,
+                    classCode
+                });
+                if (result && result.queued) {
+                    document.getElementById('syncStatus').textContent =
+                        '⚠️ Profile sync queued (will retry automatically).';
                 }
-
-                const instance = await ensureMsal();
-                const account = instance.getActiveAccount() || instance.getAllAccounts()[0];
-                if (account) {
-                    const upn = String(account.username || '').toLowerCase();
-                    if (isAllowedDomain(upn)) {
-                        const session = saveSessionFromAccount(account);
-                        renderSignedInState(session);
-                        return;
-                    }
-                }
-
-                renderSignedOutState();
-            } catch (error) {
-                console.error(error);
-                renderSignedOutState();
-            }
-        }
-
-        competitionLoginBtn.addEventListener('click', async () => {
-            try {
-                const instance = await ensureMsal();
-                await instance.loginRedirect(loginRequest);
-            } catch (error) {
-                console.error(error);
-                safeSetMessage('Microsoft sign-in could not start. Check app registration and try again.');
-            }
+            } catch (_) {}
         });
 
-        competitionLogoutBtn.addEventListener('click', async () => {
-            try {
-                clearAllSessions();
-                renderSignedOutState();
-
-                const instance = await ensureMsal();
-                const account = instance.getActiveAccount() || instance.getAllAccounts()[0];
-                if (account) {
-                    await instance.logoutRedirect({ account });
-                }
-            } catch (error) {
-                console.error(error);
-                safeSetMessage('Signed out locally. If needed, close browser tab to complete Microsoft logout.');
-            }
+        // =====================================================================
+        // Logout
+        // =====================================================================
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            clearSession();
+            renderLoggedOut();
         });
 
-        bootstrapAuthState();
+        // =====================================================================
+        // Initialise on load
+        // =====================================================================
+        (function init() {
+            const session = getSession();
+            if (session) {
+                renderLoggedIn(session);
+            } else {
+                renderLoggedOut();
+            }
+            updateSyncStatus();
+        })();
     </script>
 </body>
 </html>
