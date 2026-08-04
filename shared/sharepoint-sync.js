@@ -117,6 +117,7 @@ const SharePointSync = (() => {
     async function syncProfile(opts) {
         if (!CONFIG.profileEndpoint) return { queued: false, skipped: true };
         const payload = buildProfilePayload(opts);
+        if (!payload.StudentCode) return { queued: false, skipped: true };
         try {
             await _post(CONFIG.profileEndpoint, payload);
             return { ok: true };
