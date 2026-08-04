@@ -975,10 +975,6 @@ function syncPlayerRecord() {
         leaderboardName,
         studentId,
         studentName,
-        // legacy compat fields
-        studentId: studentId,
-        studentName: studentName,
-        companyName: gameState.player.companyName || DEFAULT_COMPANY_NAME,
         level: gameState.assignedLevel,
         round: gameState.round,
         cash: gameState.cash,
