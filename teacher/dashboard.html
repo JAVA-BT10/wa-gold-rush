@@ -122,12 +122,15 @@
             <p><button id="addStudentBtn" class="btn">Add Student</button></p>
         </section>
 
-        <!-- Bulk Import (Students) -->
+        <!-- Bulk Import (Students / Class Teachers) -->
         <section class="card">
-            <h2>Bulk Import — Students</h2>
+            <h2>Bulk Import — Students / Class Teachers</h2>
             <p class="muted">
                 CSV headers: <code>StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level</code><br>
-                Legacy CSV: <code>name,email,level</code> also accepted.
+                Legacy CSV: <code>name,email,level</code> also accepted.<br>
+                Mixed CSV/JSON can also include class-teacher rows with
+                <code>TeacherEmail,TeacherName,ClassCode,Role</code>. Admin rows should still use
+                the separate Teacher Import box below.
             </p>
             <div class="grid">
                 <label>Format
@@ -138,7 +141,7 @@
                 </label>
                 <div>
                     <div class="muted" style="margin-top:4px;">Import</div>
-                    <button id="importBtn" class="btn" style="margin-top:4px;">Import Students</button>
+                    <button id="importBtn" class="btn" style="margin-top:4px;">Import Roster</button>
                 </div>
             </div>
             <textarea id="bulkInput" rows="5"
@@ -151,7 +154,8 @@
             <h2>Teacher Import</h2>
             <p class="muted">
                 CSV headers: <code>TeacherEmail,TeacherName,ClassCode,Role</code><br>
-                TeacherEmail is required. Role: <code>teacher</code> or <code>admin</code>.
+                TeacherName is required. Role: <code>teacher</code> or <code>admin</code>.<br>
+                <code>ClassCode</code> is required for teachers and may be blank for admins.
             </p>
             <textarea id="teacherImportInput" rows="4"
                 placeholder="TeacherEmail,TeacherName,ClassCode,Role&#10;teacher@education.wa.edu.au,Ms Smith,6B,teacher"></textarea>
@@ -518,7 +522,7 @@
         document.getElementById('importFormat').addEventListener('change', function () {
             const ta = document.getElementById('bulkInput');
             if (this.value === 'json') {
-                ta.placeholder = '[{"studentCode":"SC-001","leaderboardName":"GoldDigger","studentName":"Alex","level":2}]';
+                ta.placeholder = '[{"studentCode":"SC-001","leaderboardName":"GoldDigger","studentName":"Alex","classCode":"6B","level":2},{"teacherEmail":"teacher@education.wa.edu.au","teacherName":"Ms Smith","classCode":"6B","role":"teacher"}]';
             } else {
                 ta.placeholder = 'StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level\nSC-Y6-001,Golddigger,123456,Alex Smith,6B,2';
             }
@@ -532,6 +536,14 @@
             try {
                 const r = dashboard.bulkImportStudents(data, format);
                 let html = `<span class="ok">✅ Imported ${r.added.length} student${r.added.length !== 1 ? 's' : ''}.</span>`;
+                const teacherTotals = (r.teachers?.added.length || 0) + (r.teachers?.updated.length || 0) + (r.teachers?.skipped.length || 0);
+                if (teacherTotals) {
+                    html += `<br><span class="ok">👩‍🏫 Teachers — Added ${r.teachers.added.length} · Updated ${r.teachers.updated.length}.</span>`;
+                    if (r.teachers.skipped.length) {
+                        html += `<br><span class="err">⚠️ Teacher rows skipped ${r.teachers.skipped.length}:</span>`;
+                        html += r.teachers.skipped.map(s => `<br><span class="err muted">  Row ${s.row}: ${escHtml(s.reason)}</span>`).join('');
+                    }
+                }
                 if (r.skipped.length) {
                     html += `<br><span class="err">⚠️ Skipped ${r.skipped.length} row${r.skipped.length !== 1 ? 's' : ''}:</span>`;
                     html += r.skipped.map(s => `<br><span class="err muted">  Row ${s.row}: ${escHtml(s.reason)}</span>`).join('');

@@ -215,7 +215,7 @@ Expected JSON body:
 
 ### CSV Import Formats
 
-#### Students (`teacher/dashboard.html` → Bulk Import)
+#### Students / Class Teachers (`teacher/dashboard.html` → Bulk Import)
 ```csv
 StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level
 SC-Y6-001,Golddigger,123456,Alex Smith,6B,2
@@ -223,12 +223,26 @@ SC-Y6-002,TinPan,654321,Jordan Lee,6B,3
 ```
 Legacy format (`name,email,level`) is also accepted.
 
+The same bulk import workflow can also include non-admin teacher rows in the same payload when teacher-specific fields are present:
+
+```csv
+StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level,TeacherEmail,TeacherName,Role
+SC-Y6-001,Golddigger,123456,Alex Smith,6B,2,,,
+,,,,6B,,teacher@education.wa.edu.au,Ms Smith,teacher
+```
+
 #### Teachers (`teacher/dashboard.html` → Teacher Import)
 ```csv
 TeacherEmail,TeacherName,ClassCode,Role
 teacher@education.wa.edu.au,Ms Smith,6B,teacher
 admin@education.wa.edu.au,Mr Jones,,admin
 ```
+
+Validation rules:
+- `TeacherEmail` must be present and a valid email address
+- `TeacherName` is required
+- `Role` must be `teacher` or `admin`
+- `ClassCode` is required for `teacher` rows and may be blank for `admin`
 
 ### Level-Specific Leaderboards
 

@@ -141,6 +141,84 @@ class TeacherDashboard {
         return rows;
     }
 
+    normalizeTeacherImportRow(teacherData, options = {}) {
+        const allowAdmin = options.allowAdmin !== false;
+        const email = String(
+            teacherData.teacherEmail || teacherData.TeacherEmail || teacherData.email || ''
+        ).trim().toLowerCase();
+        const teacherName = String(
+            teacherData.teacherName || teacherData.TeacherName || teacherData.name || ''
+        ).trim();
+        const classCode = String(
+            teacherData.classCode || teacherData.ClassCode || ''
+        ).trim();
+        const role = String(
+            teacherData.role || teacherData.Role || ''
+        ).trim().toLowerCase();
+
+        const ALLOWED_ROLES = new Set(['teacher', 'admin']);
+        const EMAIL_RE = /^[^\s@]+@[^\s@.][^\s@]*\.[^\s@]+$/;
+
+        if (!email) return { success: false, error: 'Missing TeacherEmail' };
+        if (!EMAIL_RE.test(email)) return { success: false, error: `Invalid TeacherEmail: ${email}` };
+        if (!teacherName) return { success: false, error: 'Missing TeacherName' };
+        if (!role) return { success: false, error: 'Missing Role' };
+        if (!ALLOWED_ROLES.has(role)) return { success: false, error: `Unknown role: ${role}` };
+        if (role !== 'admin' && !classCode) {
+            return { success: false, error: 'Missing ClassCode for teacher role' };
+        }
+        if (!allowAdmin && role === 'admin') {
+            return { success: false, error: 'Admin rows must be imported via Teacher Import' };
+        }
+
+        return {
+            success: true,
+            teacher: { email, name: teacherName, classCode, role }
+        };
+    }
+
+    importTeacherRows(rawTeachers, options = {}) {
+        if (!Array.isArray(rawTeachers) || !rawTeachers.length) {
+            return { added: [], updated: [], skipped: [] };
+        }
+
+        const currentList = this._loadTeacherList();
+        const added = [];
+        const updated = [];
+        const skipped = [];
+
+        rawTeachers.forEach((row) => {
+            const normalized = this.normalizeTeacherImportRow(row, options);
+            if (!normalized.success) {
+                skipped.push({ row: row._row || '?', reason: normalized.error });
+                return;
+            }
+
+            const teacher = normalized.teacher;
+            const existing = currentList.find(t => t.email === teacher.email);
+            if (existing) {
+                existing.name = teacher.name;
+                existing.classCode = teacher.classCode;
+                existing.role = teacher.role;
+                existing.updatedAt = new Date().toISOString();
+                updated.push(existing);
+            } else {
+                const entry = {
+                    email: teacher.email,
+                    name: teacher.name,
+                    classCode: teacher.classCode,
+                    role: teacher.role,
+                    addedAt: new Date().toISOString()
+                };
+                currentList.push(entry);
+                added.push(entry);
+            }
+        });
+
+        this._saveTeacherList(currentList);
+        return { added, updated, skipped };
+    }
+
     // =========================================================================
     // Config
     // =========================================================================
@@ -228,39 +306,64 @@ class TeacherDashboard {
      *   — or legacy —
      *   name,email,level
      *
-     * Returns { added, skipped }
+     * Also accepts teacher rows in mixed roster imports and returns
+     * { added, skipped, teachers } where teachers is { added, updated, skipped }.
      */
     bulkImportStudents(data, format = 'csv') {
         let rawStudents = [];
+        let rawTeachers = [];
 
         if (format === 'csv') {
             const rows = this.parseCsvRows(data);
-            if (!rows.length) return { added: [], skipped: [] };
+            if (!rows.length) {
+                return { added: [], skipped: [], teachers: { added: [], updated: [], skipped: [] } };
+            }
 
             const headerRow = rows[0].fields.map(s => String(s || '').trim().toLowerCase());
             const isNewFormat = headerRow.includes('studentcode') || headerRow.includes('leaderboardname');
-            const isHeader = isNaN(parseInt(headerRow[0], 10)) || isNewFormat;
+            const hasTeacherColumns = (
+                headerRow.includes('teacheremail') ||
+                headerRow.includes('teachername') ||
+                headerRow.includes('role')
+            );
+            const isHeader = isNaN(parseInt(headerRow[0], 10)) || isNewFormat || hasTeacherColumns;
             const dataRows = isHeader ? rows.slice(1) : rows;
+            const idx = (fields, col) => {
+                const i = headerRow.indexOf(col);
+                return i >= 0 ? (fields[i] || '') : '';
+            };
 
             dataRows.forEach((row) => {
                 const originalRow = row.rowNumber;
                 const f = row.fields.map(s => String(s || '').trim());
                 if (!f.some(Boolean)) return;
 
+                const hasTeacherData = hasTeacherColumns && (
+                    idx(f, 'teacheremail') ||
+                    idx(f, 'teachername') ||
+                    idx(f, 'role')
+                );
+                if (hasTeacherData) {
+                    rawTeachers.push({
+                        _row: originalRow,
+                        teacherEmail: idx(f, 'teacheremail'),
+                        teacherName: idx(f, 'teachername'),
+                        classCode: idx(f, 'classcode'),
+                        role: idx(f, 'role')
+                    });
+                    return;
+                }
+
                 if (isNewFormat) {
                     // New format: StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level
-                    const idx = (col) => {
-                        const i = headerRow.indexOf(col);
-                        return i >= 0 ? (f[i] || '') : '';
-                    };
                     rawStudents.push({
                         _row: originalRow,
-                        studentCode:     idx('studentcode'),
-                        leaderboardName: idx('leaderboardname'),
-                        studentId:       idx('studentid'),
-                        studentName:     idx('studentname'),
-                        classCode:       idx('classcode'),
-                        level:           parseInt(idx('level'), 10) || 1
+                        studentCode:     idx(f, 'studentcode'),
+                        leaderboardName: idx(f, 'leaderboardname'),
+                        studentId:       idx(f, 'studentid'),
+                        studentName:     idx(f, 'studentname'),
+                        classCode:       idx(f, 'classcode'),
+                        level:           parseInt(idx(f, 'level'), 10) || 1
                     });
                 } else {
                     // Legacy format: name,email,level
@@ -284,9 +387,32 @@ class TeacherDashboard {
             if (!Array.isArray(parsed)) {
                 throw new TypeError('JSON must be an array of student objects.');
             }
-            rawStudents = parsed.map((item, idx) => {
+            parsed.forEach((item, idx) => {
+                if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                    rawStudents.push({ _row: idx + 1, _skipReason: 'Row must be an object' });
+                    return;
+                }
+                const hasTeacherFields = (
+                    Object.prototype.hasOwnProperty.call(item, 'teacherEmail') ||
+                    Object.prototype.hasOwnProperty.call(item, 'TeacherEmail') ||
+                    Object.prototype.hasOwnProperty.call(item, 'teacherName') ||
+                    Object.prototype.hasOwnProperty.call(item, 'TeacherName') ||
+                    Object.prototype.hasOwnProperty.call(item, 'role') ||
+                    Object.prototype.hasOwnProperty.call(item, 'Role')
+                );
+                if (hasTeacherFields) {
+                    rawTeachers.push({
+                        _row: idx + 1,
+                        teacherEmail: item.teacherEmail || item.TeacherEmail || '',
+                        teacherName: item.teacherName || item.TeacherName || '',
+                        classCode: item.classCode || item.ClassCode || '',
+                        role: item.role || item.Role || ''
+                    });
+                    return;
+                }
+
                 const parsedLevel = parseInt(item.level ?? item.Level ?? item.assignedLevel, 10);
-                return {
+                rawStudents.push({
                     _row: idx + 1,
                     studentCode:     (item.studentCode     || item.StudentCode     || '').toString().trim(),
                     leaderboardName: (item.leaderboardName || item.LeaderboardName || '').toString().trim(),
@@ -294,7 +420,7 @@ class TeacherDashboard {
                     studentName:     (item.studentName     || item.StudentName     || item.name  || '').toString().trim(),
                     classCode:       (item.classCode       || item.ClassCode       || '').toString().trim(),
                     level: (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : 1
-                };
+                });
             });
         } else {
             throw new TypeError('Unsupported import format. Use csv or json.');
@@ -316,7 +442,8 @@ class TeacherDashboard {
             added.push(this.addStudent(studentData));
         });
 
-        return { added, skipped };
+        const teachers = this.importTeacherRows(rawTeachers, { allowAdmin: false });
+        return { added, skipped, teachers };
     }
 
     /**
@@ -332,64 +459,26 @@ class TeacherDashboard {
         const isHeader = headerRow.includes('teacheremail') || isNaN(parseInt(headerRow[0], 10));
         const dataRows = isHeader ? rows.slice(1) : rows;
 
-        const ALLOWED_ROLES = new Set(['teacher', 'admin', '']);
-        const EMAIL_RE = /^[^\s@]+@[^\s@.][^\s@]*\.[^\s@]+$/;
-
-        const added = [];
-        const updated = [];
-        const skipped = [];
-
         const getField = (fields, colName) => {
             const i = headerRow.indexOf(colName);
             return i >= 0 ? String(fields[i] || '').trim() : '';
         };
 
-        const currentList = this._loadTeacherList();
+        const rawTeachers = [];
 
         dataRows.forEach((row) => {
             const f = row.fields.map(s => String(s || '').trim());
             if (!f.some(Boolean)) return;
 
-            const email     = getField(f, 'teacheremail').toLowerCase();
-            const name      = getField(f, 'teachername');
-            const classCode = getField(f, 'classcode');
-            const role      = getField(f, 'role').toLowerCase();
-
-            if (!email) {
-                skipped.push({ row: row.rowNumber, reason: 'Missing TeacherEmail' });
-                return;
-            }
-            if (!EMAIL_RE.test(email)) {
-                skipped.push({ row: row.rowNumber, reason: `Invalid email: ${email}` });
-                return;
-            }
-            if (!ALLOWED_ROLES.has(role)) {
-                skipped.push({ row: row.rowNumber, reason: `Unknown role: ${role}` });
-                return;
-            }
-
-            const existing = currentList.find(t => t.email === email);
-            if (existing) {
-                if (name)      existing.name      = name;
-                if (classCode) existing.classCode = classCode;
-                if (role)      existing.role      = role;
-                existing.updatedAt = new Date().toISOString();
-                updated.push(existing);
-            } else {
-                const entry = {
-                    email,
-                    name:      name || '',
-                    classCode: classCode || '',
-                    role:      role || 'teacher',
-                    addedAt:   new Date().toISOString()
-                };
-                currentList.push(entry);
-                added.push(entry);
-            }
+            rawTeachers.push({
+                _row: row.rowNumber,
+                teacherEmail: getField(f, 'teacheremail'),
+                teacherName: getField(f, 'teachername'),
+                classCode: getField(f, 'classcode'),
+                role: getField(f, 'role')
+            });
         });
-
-        this._saveTeacherList(currentList);
-        return { added, updated, skipped };
+        return this.importTeacherRows(rawTeachers, { allowAdmin: true });
     }
 
     _loadTeacherList() {
