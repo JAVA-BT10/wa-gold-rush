@@ -321,11 +321,7 @@ class TeacherDashboard {
 
             const headerRow = rows[0].fields.map(s => String(s || '').trim().toLowerCase());
             const isNewFormat = headerRow.includes('studentcode') || headerRow.includes('leaderboardname');
-            const hasTeacherColumns = (
-                headerRow.includes('teacheremail') ||
-                headerRow.includes('teachername') ||
-                headerRow.includes('role')
-            );
+            const hasTeacherColumns = headerRow.includes('teacheremail');
             const isHeader = isNaN(parseInt(headerRow[0], 10)) || isNewFormat || hasTeacherColumns;
             const dataRows = isHeader ? rows.slice(1) : rows;
             const idx = (fields, col) => {
@@ -338,11 +334,7 @@ class TeacherDashboard {
                 const f = row.fields.map(s => String(s || '').trim());
                 if (!f.some(Boolean)) return;
 
-                const hasTeacherData = hasTeacherColumns && (
-                    idx(f, 'teacheremail') ||
-                    idx(f, 'teachername') ||
-                    idx(f, 'role')
-                );
+                const hasTeacherData = hasTeacherColumns && idx(f, 'teacheremail');
                 if (hasTeacherData) {
                     rawTeachers.push({
                         _row: originalRow,

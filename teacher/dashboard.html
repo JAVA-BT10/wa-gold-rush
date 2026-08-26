@@ -154,7 +154,7 @@
             <h2>Teacher Import</h2>
             <p class="muted">
                 CSV headers: <code>TeacherEmail,TeacherName,ClassCode,Role</code><br>
-                TeacherName is required. Role: <code>teacher</code> or <code>admin</code>.<br>
+                TeacherEmail and TeacherName are required. Role: <code>teacher</code> or <code>admin</code>.<br>
                 <code>ClassCode</code> is required for teachers and may be blank for admins.
             </p>
             <textarea id="teacherImportInput" rows="4"
@@ -537,8 +537,11 @@
                 const r = dashboard.bulkImportStudents(data, format);
                 let html = `<span class="ok">✅ Imported ${r.added.length} student${r.added.length !== 1 ? 's' : ''}.</span>`;
                 const teacherTotals = (r.teachers?.added.length || 0) + (r.teachers?.updated.length || 0) + (r.teachers?.skipped.length || 0);
+                const teacherApplied = (r.teachers?.added.length || 0) + (r.teachers?.updated.length || 0);
                 if (teacherTotals) {
-                    html += `<br><span class="ok">👩‍🏫 Teachers — Added ${r.teachers.added.length} · Updated ${r.teachers.updated.length}.</span>`;
+                    if (teacherApplied) {
+                        html += `<br><span class="ok">👩‍🏫 Teachers — Added ${r.teachers.added.length} · Updated ${r.teachers.updated.length}.</span>`;
+                    }
                     if (r.teachers.skipped.length) {
                         html += `<br><span class="err">⚠️ Teacher rows skipped ${r.teachers.skipped.length}:</span>`;
                         html += r.teachers.skipped.map(s => `<br><span class="err muted">  Row ${s.row}: ${escHtml(s.reason)}</span>`).join('');
