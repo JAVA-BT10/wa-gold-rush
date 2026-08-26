@@ -143,17 +143,27 @@ class TeacherDashboard {
 
     normalizeTeacherImportRow(teacherData, options = {}) {
         const allowAdmin = options.allowAdmin !== false;
+        const existingTeacher = options.allowPartialUpdates ? options.existingTeacher || null : null;
         const email = String(
             teacherData.teacherEmail || teacherData.TeacherEmail || teacherData.email || ''
         ).trim().toLowerCase();
-        const teacherName = String(
+        const teacherNameInput = String(
             teacherData.teacherName || teacherData.TeacherName || teacherData.name || ''
         ).trim();
-        const classCode = String(
+        const classCodeInput = String(
             teacherData.classCode || teacherData.ClassCode || ''
         ).trim();
-        const role = String(
+        const roleInput = String(
             teacherData.role || teacherData.Role || ''
+        ).trim().toLowerCase();
+        const teacherName = String(
+            teacherNameInput || existingTeacher?.name || ''
+        ).trim();
+        const classCode = String(
+            classCodeInput || existingTeacher?.classCode || ''
+        ).trim();
+        const role = String(
+            roleInput || existingTeacher?.role || ''
         ).trim().toLowerCase();
 
         const ALLOWED_ROLES = new Set(['teacher', 'admin']);
@@ -188,14 +198,14 @@ class TeacherDashboard {
         const skipped = [];
 
         rawTeachers.forEach((row) => {
-            const normalized = this.normalizeTeacherImportRow(row, options);
+            const existing = currentList.find(t => t.email === String(row.teacherEmail || row.TeacherEmail || row.email || '').trim().toLowerCase());
+            const normalized = this.normalizeTeacherImportRow(row, { ...options, existingTeacher: existing });
             if (!normalized.success) {
                 skipped.push({ row: row._row || '?', reason: normalized.error });
                 return;
             }
 
             const teacher = normalized.teacher;
-            const existing = currentList.find(t => t.email === teacher.email);
             if (existing) {
                 existing.name = teacher.name;
                 existing.classCode = teacher.classCode;
@@ -386,11 +396,7 @@ class TeacherDashboard {
                 }
                 const hasTeacherFields = (
                     Object.prototype.hasOwnProperty.call(item, 'teacherEmail') ||
-                    Object.prototype.hasOwnProperty.call(item, 'TeacherEmail') ||
-                    Object.prototype.hasOwnProperty.call(item, 'teacherName') ||
-                    Object.prototype.hasOwnProperty.call(item, 'TeacherName') ||
-                    Object.prototype.hasOwnProperty.call(item, 'role') ||
-                    Object.prototype.hasOwnProperty.call(item, 'Role')
+                    Object.prototype.hasOwnProperty.call(item, 'TeacherEmail')
                 );
                 if (hasTeacherFields) {
                     rawTeachers.push({
@@ -470,7 +476,7 @@ class TeacherDashboard {
                 role: getField(f, 'role')
             });
         });
-        return this.importTeacherRows(rawTeachers, { allowAdmin: true });
+        return this.importTeacherRows(rawTeachers, { allowAdmin: true, allowPartialUpdates: true });
     }
 
     _loadTeacherList() {

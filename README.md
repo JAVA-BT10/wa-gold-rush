@@ -231,6 +231,8 @@ SC-Y6-001,Golddigger,123456,Alex Smith,6B,2,,,
 ,,,,6B,,teacher@education.wa.edu.au,Ms Smith,teacher
 ```
 
+For teacher-only rows in that mixed CSV, leave the student columns blank and put the teacher's class in the shared `ClassCode` column.
+
 #### Teachers (`teacher/dashboard.html` → Teacher Import)
 ```csv
 TeacherEmail,TeacherName,ClassCode,Role
