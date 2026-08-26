@@ -9,7 +9,6 @@ const PLAYER_KEY_STORAGE = 'wa_gold_rush_player_key';
 const STRICT_MODE_KEY = 'wa_gold_rush_strict_mode';
 const TEACHER_DASHBOARD_KEY = 'teacher_dashboard';
 const STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
-const M365_SESSION_KEY = 'wa_gold_rush_m365_session';
 const DEFAULT_COMPANY_NAME = 'Untitled Mining Co.';
 const RANDOM_EVENT_MIN_LEVEL = 4;
 const RANDOM_EVENT_ROLL_INTERVAL = 10;
@@ -100,6 +99,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         updateAssignedLevelBadge();
         updateAllUI();
         syncPlayerRecord();
+        updateInvestmentProfilePanel();
     } catch (err) {
         console.error('Level 2 init error:', err);
         // Attempt to recover by resetting to a clean state and re-running setup
@@ -394,7 +394,7 @@ function renderLeaderboard() {
     }
     leaderboardList.innerHTML = leaderboard.map((record, index) => `
         <div class="leaderboard-item">
-            <span>${index + 1}. ${escapeHtml(record.companyName)}</span>
+            <span>${index + 1}. ${escapeHtml(record.leaderboardName || record.companyName)}</span>
             <span>$${record.netWorth.toFixed(2)}</span>
         </div>
     `).join('');
@@ -527,6 +527,9 @@ function confirmPurchase() {
         return;
     }
 
+    // Record asset-building action for investment profile
+    gameState.recordInvestmentAction('assetBuilding', 1);
+
     gameState.saveToLocalStorage();
     updateAllUI();
     closeAllModals();
@@ -539,6 +542,8 @@ function applyUpgrade(mineId, upgradeId) {
         alert(`Error: ${result.error}`);
         return;
     }
+    // Upgrading a mine = future-proofing investment
+    gameState.recordInvestmentAction('futureProofing', 1);
     gameState.saveToLocalStorage();
     updateAllUI();
     const updatedMine = gameState.getOwnedMines().find(m => m.id === mineId);
@@ -650,6 +655,15 @@ function playRound() {
                 success: isSuccess
             });
             roundProfit += finalProfit;
+
+            // Record investment action for Investment Profile tracking
+            if (gameState.player?.studentCode) {
+                let bucket = 'lowRisk';
+                if (digType === 'deep')   bucket = 'highRisk';
+                else if (digType === 'medium') bucket = 'profitChasing';
+                else if (digType === 'safe')   bucket = 'lowRisk';
+                gameState.recordInvestmentAction(bucket, numericAmount);
+            }
         });
     });
 
@@ -680,6 +694,7 @@ function playRound() {
     gameState.saveToLocalStorage();
     updateAllUI();
     syncPlayerRecord();
+    updateInvestmentProfilePanel();
 }
 
 function displayDiceRoll(die1, die2, total) {
@@ -716,12 +731,16 @@ function displayResults(results, totalProfit, eventMessage) {
 }
 
 function saveIdentity(showAlert = true) {
-    const studentIdEl = document.getElementById('studentIdInput');
-    const studentNameEl = document.getElementById('studentNameInput');
-    const companyNameEl = document.getElementById('companyNameInput');
-    gameState.player.studentId = studentIdEl ? studentIdEl.value.trim() : gameState.player.studentId;
-    gameState.player.studentName = studentNameEl ? studentNameEl.value.trim() : gameState.player.studentName;
-    gameState.player.companyName = (companyNameEl ? companyNameEl.value.trim() : '') || DEFAULT_COMPANY_NAME;
+    const studentCodeEl  = document.getElementById('studentCodeInput');
+    const lbNameEl       = document.getElementById('leaderboardNameInput');
+    const studentIdEl    = document.getElementById('studentIdInput');
+    const studentNameEl  = document.getElementById('studentNameInput');
+    const companyNameEl  = document.getElementById('companyNameInput');
+    gameState.player.studentCode     = studentCodeEl  ? studentCodeEl.value.trim()  : gameState.player.studentCode;
+    gameState.player.leaderboardName = lbNameEl       ? lbNameEl.value.trim()       : gameState.player.leaderboardName;
+    gameState.player.studentId       = studentIdEl    ? studentIdEl.value.trim()    : gameState.player.studentId;
+    gameState.player.studentName     = studentNameEl  ? studentNameEl.value.trim()  : gameState.player.studentName;
+    gameState.player.companyName     = (companyNameEl ? companyNameEl.value.trim() : '') || DEFAULT_COMPANY_NAME;
     gameState.saveToLocalStorage();
     updateAllUI();
     syncPlayerRecord();
@@ -735,12 +754,16 @@ function hydrateIdentityInputs() {
     if (!gameState.player.companyName || gameState.player.companyName === DEFAULT_COMPANY_NAME) {
         gameState.player.companyName = suggested[0] || DEFAULT_COMPANY_NAME;
     }
-    const studentIdEl = document.getElementById('studentIdInput');
-    const studentNameEl = document.getElementById('studentNameInput');
-    const companyNameEl = document.getElementById('companyNameInput');
-    if (studentIdEl) studentIdEl.value = gameState.player.studentId || '';
-    if (studentNameEl) studentNameEl.value = gameState.player.studentName || '';
-    if (companyNameEl) companyNameEl.value = gameState.player.companyName || '';
+    const studentCodeEl  = document.getElementById('studentCodeInput');
+    const lbNameEl       = document.getElementById('leaderboardNameInput');
+    const studentIdEl    = document.getElementById('studentIdInput');
+    const studentNameEl  = document.getElementById('studentNameInput');
+    const companyNameEl  = document.getElementById('companyNameInput');
+    if (studentCodeEl)  studentCodeEl.value  = gameState.player.studentCode     || '';
+    if (lbNameEl)       lbNameEl.value       = gameState.player.leaderboardName || '';
+    if (studentIdEl)    studentIdEl.value    = gameState.player.studentId       || '';
+    if (studentNameEl)  studentNameEl.value  = gameState.player.studentName     || '';
+    if (companyNameEl)  companyNameEl.value  = gameState.player.companyName     || '';
 }
 
 function parseJsonStorage(storageType, key) {
@@ -759,49 +782,39 @@ function getTeacherStudents() {
 }
 
 function getStoredStudentSession() {
-    const session = parseJsonStorage(sessionStorage, STUDENT_SESSION_KEY);
+    const session = parseJsonStorage(localStorage, STUDENT_SESSION_KEY);
     return session && typeof session === 'object' ? session : null;
 }
 
-function getStoredM365Session() {
-    const session = parseJsonStorage(sessionStorage, M365_SESSION_KEY);
-    return session && typeof session === 'object' ? session : null;
-}
-
-function normalizeSignedInStudentSession(session) {
-    if (!session || typeof session !== 'object' || Array.isArray(session)) return null;
-    const upn = String(session.studentUpn || session.studentId || '').trim().toLowerCase();
-    const name = String(session.studentName || '').trim();
-    if (!upn || !name) return null;
-    if (!upn.endsWith('@student.education.wa.edu.au')) return null;
-    return {
-        studentUpn: upn,
-        studentId: upn,
-        studentName: name
-    };
-}
-
+/**
+ * Returns a normalised session object if a student is logged in via StudentCode,
+ * or null if not logged in.
+ */
 function getSignedInStudentSession() {
     try {
-        const m365Session = normalizeSignedInStudentSession(getStoredM365Session());
-        if (m365Session) return m365Session;
-
-        const studentSession = getStoredStudentSession();
-        if (String(studentSession?.authProvider || '').toLowerCase() !== 'm365') return null;
-        return normalizeSignedInStudentSession(studentSession);
-    } catch (e) {
+        const session = getStoredStudentSession();
+        if (!session) return null;
+        const code = String(session.studentCode || '').trim();
+        if (!code) return null;
+        return {
+            studentCode:     code,
+            leaderboardName: String(session.leaderboardName || code).trim(),
+            studentId:       String(session.studentId || '').trim(),
+            studentName:     String(session.studentName || '').trim(),
+            classCode:       String(session.classCode || '').trim()
+        };
+    } catch (_) {
         return null;
     }
 }
 
 function getMatchedStudentFromSession(session) {
     if (!session) return null;
-    const sessionId = String(session.studentId || session.studentUpn || '').trim().toLowerCase();
-    const sessionName = String(session.studentName || '').trim().toLowerCase();
-    if (!sessionId || !sessionName) return null;
+    const sessionCode = String(session.studentCode || session.studentId || '').trim().toLowerCase();
+    if (!sessionCode) return null;
     return getTeacherStudents().find(student =>
-        String(student?.displayId || student?.id || '').trim().toLowerCase() === sessionId &&
-        String(student?.name || '').trim().toLowerCase() === sessionName
+        String(student?.studentCode || student?.displayId || student?.id || '')
+            .trim().toLowerCase() === sessionCode
     ) || null;
 }
 
@@ -825,14 +838,19 @@ function getCompetitionContext() {
 
 function applyCompetitionSessionToIdentity(updateInputs = true) {
     const competition = getCompetitionContext();
-    if (!competition.isLoggedIn || !competition.matchedStudent) return competition;
-    gameState.player.studentId = competition.matchedStudent.displayId || competition.matchedStudent.id;
-    gameState.player.studentName = competition.matchedStudent.name;
+    if (!competition.isLoggedIn) return competition;
+    const session = competition.session;
+    const matched = competition.matchedStudent;
+    gameState.player.studentCode     = matched?.studentCode || matched?.displayId || session.studentCode || '';
+    gameState.player.leaderboardName = matched?.leaderboardName || session.leaderboardName || session.studentCode || '';
+    gameState.player.studentId       = matched?.studentId       || session.studentId  || '';
+    gameState.player.studentName     = matched?.studentName     || session.studentName || '';
     if (updateInputs) {
-        const studentIdEl = document.getElementById('studentIdInput');
-        const studentNameEl = document.getElementById('studentNameInput');
-        if (studentIdEl) studentIdEl.value = competition.matchedStudent.displayId || competition.matchedStudent.id;
-        if (studentNameEl) studentNameEl.value = competition.matchedStudent.name;
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+        set('studentCodeInput',      gameState.player.studentCode);
+        set('leaderboardNameInput',  gameState.player.leaderboardName);
+        set('studentIdInput',        gameState.player.studentId);
+        set('studentNameInput',      gameState.player.studentName);
     }
     return competition;
 }
@@ -841,12 +859,10 @@ function updateCompetitionStatus() {
     const competition = applyCompetitionSessionToIdentity(false);
     const statusEl = document.getElementById('competition-status');
     if (!statusEl) return;
-    if (competition.isLoggedIn && competition.matchedStudent) {
-        statusEl.textContent = `Competition Status: Logged in as ${competition.matchedStudent.name} (${competition.matchedStudent.displayId || competition.matchedStudent.id})`;
-        return;
-    }
     if (competition.isLoggedIn) {
-        statusEl.textContent = `Competition Status: Logged in as ${competition.session.studentName} (${competition.session.studentUpn})`;
+        const lbName = competition.session.leaderboardName || competition.session.studentCode;
+        statusEl.textContent = `Competition Status: Logged in as ${lbName} (${competition.session.studentCode})`;
+        updateInvestmentProfilePanel();
         return;
     }
     statusEl.textContent = competition.strictModeEnabled
@@ -855,14 +871,16 @@ function updateCompetitionStatus() {
 }
 
 function logoutCompetitionSession() {
-    sessionStorage.removeItem(STUDENT_SESSION_KEY);
-    sessionStorage.removeItem(M365_SESSION_KEY);
-    const studentIdEl = document.getElementById('studentIdInput');
-    const studentNameEl = document.getElementById('studentNameInput');
-    if (studentIdEl) studentIdEl.value = '';
-    if (studentNameEl) studentNameEl.value = '';
-    gameState.player.studentId = '';
-    gameState.player.studentName = '';
+    localStorage.removeItem(STUDENT_SESSION_KEY);
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    set('studentCodeInput',     '');
+    set('leaderboardNameInput', '');
+    set('studentIdInput',       '');
+    set('studentNameInput',     '');
+    gameState.player.studentCode     = '';
+    gameState.player.leaderboardName = '';
+    gameState.player.studentId       = '';
+    gameState.player.studentName     = '';
     gameState.saveToLocalStorage();
     updateAllUI();
 }
@@ -923,29 +941,41 @@ function syncPlayerRecord() {
         return;
     }
 
-    // Don't publish anonymous records — require either a competition login or a non-empty student identity
-    if (!competition.isLoggedIn && !gameState.player.studentId) {
-        return;
-    }
+    const playerCode = competition.isLoggedIn
+        ? (competition.session.studentCode || gameState.player.studentCode)
+        : gameState.player.studentCode;
+
+    // Don't publish anonymous records
+    if (!playerCode) return;
 
     const playerKey = getOrCreatePlayerKey();
     const records = getClassRecords();
     const totalRounds = Math.max(1, gameState.round - 1);
-    const sessionStudentId = String(competition.session?.studentId || competition.session?.studentUpn || '').trim();
-    const sessionStudentName = String(competition.session?.studentName || '').trim();
 
-    const studentId = competition.isLoggedIn
-        ? (competition.matchedStudent?.displayId || competition.matchedStudent?.id || sessionStudentId || gameState.player.studentId || playerKey)
-        : (gameState.player.studentId || playerKey);
+    const studentCode     = playerCode;
+    const leaderboardName = competition.isLoggedIn
+        ? (competition.session.leaderboardName || competition.session.studentCode || gameState.player.leaderboardName || playerCode)
+        : (gameState.player.leaderboardName || playerCode);
+    const studentId   = competition.isLoggedIn
+        ? (competition.session.studentId   || gameState.player.studentId)
+        : gameState.player.studentId;
     const studentName = competition.isLoggedIn
-        ? (competition.matchedStudent?.name || sessionStudentName || gameState.player.studentName || 'Signed-in Student')
-        : (gameState.player.studentName || 'Anonymous Student');
+        ? (competition.session.studentName || gameState.player.studentName)
+        : (gameState.player.studentName || '');
+
+    // Investment profile snapshot
+    let investmentProfile = null;
+    if (typeof InvestmentProfile !== 'undefined') {
+        investmentProfile = InvestmentProfile.getBuckets(studentCode, gameState.assignedLevel);
+    }
 
     const record = {
         playerKey,
+        studentCode,
+        leaderboardName,
         studentId,
         studentName,
-        companyName: gameState.player.companyName || DEFAULT_COMPANY_NAME,
+        level: gameState.assignedLevel,
         round: gameState.round,
         cash: gameState.cash,
         netWorth: gameState.getNetWorth(),
@@ -954,6 +984,7 @@ function syncPlayerRecord() {
         totalProfitLoss: gameState.totalProfitLoss,
         averageRoundProfit: gameState.totalProfitLoss / totalRounds,
         strategyLabel: calculateStrategyLabel(),
+        investmentProfile,
         updatedAt: new Date().toISOString()
     };
 
@@ -962,18 +993,51 @@ function syncPlayerRecord() {
     else records.push(record);
     saveClassRecords(records);
     syncTeacherDashboardRecord(record);
+
+    // Non-blocking SharePoint sync
+    if (typeof SharePointSync !== 'undefined') {
+        SharePointSync.syncProgress({
+            studentCode,
+            level: gameState.assignedLevel,
+            score: gameState.getNetWorth(),
+            netWorth: gameState.getNetWorth(),
+            round: gameState.round,
+            minesOwned: gameState.getOwnedMines().length,
+            strategyLabel: calculateStrategyLabel(),
+            investmentProfile
+        });
+    }
 }
 
 function syncTeacherDashboardRecord(record) {
     if (typeof TeacherDashboard === 'undefined') return;
-    const competition = getCompetitionContext();
-    if (!competition.isLoggedIn) return;
     const dashboard = new TeacherDashboard();
     dashboard.loadFromLocalStorage();
     const updated = dashboard.syncFromPlayerRecord(record);
     if (updated) {
         dashboard.saveToLocalStorage();
     }
+}
+
+function updateInvestmentProfilePanel() {
+    const section = document.getElementById('investmentProfileSection');
+    const canvas  = document.getElementById('investmentProfileChart');
+    const details = document.getElementById('investmentProfileDetails');
+    if (!section || !canvas || !details) return;
+    if (typeof InvestmentProfile === 'undefined') return;
+
+    const code = gameState?.player?.studentCode || '';
+    if (!code) { section.style.display = 'none'; return; }
+
+    section.style.display = '';
+    const level = gameState?.assignedLevel || 2;
+    InvestmentProfile.renderChart(canvas, code, level, { size: 100 });
+    const profile = InvestmentProfile.compute(code, level);
+    const pct = n => Math.round(n * 100);
+    details.innerHTML = `<strong>${profile.ratingEmoji} ${escapeHtml(profile.ratingLabel)}</strong><br>
+        ${InvestmentProfile.legendHtml(code, level)}<br>
+        <span style="font-size:11px;color:#888;">${profile.total === 0 ? 'Play a round to build your profile.' :
+        'Dominant: ' + escapeHtml(profile.dominantLabel) + ' (' + pct(profile.percentages[profile.dominantBucket]) + '%)'}</span>`;
 }
 
 function isTeacherPaused() {

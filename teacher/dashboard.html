@@ -4,77 +4,110 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Goldfields Goldrush W.A. - Teacher Dashboard</title>
-    <script src="https://alcdn.msauth.net/browser/2.39.0/js/msal-browser.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background: #f5f5f5; color: #222; }
-        .container { display: none; max-width: 1100px; margin: 0 auto; padding: 20px; }
+        .container { display: none; max-width: 1200px; margin: 0 auto; padding: 20px; }
         body.authorized .container { display: block; }
         .card { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
-        .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+        .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
         input, textarea, select, button { width: 100%; padding: 8px; box-sizing: border-box; margin-top: 4px; }
         button { cursor: pointer; border: 0; border-radius: 6px; font-weight: bold; }
-        .btn { background: #f4b400; color: #fff; }
+        .btn  { background: #f4b400; color: #fff; }
         .btn-secondary { background: #2e7d32; color: #fff; }
-        .btn-danger { background: #c62828; color: #fff; }
+        .btn-danger    { background: #c62828; color: #fff; }
         table { width: 100%; border-collapse: collapse; font-size: 13px; }
         th, td { padding: 8px; border-bottom: 1px solid #ececec; text-align: left; vertical-align: middle; }
         .row-actions { display: grid; gap: 8px; grid-template-columns: 1fr 1fr 1fr; }
         .muted { color: #666; font-size: 12px; }
         .inline-actions { display: flex; gap: 6px; align-items: center; }
         .inline-actions button { width: auto; padding: 6px 10px; }
-        .edit-input { width: 100%; margin: 0; padding: 6px; }
+        .edit-input  { width: 100%; margin: 0; padding: 6px; }
         .edit-select { width: 100%; margin: 0; padding: 6px; }
-        .toggle-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; }
+        .toggle-row  { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; }
         .toggle-row input[type="checkbox"] { width: auto; margin-top: 2px; }
         .toggle-copy strong { display: block; margin-bottom: 4px; }
-        #authRequiredMessage { display: none; max-width: 640px; margin: 28px auto; padding: 20px 24px; background: #fff3f3; border: 1px solid #f5c2c7; border-radius: 8px; color: #842029; font-family: Arial, sans-serif; line-height: 1.6; }
+
+        /* Access denied panel */
+        #authRequiredMessage {
+            display: none; max-width: 640px; margin: 28px auto; padding: 20px 24px;
+            background: #fff3f3; border: 1px solid #f5c2c7; border-radius: 8px;
+            color: #842029; font-family: Arial, sans-serif; line-height: 1.6;
+        }
         #authRequiredMessage h2 { margin-top: 0; font-size: 18px; }
-        #authRequiredMessage a { color: #842029; font-weight: bold; }
         #authRequiredMessage .auth-actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
-        #authRequiredMessage .auth-actions a, #authRequiredMessage .auth-actions button { display: inline-block; padding: 8px 16px; border-radius: 6px; font-weight: bold; text-decoration: none; cursor: pointer; font-size: 14px; border: 0; }
+        #authRequiredMessage .auth-actions a,
+        #authRequiredMessage .auth-actions button {
+            display: inline-block; padding: 8px 16px; border-radius: 6px;
+            font-weight: bold; text-decoration: none; cursor: pointer;
+            font-size: 14px; border: 0;
+        }
         #authRequiredMessage .btn-home { background: #842029; color: #fff; }
-        #authRequiredMessage .btn-retry { background: #f4b400; color: #fff; }
-        #authRequiredMessage .auth-hint { margin-top: 12px; font-size: 13px; color: #555; background: #fffbe6; border: 1px solid #ffe69c; border-radius: 4px; padding: 8px 12px; }
-        .allowlist-warning { background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; color: #664d03; font-size: 13px; line-height: 1.5; }
-        .allowlist-add-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-        .allowlist-add-row input { width: auto; flex: 1; min-width: 200px; margin: 0; }
-        .allowlist-add-row button { width: auto; }
-        .allowlist-msg { font-size: 13px; font-weight: bold; margin: 4px 0 8px; }
-        .allowlist-msg.success { color: #2e7d32; }
-        .allowlist-msg.error { color: #c62828; }
-        .allowlist-help { margin-top: 12px; font-size: 12px; color: #555; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 8px 12px; line-height: 1.6; }
+
+        /* Leaderboard tabs */
+        .tab-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+        .tab-btn {
+            background: #eee; border: none; border-radius: 6px 6px 0 0;
+            padding: 8px 14px; cursor: pointer; font-size: 13px; font-weight: bold; color: #555;
+        }
+        .tab-btn.active { background: #f4b400; color: #fff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Investment profile mini display */
+        .profile-cell { display: flex; align-items: center; gap: 6px; }
+        .profile-dot  { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+        /* Import result */
+        .import-result { margin-top: 10px; font-size: 13px; line-height: 1.6; }
+        .import-result .ok  { color: #2e7d32; }
+        .import-result .err { color: #c62828; }
+
+        @media (max-width: 640px) {
+            .grid { grid-template-columns: 1fr; }
+            .row-actions { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
     <div id="authRequiredMessage" role="alert"></div>
+
     <div class="container">
-        <h1>👨‍🏫 Goldfields Goldrush W.A. Teacher Dashboard</h1>
+        <h1>👨‍🏫 Goldfields Goldrush W.A. — Teacher Dashboard</h1>
         <p><a href="../index.html">← Back to Home</a></p>
 
+        <!-- Class Controls -->
         <section class="card">
             <h2>Class Controls</h2>
             <div class="row-actions">
-                <button id="pauseClassBtn" class="btn-danger">Pause Class Gameplay</button>
+                <button id="pauseClassBtn"  class="btn-danger">Pause Class Gameplay</button>
                 <button id="resumeClassBtn" class="btn-secondary">Resume Class Gameplay</button>
-                <button id="refreshBtn" class="btn">Refresh Stats</button>
+                <button id="refreshBtn"     class="btn">Refresh Stats</button>
             </div>
             <label class="toggle-row" for="strictModeToggle">
                 <input id="strictModeToggle" type="checkbox">
                 <span class="toggle-copy">
                     <strong>Strict Classroom Mode (Competition Lock)</strong>
-                    <span class="muted">When ON: students can still play and save, but leaderboard/class rankings/records participation requires login. When OFF: all features remain available without login.</span>
+                    <span class="muted">When ON: leaderboard/class participation requires a student login. When OFF: all features remain open.</span>
                 </span>
             </label>
-            <p id="pauseStatus" class="muted"></p>
+            <p id="pauseStatus"      class="muted"></p>
             <p id="strictModeStatus" class="muted"></p>
         </section>
 
+        <!-- Student Management -->
         <section class="card">
-            <h2>Student Management</h2>
+            <h2>Add Student</h2>
             <div class="grid">
-                <label>Student ID <input id="studentDisplayId" type="text" placeholder="e.g. STU001"></label>
-                <label>Name <input id="studentName" type="text" placeholder="Student name"></label>
-                <label>Email (optional) <input id="studentEmail" type="email" placeholder="student@example.com"></label>
+                <label>Student Code <span style="color:#c62828">*</span>
+                    <input id="studentCode" type="text" placeholder="e.g. SC-Y6-1042"></label>
+                <label>Leaderboard Name <span style="color:#c62828">*</span>
+                    <input id="studentLeaderboardName" type="text" placeholder="Public nickname"></label>
+                <label>Student Name <span class="muted">(teacher-facing)</span>
+                    <input id="studentName" type="text" placeholder="Real name"></label>
+                <label>Student ID <span class="muted">(school ID)</span>
+                    <input id="studentDisplayId" type="text" placeholder="e.g. 123456"></label>
+                <label>Class Code
+                    <input id="studentClassCode" type="text" placeholder="e.g. 6B"></label>
                 <label>Assigned Level
                     <select id="studentLevel">
                         <option value="1">Level 1</option>
@@ -82,38 +115,88 @@
                         <option value="3">Level 3</option>
                         <option value="4">Level 4</option>
                         <option value="5">Level 5</option>
+                        <option value="6">Level 6</option>
                     </select>
                 </label>
             </div>
             <p><button id="addStudentBtn" class="btn">Add Student</button></p>
         </section>
 
+        <!-- Bulk Import (Students) -->
         <section class="card">
-            <h2>Bulk Import</h2>
+            <h2>Bulk Import — Students</h2>
+            <p class="muted">
+                CSV headers: <code>StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level</code><br>
+                Legacy CSV: <code>name,email,level</code> also accepted.
+            </p>
             <div class="grid">
                 <label>Format
                     <select id="importFormat">
-                        <option value="csv">CSV (name,email,level)</option>
+                        <option value="csv">CSV</option>
                         <option value="json">JSON</option>
                     </select>
                 </label>
                 <div>
-                    <div class="muted">Import</div>
-                    <button id="importBtn" class="btn">Import Students</button>
+                    <div class="muted" style="margin-top:4px;">Import</div>
+                    <button id="importBtn" class="btn" style="margin-top:4px;">Import Students</button>
                 </div>
             </div>
-            <textarea id="bulkInput" rows="6" placeholder="name,email,level&#10;Alex,alex@school.edu,2&#10;Jordan,jordan@school.edu,3"></textarea>
+            <textarea id="bulkInput" rows="5"
+                placeholder="StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level&#10;SC-Y6-001,Golddigger,123456,Alex Smith,6B,2"></textarea>
+            <div id="importResult" class="import-result"></div>
         </section>
 
+        <!-- Bulk Import (Teachers) -->
+        <section class="card">
+            <h2>Teacher Import</h2>
+            <p class="muted">
+                CSV headers: <code>TeacherEmail,TeacherName,ClassCode,Role</code><br>
+                TeacherEmail is required. Role: <code>teacher</code> or <code>admin</code>.
+            </p>
+            <textarea id="teacherImportInput" rows="4"
+                placeholder="TeacherEmail,TeacherName,ClassCode,Role&#10;teacher@education.wa.edu.au,Ms Smith,6B,teacher"></textarea>
+            <p><button id="teacherImportBtn" class="btn-secondary">Import Teachers</button></p>
+            <div id="teacherImportResult" class="import-result"></div>
+        </section>
+
+        <!-- Teacher List -->
+        <section class="card" id="teacherListSection">
+            <h2>🔑 Teacher / Admin List</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Email</th>
+                        <th>Name</th>
+                        <th>Class</th>
+                        <th>Role</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="teacherListBody"></tbody>
+            </table>
+            <div style="margin-top:10px;">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+                    <label style="flex:1;min-width:220px;">Add teacher email
+                        <input id="newTeacherEmail" type="email" placeholder="teacher@education.wa.edu.au">
+                    </label>
+                    <button id="addTeacherBtn" class="btn-secondary" style="width:auto;margin-top:4px;">Add Teacher</button>
+                </div>
+                <p id="teacherAddMsg" class="muted" style="margin-top:6px;"></p>
+            </div>
+        </section>
+
+        <!-- Student Roster -->
         <section class="card">
             <h2>Student Roster</h2>
             <table>
                 <thead>
                     <tr>
+                        <th>Student Code</th>
+                        <th>Leaderboard Name</th>
+                        <th>Student Name</th>
                         <th>Student ID</th>
-                        <th>Name</th>
-                        <th>Email</th>
-                        <th>Assigned Level</th>
+                        <th>Class</th>
+                        <th>Level</th>
                         <th>Net Worth</th>
                         <th>Round</th>
                         <th>Last Played</th>
@@ -124,142 +207,84 @@
             </table>
         </section>
 
+        <!-- Class Statistics -->
         <section class="card">
             <h2>Class Statistics</h2>
             <div id="classStats" class="muted">No data yet.</div>
         </section>
 
+        <!-- Per-Level Leaderboards -->
         <section class="card">
-            <h2>Classroom Leaderboard</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Rank</th>
-                        <th>Student</th>
-                        <th>Company</th>
-                        <th>Net Worth</th>
-                        <th>Mines</th>
-                        <th>Strategy</th>
-                        <th>Last Played</th>
-                    </tr>
-                </thead>
-                <tbody id="leaderboardBody"></tbody>
-            </table>
+            <h2>Leaderboards — by Level</h2>
+            <div class="tab-bar" id="leaderboardTabs">
+                <button class="tab-btn active" data-level="2">Level 2</button>
+                <button class="tab-btn" data-level="3">Level 3</button>
+                <button class="tab-btn" data-level="4">Level 4</button>
+                <button class="tab-btn" data-level="5">Level 5</button>
+                <button class="tab-btn" data-level="6">Level 6</button>
+                <button class="tab-btn" data-level="1">Level 1</button>
+            </div>
+            <div id="leaderboardContent"></div>
         </section>
 
-        <section id="teacherAccessSection" class="card" aria-label="Manage Teacher Access" style="display:none;">
-            <h2>🔑 Manage Teacher Access</h2>
-            <div class="allowlist-warning" role="alert">
-                ⚠️ <strong>Temporary low-security mode is active.</strong>
-                This allowlist bypasses Microsoft 365 authentication and is stored <strong>per-browser</strong>
-                (localStorage). Use Entra/M365 authentication when available.
-                To disable temporary mode: set <code>TEMP_TEACHER_ALLOWLIST_MODE = false</code>
-                in <code>teacher/dashboard-state.js</code> and redeploy.
-            </div>
-            <div class="allowlist-add-row">
-                <input id="newTeacherEmail" type="email"
-                    placeholder="teacher@education.wa.edu.au"
-                    aria-label="Teacher email address to add">
-                <button id="addTeacherBtn" class="btn-secondary">Add Teacher</button>
-            </div>
-            <p id="allowlistMsg" class="allowlist-msg" style="display:none;" aria-live="polite"></p>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Email</th>
-                        <th>Source</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="allowlistBody"></tbody>
-            </table>
-            <div class="allowlist-help">
-                <strong>How to use:</strong>
-                Enter a teacher's full <code>@education.wa.edu.au</code> email above and click
-                <em>Add Teacher</em>. When that teacher opens the dashboard, they will be prompted
-                to enter their email — it must match exactly. This list is saved in
-                <strong>this browser only</strong>; other devices need their own copy.
-                <br><br>
-                <strong>Built-in entries</strong> (from <code>TEMP_TEACHER_ALLOWLIST_STATIC</code>
-                in code) are shown below but cannot be removed here — edit the source file instead.
-                <br><br>
-                <strong>To fully disable temporary mode</strong> once Entra is configured:
-                set <code>TEMP_TEACHER_ALLOWLIST_MODE = false</code> in
-                <code>teacher/dashboard-state.js</code> and redeploy.
-            </div>
+        <!-- Export -->
+        <section class="card">
+            <h2>Export</h2>
+            <button id="exportCsvBtn" class="btn-secondary" style="width:auto;">Export Roster as CSV</button>
         </section>
     </div>
 
     <script src="dashboard-state.js"></script>
+    <script src="../shared/investment-profile.js"></script>
     <script>
         const CLASS_RECORDS_KEY = 'wa_gold_rush_class_records';
-        const PAUSE_STATE_KEY = 'wa_gold_rush_pause_state';
-        const STRICT_MODE_KEY = 'wa_gold_rush_strict_mode';
+        const PAUSE_STATE_KEY   = 'wa_gold_rush_pause_state';
+        const STRICT_MODE_KEY   = 'wa_gold_rush_strict_mode';
         const dashboard = new TeacherDashboard();
 
+        // =====================================================================
+        // Access control (no M365 / MSAL dependency)
+        // =====================================================================
         function enforceTeacherDashboardAccess() {
-            // Normal path: session already present
             if (dashboard.hasTeacherSession()) {
                 document.body.classList.add('authorized');
                 return true;
             }
 
-            // Temporary allowlist mode: prompt for email if no session found
-            if (dashboard.isTempAllowlistMode()) {
+            // Passcode check
+            if (typeof TEACHER_PASSCODE_MODE !== 'undefined' && TEACHER_PASSCODE_MODE) {
                 const entered = prompt(
-                    '⚠️ Temporary Access Mode\n\n' +
-                    'Microsoft 365 sign-in is currently unavailable.\n\n' +
-                    'Enter your teacher email address to check the allowlist:'
+                    'Teacher Dashboard\n\nEnter the teacher passcode to continue:'
                 );
-                if (entered && dashboard.hasTeacherSession(entered.trim())) {
+                if (dashboard.checkPasscode(entered)) {
+                    dashboard.unlockSession();
                     document.body.classList.add('authorized');
                     return true;
                 }
             }
 
-            // Access denied — show guidance
-            const authMessage = document.getElementById('authRequiredMessage');
-            const signedInUpn = dashboard.getSignedInUpn();
-            const isTempMode = dashboard.isTempAllowlistMode();
-
-            let detail;
-            if (signedInUpn && !dashboard.isLikelyTeacherUpn(signedInUpn) && !isTempMode) {
-                detail = `Signed-in account (<strong>${escHtmlMsg(signedInUpn)}</strong>) does not have teacher access.`;
-            } else if (isTempMode) {
-                detail = 'Your email address was not found in the teacher allowlist.';
-            } else {
-                detail = 'Teacher sign-in is required to open the dashboard.';
+            // No passcode configured → open access
+            if (typeof TEACHER_PASSCODE_MODE !== 'undefined' && !TEACHER_PASSCODE_MODE) {
+                document.body.classList.add('authorized');
+                return true;
             }
 
-            const allowlistHint = isTempMode
-                ? '<div class="auth-hint">⚠️ <strong>Temporary mode is active.</strong> ' +
-                  'To gain access, ask your administrator to add your email to the teacher allowlist ' +
-                  'in <code>teacher/dashboard-state.js</code> or via the ' +
-                  '<code>wa_gold_rush_teacher_allowlist</code> localStorage key.</div>'
-                : '';
-
+            const authMessage = document.getElementById('authRequiredMessage');
             authMessage.innerHTML = `
                 <h2>🔒 Dashboard Access Denied</h2>
-                <p>${detail}</p>
-                <p>
-                    Microsoft 365 sign-in is the preferred way to access the teacher dashboard.
-                    Please sign in on the home page first.
-                </p>
-                ${allowlistHint}
+                <p>The passcode entered was incorrect.</p>
                 <div class="auth-actions">
                     <a class="btn-home" href="../index.html">← Return to Home Page</a>
-                    <button class="btn-retry" onclick="location.reload()">Try Again</button>
-                </div>
-            `;
+                    <button class="btn-home" onclick="location.reload()">Try Again</button>
+                </div>`;
             authMessage.style.display = 'block';
-
-            // Scroll message into view before redirecting
-            authMessage.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            setTimeout(() => { window.location.replace('../index.html'); }, 4000);
             return false;
         }
 
-        function escHtmlMsg(str) {
+        // =====================================================================
+        // Utilities
+        // =====================================================================
+        function escHtml(str) {
             return String(str)
                 .replace(/&/g, '&amp;')
                 .replace(/</g, '&lt;')
@@ -271,13 +296,9 @@
         function getRecords() {
             try {
                 const raw = localStorage.getItem(CLASS_RECORDS_KEY);
-                if (!raw) return [];
                 const records = JSON.parse(raw);
                 return Array.isArray(records) ? records : [];
-            } catch (error) {
-                console.error('Failed to load class records:', error);
-                return [];
-            }
+            } catch (_) { return []; }
         }
 
         function syncFromRecords() {
@@ -285,415 +306,362 @@
             dashboard.saveToLocalStorage();
         }
 
+        // =====================================================================
+        // Status panels
+        // =====================================================================
         function renderPauseStatus() {
             let paused = false;
-            try {
-                paused = !!JSON.parse(localStorage.getItem(PAUSE_STATE_KEY))?.paused;
-            } catch (error) {
-                console.error('Failed to load pause state:', error);
-            }
+            try { paused = !!JSON.parse(localStorage.getItem(PAUSE_STATE_KEY))?.paused; } catch (_) {}
             document.getElementById('pauseStatus').textContent = paused
                 ? 'Gameplay is currently paused.'
                 : 'Gameplay is active.';
         }
 
         function isStrictModeEnabled() {
-            try {
-                return !!JSON.parse(localStorage.getItem(STRICT_MODE_KEY))?.enabled;
-            } catch (error) {
-                return false;
-            }
+            try { return !!JSON.parse(localStorage.getItem(STRICT_MODE_KEY))?.enabled; } catch (_) { return false; }
         }
 
         function renderStrictModeStatus() {
-            const strictModeEnabled = isStrictModeEnabled();
-            document.getElementById('strictModeToggle').checked = strictModeEnabled;
-            document.getElementById('strictModeStatus').textContent = strictModeEnabled
-                ? 'Competition lock is ON. Login is required for leaderboard, rankings, and shared records.'
+            const on = isStrictModeEnabled();
+            document.getElementById('strictModeToggle').checked = on;
+            document.getElementById('strictModeStatus').textContent = on
+                ? 'Competition lock is ON. Login required for leaderboard/class features.'
                 : 'Competition lock is OFF. Competition features remain open.';
         }
 
+        // =====================================================================
+        // Stats
+        // =====================================================================
         function renderStats() {
             syncFromRecords();
             const stats = dashboard.calculateClassStats();
             const records = getRecords();
             const byStrategy = {};
             records.forEach(r => {
-                const key = r.strategyLabel || 'Unknown';
-                byStrategy[key] = (byStrategy[key] || 0) + 1;
+                const k = r.strategyLabel || 'Unknown';
+                byStrategy[k] = (byStrategy[k] || 0) + 1;
             });
             const topStrategy = Object.entries(byStrategy).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A';
-
             document.getElementById('classStats').innerHTML = `
                 Total students: <strong>${stats.totalStudents}</strong><br>
-                Wealthiest player: <strong>${escHtml(stats.wealthiestStudent?.gameState?.companyName || stats.wealthiestStudent?.name || 'N/A')}</strong><br>
+                Wealthiest player: <strong>${escHtml(
+                    stats.wealthiestStudent?.gameState?.companyName ||
+                    stats.wealthiestStudent?.leaderboardName ||
+                    stats.wealthiestStudent?.name || 'N/A')}</strong><br>
                 Most mines owned: <strong>${stats.mostMinesOwned}</strong><br>
-                Most profitable strategy: <strong>${escHtml(topStrategy)}</strong><br>
+                Most popular strategy: <strong>${escHtml(topStrategy)}</strong><br>
                 Average class wealth: <strong>$${(stats.averageNetWorth || 0).toFixed(2)}</strong>
             `;
         }
 
-        function renderLeaderboard() {
-            const body = document.getElementById('leaderboardBody');
-            const records = getRecords().sort((a, b) => b.netWorth - a.netWorth);
-            if (!records.length) {
-                body.innerHTML = '<tr><td colspan="7">No gameplay records yet.</td></tr>';
-                return;
+        // =====================================================================
+        // Per-Level Leaderboard
+        // =====================================================================
+        let _activeLeaderboardLevel = 2;
+
+        function renderLeaderboardForLevel(level) {
+            _activeLeaderboardLevel = Number(level) || 2;
+            const lb = dashboard.getLevelLeaderboard(_activeLeaderboardLevel);
+            const content = document.getElementById('leaderboardContent');
+
+            let html = '';
+            if (lb.allTimeRecord) {
+                html += `<p><strong>🏆 All-Time Level ${escHtml(String(level))} Record:</strong>
+                    ${escHtml(lb.allTimeRecord.leaderboardName)} —
+                    $${Number(lb.allTimeRecord.netWorth).toFixed(2)}</p>`;
             }
-            body.innerHTML = records.map((record, index) => `
-                <tr>
-                    <td>${index + 1}</td>
-                    <td>${escHtml(record.studentName || 'Unknown')}</td>
-                    <td>${escHtml(record.companyName || 'Untitled')}</td>
-                    <td>$${Number(record.netWorth || 0).toFixed(2)}</td>
-                    <td>${record.minesOwned || 0}</td>
-                    <td>${escHtml(record.strategyLabel || 'N/A')}</td>
-                    <td>${escHtml(record.updatedAt ? new Date(record.updatedAt).toLocaleString() : 'N/A')}</td>
-                </tr>
-            `).join('');
+
+            if (!lb.top20.length) {
+                html += '<p class="muted">No gameplay records for this level yet.</p>';
+            } else {
+                html += `<table>
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Leaderboard Name</th>
+                            <th>Class</th>
+                            <th>Net Worth</th>
+                            <th>Round</th>
+                            <th>Strategy</th>
+                            <th>Last Played</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${lb.top20.map(e => `<tr>
+                            <td>${e.rank}</td>
+                            <td>${escHtml(e.leaderboardName)}</td>
+                            <td>${escHtml(e.classCode || '')}</td>
+                            <td>$${Number(e.netWorth).toFixed(2)}</td>
+                            <td>${e.round}</td>
+                            <td>${escHtml(e.strategyLabel || 'N/A')}</td>
+                            <td>${escHtml(e.lastPlayed ? new Date(e.lastPlayed).toLocaleString() : 'N/A')}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>`;
+            }
+
+            content.innerHTML = html;
+
+            // Update tab highlight
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.toggle('active', Number(btn.dataset.level) === _activeLeaderboardLevel);
+            });
         }
 
-        function escHtml(str) {
-            return String(str)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
+        document.getElementById('leaderboardTabs').addEventListener('click', e => {
+            if (e.target.classList.contains('tab-btn')) {
+                renderLeaderboardForLevel(Number(e.target.dataset.level));
+            }
+        });
 
+        // =====================================================================
+        // Roster
+        // =====================================================================
         function renderRoster() {
             const body = document.getElementById('rosterBody');
             const students = dashboard.getAllStudents();
             if (!students.length) {
-                body.innerHTML = '<tr><td colspan="8">No students added yet.</td></tr>';
+                body.innerHTML = '<tr><td colspan="10">No students added yet.</td></tr>';
                 return;
             }
-
             body.innerHTML = students.map(s => {
-                const id = escHtml(s.id);
-                const displayId = escHtml(s.displayId || s.id || '');
-                const name = escHtml(s.name || '');
-                const email = escHtml(s.email || '');
+                const id   = escHtml(s.id);
+                const sc   = escHtml(s.studentCode     || s.displayId || '');
+                const lb   = escHtml(s.leaderboardName || s.name     || '');
+                const sn   = escHtml(s.studentName     || s.name     || '');
+                const si   = escHtml(s.studentId       || s.email    || '');
+                const cc   = escHtml(s.classCode       || '');
                 const level = Number(s.level) || 1;
-                return `
-                <tr>
-                    <td><input class="edit-input" data-field="displayId" data-id="${id}" value="${displayId}" aria-label="Student ID for ${name || 'student'}"></td>
-                    <td><input class="edit-input" data-field="name" data-id="${id}" value="${name}" aria-label="Name for ${name || 'student'}"></td>
-                    <td><input class="edit-input" data-field="email" data-id="${id}" value="${email}" aria-label="Email for ${name || 'student'}"></td>
-                    <td>
-                        <select class="edit-select" data-field="level" data-id="${id}" aria-label="Assigned level for ${name || 'student'}">
-                            <option value="1" ${level === 1 ? 'selected' : ''}>Level 1</option>
-                            <option value="2" ${level === 2 ? 'selected' : ''}>Level 2</option>
-                            <option value="3" ${level === 3 ? 'selected' : ''}>Level 3</option>
-                            <option value="4" ${level === 4 ? 'selected' : ''}>Level 4</option>
-                            <option value="5" ${level === 5 ? 'selected' : ''}>Level 5</option>
-                        </select>
-                    </td>
+                const levelOpts = [1,2,3,4,5,6].map(l =>
+                    `<option value="${l}" ${level === l ? 'selected' : ''}>${l === 1 ? 'L1' : 'L'+l}</option>`
+                ).join('');
+                return `<tr>
+                    <td><input class="edit-input" data-field="studentCode"     data-id="${id}" value="${sc}" aria-label="Student Code"></td>
+                    <td><input class="edit-input" data-field="leaderboardName" data-id="${id}" value="${lb}" aria-label="Leaderboard Name"></td>
+                    <td><input class="edit-input" data-field="studentName"     data-id="${id}" value="${sn}" aria-label="Student Name"></td>
+                    <td><input class="edit-input" data-field="studentId"       data-id="${id}" value="${si}" aria-label="Student ID"></td>
+                    <td><input class="edit-input" data-field="classCode"       data-id="${id}" value="${cc}" aria-label="Class Code"></td>
+                    <td><select class="edit-select" data-field="level" data-id="${id}" aria-label="Level">${levelOpts}</select></td>
                     <td>$${Number(s.gameState?.netWorth || 0).toFixed(2)}</td>
                     <td>${Number(s.gameState?.round) || 1}</td>
                     <td>${escHtml(s.gameState?.lastPlayed ? new Date(s.gameState.lastPlayed).toLocaleString() : 'Never')}</td>
                     <td>
                         <div class="inline-actions">
-                            <button class="btn-secondary" data-action="save" data-id="${id}">Save</button>
-                            <button class="btn-danger" data-action="delete" data-id="${id}">Delete</button>
+                            <button class="btn-secondary" data-action="save"   data-id="${id}">Save</button>
+                            <button class="btn-danger"    data-action="delete" data-id="${id}">Del</button>
                         </div>
                     </td>
-                </tr>
-            `;
+                </tr>`;
             }).join('');
         }
 
-        function refresh() {
-            renderPauseStatus();
-            renderStrictModeStatus();
-            renderStats();
-            renderRoster();
-            renderLeaderboard();
-            if (dashboard.isTempAllowlistMode()) renderAllowlistTable();
-        }
-
         function saveRosterRow(studentId) {
-            const displayIdInput = document.querySelector(`input[data-field="displayId"][data-id="${CSS.escape(studentId)}"]`);
-            const nameInput = document.querySelector(`input[data-field="name"][data-id="${CSS.escape(studentId)}"]`);
-            const emailInput = document.querySelector(`input[data-field="email"][data-id="${CSS.escape(studentId)}"]`);
-            const levelInput = document.querySelector(`select[data-field="level"][data-id="${CSS.escape(studentId)}"]`);
-            const displayId = (displayIdInput?.value || '').trim();
-            const name = (nameInput?.value || '').trim();
-            const email = (emailInput?.value || '').trim();
-            const level = parseInt(levelInput?.value || '1', 10);
-
-            if (!name) {
-                alert('Name cannot be empty.');
-                return;
-            }
-
-            const result = dashboard.updateStudent(studentId, { displayId, name, email, level });
-            if (!result.success) {
-                alert(`Save failed: ${result.error || 'Unknown error'}`);
-                return;
-            }
+            const esc = CSS.escape(studentId);
+            const get = (field, tag = 'input') =>
+                document.querySelector(`${tag}[data-field="${field}"][data-id="${esc}"]`)?.value || '';
+            const result = dashboard.updateStudent(studentId, {
+                studentCode:     get('studentCode').trim(),
+                leaderboardName: get('leaderboardName').trim(),
+                studentName:     get('studentName').trim(),
+                studentId:       get('studentId').trim(),
+                classCode:       get('classCode').trim(),
+                level:           parseInt(get('level', 'select'), 10)
+            });
+            if (!result.success) { alert(`Save failed: ${result.error}`); return; }
             refresh();
         }
 
         function deleteRosterRow(studentId) {
             const student = dashboard.getStudent(studentId);
-            const displayName = student?.name || 'this student';
-            if (!confirm(`Delete ${displayName}? This cannot be undone.`)) return;
+            if (!confirm(`Delete ${student?.leaderboardName || student?.name || 'this student'}? Cannot be undone.`)) return;
             const result = dashboard.deleteStudent(studentId);
-            if (!result.success) {
-                alert(`Delete failed: ${result.error || 'Unknown error'}`);
-                return;
-            }
+            if (!result.success) { alert(`Delete failed: ${result.error}`); return; }
             refresh();
         }
 
-        document.getElementById('rosterBody').addEventListener('click', (event) => {
-            const target = event.target;
-            if (!(target instanceof HTMLElement)) return;
-            const action = target.getAttribute('data-action');
-            const studentId = target.getAttribute('data-id');
-            if (!action || !studentId) return;
-
-            if (action === 'save') saveRosterRow(studentId);
-            if (action === 'delete') deleteRosterRow(studentId);
+        document.getElementById('rosterBody').addEventListener('click', e => {
+            const t = e.target;
+            if (!(t instanceof HTMLElement)) return;
+            const action = t.getAttribute('data-action');
+            const sid    = t.getAttribute('data-id');
+            if (!action || !sid) return;
+            if (action === 'save')   saveRosterRow(sid);
+            if (action === 'delete') deleteRosterRow(sid);
         });
 
+        // =====================================================================
+        // Add student
+        // =====================================================================
         document.getElementById('addStudentBtn').addEventListener('click', () => {
-            const name = document.getElementById('studentName').value.trim();
-            if (!name) {
-                alert('Student name is required.');
-                return;
-            }
+            const studentCode     = document.getElementById('studentCode').value.trim();
+            const leaderboardName = document.getElementById('studentLeaderboardName').value.trim();
+            if (!studentCode) { alert('Student Code is required.'); return; }
+            if (!leaderboardName) { alert('Leaderboard Name is required.'); return; }
             dashboard.addStudent({
-                displayId: document.getElementById('studentDisplayId').value.trim(),
-                name,
-                email: document.getElementById('studentEmail').value.trim(),
-                level: parseInt(document.getElementById('studentLevel').value, 10)
+                studentCode,
+                leaderboardName,
+                studentName: document.getElementById('studentName').value.trim(),
+                studentId:   document.getElementById('studentDisplayId').value.trim(),
+                classCode:   document.getElementById('studentClassCode').value.trim(),
+                level:       parseInt(document.getElementById('studentLevel').value, 10)
             });
-            document.getElementById('studentDisplayId').value = '';
-            document.getElementById('studentName').value = '';
-            document.getElementById('studentEmail').value = '';
+            ['studentCode','studentLeaderboardName','studentName','studentDisplayId','studentClassCode'].forEach(id => {
+                document.getElementById(id).value = '';
+            });
             document.getElementById('studentLevel').value = '2';
             refresh();
         });
 
+        // =====================================================================
+        // Student bulk import
+        // =====================================================================
         document.getElementById('importFormat').addEventListener('change', function () {
-            const textarea = document.getElementById('bulkInput');
+            const ta = document.getElementById('bulkInput');
             if (this.value === 'json') {
-                textarea.placeholder = '[{"name":"Alex","email":"alex@school.edu","level":2},{"name":"Jordan","email":"","level":3}]';
+                ta.placeholder = '[{"studentCode":"SC-001","leaderboardName":"GoldDigger","studentName":"Alex","level":2}]';
             } else {
-                textarea.placeholder = 'name,email,level\nAlex,alex@school.edu,2\nJordan,jordan@school.edu,3';
+                ta.placeholder = 'StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level\nSC-Y6-001,Golddigger,123456,Alex Smith,6B,2';
             }
         });
 
         document.getElementById('importBtn').addEventListener('click', () => {
-            const data = document.getElementById('bulkInput').value.trim();
-            if (!data) {
-                alert('Paste CSV or JSON data first.');
-                return;
-            }
+            const data   = document.getElementById('bulkInput').value.trim();
             const format = document.getElementById('importFormat').value;
+            const resultEl = document.getElementById('importResult');
+            if (!data) { alert('Paste CSV or JSON data first.'); return; }
             try {
-                const imported = dashboard.bulkImportStudents(data, format);
-                let msg = `Imported ${imported.added.length} students.`;
-                if (imported.skipped.length > 0) {
-                    msg += `\nSkipped ${imported.skipped.length} rows:\n` +
-                        imported.skipped.map(s => `  Row ${s.row}: ${s.reason}`).join('\n');
+                const r = dashboard.bulkImportStudents(data, format);
+                let html = `<span class="ok">✅ Imported ${r.added.length} student${r.added.length !== 1 ? 's' : ''}.</span>`;
+                if (r.skipped.length) {
+                    html += `<br><span class="err">⚠️ Skipped ${r.skipped.length} row${r.skipped.length !== 1 ? 's' : ''}:</span>`;
+                    html += r.skipped.map(s => `<br><span class="err muted">  Row ${s.row}: ${escHtml(s.reason)}</span>`).join('');
                 }
-                alert(msg);
+                resultEl.innerHTML = html;
                 refresh();
-            } catch (error) {
-                alert(`Import failed: ${error.message}`);
+            } catch (err) {
+                resultEl.innerHTML = `<span class="err">❌ Import failed: ${escHtml(err.message)}</span>`;
             }
         });
 
+        // =====================================================================
+        // Teacher import
+        // =====================================================================
+        document.getElementById('teacherImportBtn').addEventListener('click', () => {
+            const data = document.getElementById('teacherImportInput').value.trim();
+            const resultEl = document.getElementById('teacherImportResult');
+            if (!data) { alert('Paste teacher CSV data first.'); return; }
+            try {
+                const r = dashboard.bulkImportTeachers(data);
+                let html = `<span class="ok">✅ Added ${r.added.length} · Updated ${r.updated.length}.</span>`;
+                if (r.skipped.length) {
+                    html += `<br><span class="err">⚠️ Skipped ${r.skipped.length}:</span>`;
+                    html += r.skipped.map(s => `<br><span class="err muted">  Row ${s.row}: ${escHtml(s.reason)}</span>`).join('');
+                }
+                resultEl.innerHTML = html;
+                renderTeacherList();
+            } catch (err) {
+                resultEl.innerHTML = `<span class="err">❌ Import failed: ${escHtml(err.message)}</span>`;
+            }
+        });
+
+        // =====================================================================
+        // Teacher list
+        // =====================================================================
+        function renderTeacherList() {
+            const body = document.getElementById('teacherListBody');
+            const teachers = dashboard.getTeacherList();
+            if (!teachers.length) {
+                body.innerHTML = '<tr><td colspan="5" class="muted">No teachers added yet.</td></tr>';
+                return;
+            }
+            body.innerHTML = teachers.map((t, i) => `<tr>
+                <td>${escHtml(t.email)}</td>
+                <td>${escHtml(t.name || '')}</td>
+                <td>${escHtml(t.classCode || '')}</td>
+                <td>${escHtml(t.role || 'teacher')}</td>
+                <td>
+                    <button class="btn-danger" data-action="remove-teacher" data-index="${i}"
+                        style="width:auto;padding:4px 10px;">Remove</button>
+                </td>
+            </tr>`).join('');
+        }
+
+        document.getElementById('teacherListBody').addEventListener('click', e => {
+            const t = e.target;
+            if (t.getAttribute('data-action') !== 'remove-teacher') return;
+            const idx = parseInt(t.getAttribute('data-index'), 10);
+            const list = dashboard._loadTeacherList();
+            const entry = list[idx];
+            if (!entry || !confirm(`Remove ${entry.email}?`)) return;
+            list.splice(idx, 1);
+            dashboard._saveTeacherList(list);
+            renderTeacherList();
+        });
+
+        document.getElementById('addTeacherBtn').addEventListener('click', () => {
+            const email = document.getElementById('newTeacherEmail').value.trim().toLowerCase();
+            const msgEl = document.getElementById('teacherAddMsg');
+            if (!email) { msgEl.textContent = 'Enter an email address.'; return; }
+            const EMAIL_RE = /^[^\s@]+@[^\s@.][^\s@]*\.[^\s@]+$/;
+            if (!EMAIL_RE.test(email)) { msgEl.textContent = 'Invalid email format.'; return; }
+            const list = dashboard._loadTeacherList();
+            if (list.find(t => t.email === email)) {
+                msgEl.textContent = 'Already in list.';
+                return;
+            }
+            list.push({ email, name: '', classCode: '', role: 'teacher', addedAt: new Date().toISOString() });
+            dashboard._saveTeacherList(list);
+            document.getElementById('newTeacherEmail').value = '';
+            msgEl.textContent = `Added: ${email}`;
+            renderTeacherList();
+        });
+
+        // =====================================================================
+        // Export
+        // =====================================================================
+        document.getElementById('exportCsvBtn').addEventListener('click', () => {
+            const csv  = dashboard.exportAsCSV();
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement('a');
+            a.href     = url;
+            a.download = `goldrush-roster-${new Date().toISOString().slice(0,10)}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        // =====================================================================
+        // Controls
+        // =====================================================================
         document.getElementById('pauseClassBtn').addEventListener('click', () => {
             localStorage.setItem(PAUSE_STATE_KEY, JSON.stringify({ paused: true }));
             refresh();
         });
-
         document.getElementById('resumeClassBtn').addEventListener('click', () => {
             localStorage.setItem(PAUSE_STATE_KEY, JSON.stringify({ paused: false }));
             refresh();
         });
-
         document.getElementById('refreshBtn').addEventListener('click', refresh);
-
-        document.getElementById('strictModeToggle').addEventListener('change', (event) => {
-            localStorage.setItem(STRICT_MODE_KEY, JSON.stringify({ enabled: !!event.target.checked }));
+        document.getElementById('strictModeToggle').addEventListener('change', e => {
+            localStorage.setItem(STRICT_MODE_KEY, JSON.stringify({ enabled: !!e.target.checked }));
             renderStrictModeStatus();
         });
 
-        // =========================================================
-        // Teacher Allowlist Manager
-        // =========================================================
-
-        function getAllowlistFromStorage() {
-            try {
-                const raw = localStorage.getItem(dashboard.TEACHER_ALLOWLIST_STORAGE_KEY);
-                if (!raw) return new Set();
-                return new Set(
-                    String(raw).split(/[\n,]+/)
-                        .map(e => e.trim().toLowerCase())
-                        .filter(Boolean)
-                );
-            } catch (_) { return new Set(); }
+        // =====================================================================
+        // Full refresh
+        // =====================================================================
+        function refresh() {
+            renderPauseStatus();
+            renderStrictModeStatus();
+            renderStats();
+            renderRoster();
+            renderLeaderboardForLevel(_activeLeaderboardLevel);
+            renderTeacherList();
         }
 
-        function saveAllowlistToStorage(emailSet) {
-            try {
-                const arr = [...emailSet].filter(Boolean);
-                if (arr.length === 0) {
-                    localStorage.removeItem(dashboard.TEACHER_ALLOWLIST_STORAGE_KEY);
-                } else {
-                    localStorage.setItem(dashboard.TEACHER_ALLOWLIST_STORAGE_KEY, arr.join(','));
-                }
-            } catch (_) {}
-        }
-
-        function getStaticDefaults() {
-            return new Set(
-                TEMP_TEACHER_ALLOWLIST_STATIC
-                    .map(e => String(e || '').trim().toLowerCase())
-                    .filter(Boolean)
-            );
-        }
-
-        function validateTeacherEmail(email) {
-            const emailRe = /^[^\s@]+@[^\s@.][^\s@]*\.[^\s@]+$/;
-            if (!emailRe.test(email)) {
-                return { valid: false, reason: 'Invalid email format.' };
-            }
-            if (!email.endsWith('@education.wa.edu.au')) {
-                return { valid: false, reason: 'Email must be a staff @education.wa.edu.au address.' };
-            }
-            if (email.startsWith('student.') || email.includes('@student.')) {
-                return { valid: false, reason: 'Student addresses cannot be added as teacher accounts.' };
-            }
-            return { valid: true };
-        }
-
-        function showAllowlistMsg(text, isError) {
-            const el = document.getElementById('allowlistMsg');
-            el.textContent = text;
-            el.className = 'allowlist-msg ' + (isError ? 'error' : 'success');
-            el.style.display = text ? 'block' : 'none';
-        }
-
-        function renderAllowlistTable() {
-            const section = document.getElementById('teacherAccessSection');
-            if (!section) return;
-
-            if (!dashboard.isTempAllowlistMode()) {
-                section.style.display = 'none';
-                return;
-            }
-            section.style.display = '';
-
-            const staticDefaults = getStaticDefaults();
-            const localEntries = getAllowlistFromStorage();
-            const localOnly = new Set([...localEntries].filter(e => !staticDefaults.has(e)));
-
-            const tbody = document.getElementById('allowlistBody');
-            const rows = [];
-
-            staticDefaults.forEach(email => {
-                rows.push(`
-                    <tr>
-                        <td>${escHtml(email)}</td>
-                        <td><span class="muted">Built-in (edit code to remove)</span></td>
-                        <td></td>
-                    </tr>
-                `);
-            });
-
-            localOnly.forEach(email => {
-                rows.push(`
-                    <tr>
-                        <td>${escHtml(email)}</td>
-                        <td><span class="muted">This browser</span></td>
-                        <td>
-                            <button class="btn-danger"
-                                style="width:auto;padding:4px 10px;"
-                                data-action="remove-teacher"
-                                data-email="${escHtml(email)}"
-                                aria-label="Remove ${escHtml(email)} from allowlist">
-                                Remove
-                            </button>
-                        </td>
-                    </tr>
-                `);
-            });
-
-            if (rows.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" class="muted">No teachers in allowlist yet. Add one above.</td></tr>';
-            } else {
-                tbody.innerHTML = rows.join('');
-            }
-        }
-
-        function addToAllowlist() {
-            const input = document.getElementById('newTeacherEmail');
-            const email = input.value.trim().toLowerCase();
-
-            if (!email) {
-                showAllowlistMsg('Please enter an email address.', true);
-                return;
-            }
-
-            const check = validateTeacherEmail(email);
-            if (!check.valid) {
-                showAllowlistMsg(check.reason, true);
-                return;
-            }
-
-            const staticDefaults = getStaticDefaults();
-            const localEntries = getAllowlistFromStorage();
-
-            if (staticDefaults.has(email) || localEntries.has(email)) {
-                showAllowlistMsg('This email is already in the allowlist.', true);
-                return;
-            }
-
-            localEntries.add(email);
-            saveAllowlistToStorage(localEntries);
-            input.value = '';
-            showAllowlistMsg('Added: ' + email, false);
-            renderAllowlistTable();
-        }
-
-        function removeFromAllowlist(email) {
-            const localEntries = getAllowlistFromStorage();
-            if (!localEntries.has(email)) {
-                showAllowlistMsg('Email not found in local allowlist.', true);
-                return;
-            }
-            if (!confirm('Remove ' + email + ' from the teacher allowlist?')) return;
-            localEntries.delete(email);
-            saveAllowlistToStorage(localEntries);
-            showAllowlistMsg('Removed: ' + email, false);
-            renderAllowlistTable();
-        }
-
-        document.getElementById('addTeacherBtn').addEventListener('click', addToAllowlist);
-
-        document.getElementById('newTeacherEmail').addEventListener('keydown', (event) => {
-            if (event.key === 'Enter') addToAllowlist();
-        });
-
-        document.getElementById('allowlistBody').addEventListener('click', (event) => {
-            const target = event.target;
-            if (!(target instanceof HTMLElement)) return;
-            if (target.getAttribute('data-action') !== 'remove-teacher') return;
-            const email = target.getAttribute('data-email');
-            if (email) removeFromAllowlist(email);
-        });
-
-        // =========================================================
-        // End Teacher Allowlist Manager
-        // =========================================================
-
+        // =====================================================================
+        // Init
+        // =====================================================================
         (function init() {
             const ok = enforceTeacherDashboardAccess();
             if (!ok) return;
