@@ -209,9 +209,36 @@
         </div>
     </div>
 
+    <!-- MODAL: Progression Checkpoint Quiz -->
+    <div id="checkpointQuizModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close">&times;</span>
+            <h2>🎓 Progression Checkpoint</h2>
+            <p>You've reached the Level 2 goal! Answer 5 questions to progress to Level 3.</p>
+            <p><strong>Pass threshold: 4/5 correct</strong></p>
+            
+            <div id="quizContainer" style="margin-top: 20px;">
+                <!-- Questions will be populated here -->
+            </div>
+            
+            <div id="quizResultsContainer" style="display:none; margin-top: 20px;">
+                <h3 id="quizResultTitle"></h3>
+                <div id="quizScoreDisplay" style="font-size: 24px; font-weight: bold; color: #d4af37; margin: 15px 0;"></div>
+                <div id="quizAnswerReview" style="max-height: 400px; overflow-y: auto; margin: 15px 0;"></div>
+                <button id="quizRetakeButton" class="btn-primary" style="margin-top: 10px;">Take Quiz Again</button>
+                <button id="quizContinueButton" class="btn-secondary" style="margin-top: 10px; display:none;">Continue to Level 3</button>
+            </div>
+            
+            <div id="quizSubmitButton" style="text-align: center; margin-top: 20px;">
+                <button id="submitQuizButton" class="btn-primary btn-large">Submit Answers</button>
+            </div>
+        </div>
+    </div>
+
     <script src="game-state.js"></script>
     <script src="../../teacher/dashboard-state.js"></script>
     <script src="../../shared/investment-profile.js"></script>
+    <script src="../../shared/progression-quiz.js"></script>
     <script src="../../shared/sharepoint-sync.js"></script>
     <script src="script.js"></script>
 </body>
