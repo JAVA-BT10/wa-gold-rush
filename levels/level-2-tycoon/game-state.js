@@ -74,23 +74,23 @@ class GameState {
     }
 
     flattenMachinery(levelConfig) {
-        const normalizeAsset = (item = {}) => ({
+        const normalizeAsset = (id, item = {}) => ({
             ...item,
             purchaseLimit: item.purchaseLimit ?? item.maxPerMine ?? 1,
             baseValue: item.baseValue ?? item.cost ?? 0,
             profitBonus: item.profitBonus ?? 0,
-            canBeSold: item.canBeSold !== false,
-            resaleValue: item.resaleValue ?? 0.75
+            canBeSold: item.canBeSold ?? this.gameConfig?.machinery?.[id]?.canBeSold ?? true,
+            resaleValue: item.resaleValue ?? this.gameConfig?.machinery?.[id]?.resaleValue ?? 0.75
         });
 
         const equipment = Object.fromEntries(
-            Object.entries(levelConfig?.equipment || {}).map(([id, item]) => [id, normalizeAsset(item)])
+            Object.entries(levelConfig?.equipment || {}).map(([id, item]) => [id, normalizeAsset(id, item)])
         );
         const personnel = Object.fromEntries(
-            Object.entries(levelConfig?.personnel || {}).map(([id, item]) => [id, normalizeAsset(item)])
+            Object.entries(levelConfig?.personnel || {}).map(([id, item]) => [id, normalizeAsset(id, item)])
         );
         const haulage = Object.fromEntries(
-            Object.entries(levelConfig?.haulage || {}).map(([id, item]) => [id, normalizeAsset(item)])
+            Object.entries(levelConfig?.haulage || {}).map(([id, item]) => [id, normalizeAsset(id, item)])
         );
 
         const merged = {
