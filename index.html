@@ -52,6 +52,17 @@
             margin-bottom: 40px;
         }
 
+        .access-error {
+            background: #ffebee;
+            border: 1px solid #f5c2c7;
+            color: #c62828;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            text-align: center;
+        }
+
         .levels-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -68,23 +79,27 @@
             transition: all 0.3s ease;
             cursor: pointer;
             box-shadow: 0 5px 15px rgba(244, 180, 0, 0.2);
+            text-decoration: none;
+            color: inherit;
+            display: block;
         }
 
-        .level-card:hover {
+        .level-card:hover:not(.locked) {
             transform: translateY(-5px);
             box-shadow: 0 10px 25px rgba(244, 180, 0, 0.4);
             border-color: #d99800;
         }
 
-        .level-card.archived {
-            opacity: 0.85;
-            background: #f9f9f9;
-        }
-
-        .level-card.coming-soon {
+        .level-card.locked {
             opacity: 0.6;
             cursor: not-allowed;
-            background: #f0f0f0;
+            background: #f5f5f5;
+            border-color: #ccc;
+        }
+
+        .level-card.locked:hover {
+            transform: none;
+            box-shadow: 0 5px 15px rgba(244, 180, 0, 0.2);
         }
 
         .level-number {
@@ -122,9 +137,47 @@
             margin: 5px 0;
         }
 
+        .status-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .status-available {
+            background: #4caf50;
+            color: white;
+        }
+
+        .status-locked {
+            background: #f44336;
+            color: white;
+        }
+
+        .lock-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+            display: none;
+        }
+
+        .level-card.locked .lock-icon {
+            display: block;
+        }
+
+        .lock-message {
+            background: #ffebee;
+            color: #c62828;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-top: 10px;
+            line-height: 1.4;
+        }
+
         .btn-play {
             display: inline-block;
-            text-decoration: none;
             background: #f4b400;
             color: white;
             border: none;
@@ -134,6 +187,7 @@
             font-weight: bold;
             cursor: pointer;
             transition: all 0.3s ease;
+            text-decoration: none;
         }
 
         .btn-play:hover {
@@ -141,34 +195,10 @@
             transform: scale(1.05);
         }
 
-        .btn-play:focus-visible,
-        .btn-teacher:focus-visible {
-            outline: 3px solid #1a73e8;
-            outline-offset: 2px;
-        }
-
-        .status-badge {
-            display: inline-block;
-            padding: 5px 10px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: bold;
-            margin-bottom: 10px;
-        }
-
-        .status-complete {
-            background: #4caf50;
-            color: white;
-        }
-
-        .status-archived {
-            background: #ff9800;
-            color: white;
-        }
-
-        .status-coming {
-            background: #999;
-            color: white;
+        .btn-play:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
         }
 
         .divider {
@@ -184,149 +214,8 @@
             text-align: center;
         }
 
-        /* ---- Student Login Panel ---- */
-        .competition-login {
-            background: #f9f4e3;
-            border: 2px solid #f4b400;
-            border-radius: 10px;
-            padding: 20px;
-            margin-top: 10px;
-        }
-
-        .competition-login h2 {
-            margin-top: 0;
-            color: #1a1a1a;
-        }
-
-        .login-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin: 12px 0;
-        }
-
-        .login-grid label {
-            display: flex;
-            flex-direction: column;
-            font-size: 13px;
-            font-weight: bold;
-            color: #444;
-            gap: 4px;
-        }
-
-        .login-grid input {
-            padding: 8px 10px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            font-size: 14px;
-            width: 100%;
-            box-sizing: border-box;
-        }
-
-        .login-grid input:focus {
-            outline: 2px solid #f4b400;
-            border-color: #f4b400;
-        }
-
-        .login-actions {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-bottom: 10px;
-        }
-
-        .btn-secondary {
-            display: inline-block;
-            background: #e0e0e0;
-            color: #333;
-            border: none;
-            padding: 10px 22px;
-            border-radius: 5px;
-            font-size: 14px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .btn-secondary:hover { background: #bdbdbd; }
-
-        #loginStatus {
-            margin: 6px 0 0;
-            font-size: 13px;
-            color: #555;
-        }
-
-        .sync-status {
-            font-size: 11px;
-            color: #888;
-            margin-top: 4px;
-        }
-
-        .signed-in-chip {
-            display: inline-block;
-            background: #e8f5e9;
-            color: #1b5e20;
-            border: 1px solid #a5d6a7;
-            border-radius: 999px;
-            padding: 6px 10px;
-            font-size: 12px;
-            font-weight: bold;
-            margin-top: 6px;
-        }
-
-        /* ---- Investment Profile Panel ---- */
-        #investmentProfilePanel {
-            display: none;
-            margin-top: 16px;
-            padding: 14px;
-            background: #fff;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-        }
-
-        #investmentProfilePanel h3 {
-            margin: 0 0 10px;
-            font-size: 15px;
-            color: #333;
-        }
-
-        .profile-layout {
-            display: flex;
-            gap: 16px;
-            align-items: flex-start;
-            flex-wrap: wrap;
-        }
-
-        #investmentChart {
-            flex-shrink: 0;
-        }
-
-        .profile-details {
-            flex: 1;
-            min-width: 160px;
-        }
-
-        .profile-rating {
-            font-size: 14px;
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 6px;
-        }
-
-        .profile-legend {
-            font-size: 12px;
-            line-height: 1.8;
-        }
-
-        /* ---- Teacher section ---- */
-        .admin-section h2 {
-            color: #666;
-            margin-top: 0;
-        }
-
         .btn-teacher {
             display: inline-block;
-            text-decoration: none;
             background: #2e7d32;
             color: white;
             border: none;
@@ -336,6 +225,7 @@
             font-weight: bold;
             cursor: pointer;
             transition: all 0.3s ease;
+            text-decoration: none;
         }
 
         .btn-teacher:hover {
@@ -343,341 +233,192 @@
             transform: scale(1.05);
         }
 
-        @media (max-width: 600px) {
+        @media (max-width: 640px) {
             .container { padding: 20px; }
-            h1 { font-size: 36px; }
+            h1 { font-size: 32px; }
             .levels-grid { grid-template-columns: 1fr; }
-            .login-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
-    <a class="skip-link" href="#main-content">Skip to main content</a>
-
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    
     <div class="container">
-        <header>
-            <h1>⛏️ Goldfields Goldrush W.A.</h1>
-            <p class="subtitle">Educational Mathematics Game — Level 1 Classic + Levels 2–6 Goldfields Venture Progression</p>
-        </header>
+        <h1>⛏️ Goldfields Goldrush W.A.</h1>
+        <p class="subtitle">Educational Mining Game — Learn Economics Through Strategy</p>
 
-        <main id="main-content">
-            <section aria-label="Game levels" class="levels-grid">
-                <article class="level-card archived">
-                    <span class="status-badge status-complete">✅ Complete</span>
-                    <div class="level-number">1</div>
-                    <h2 class="level-title">Basic Mining</h2>
-                    <div class="level-description">Get started with the original game</div>
-                    <ul class="level-features">
-                        <li>📊 10 fixed rounds</li>
-                        <li>🎲 Dice-based outcomes</li>
-                        <li>💰 3 dig types</li>
-                        <li>⏱️ ~10 minutes</li>
-                    </ul>
-                    <a class="btn-play" href="levels/level-1-basic/index.html">Play Level 1</a>
-                </article>
+        <!-- Access Error Message -->
+        <div id="accessErrorContainer" style="display: none;">
+            <div class="access-error">🔒 That level is currently locked. Complete the required checkpoint quiz and wait for teacher approval to proceed.</div>
+        </div>
 
-                <article class="level-card">
-                    <span class="status-badge status-complete">✅ Playable</span>
-                    <div class="level-number">2</div>
-                    <h2 class="level-title">Goldfields Venture</h2>
-                    <div class="level-description">Core Goldfields Venture game with unending rounds, mine purchases, upgrades, machinery, resale, random events, and leaderboard sync.</div>
-                    <ul class="level-features">
-                        <li>🏭 Multiple mines per round</li>
-                        <li>⬆️ Mine upgrades</li>
-                        <li>🚜 Machinery system</li>
-                        <li>∞ Unending rounds</li>
-                    </ul>
-                    <a class="btn-play" href="levels/level-2-tycoon/index.html?level=2">Play Level 2</a>
-                </article>
+        <section id="main-content" class="levels-grid">
+            <!-- Levels will be populated by JavaScript -->
+        </section>
 
-                <article class="level-card">
-                    <span class="status-badge status-complete">✅ Included in Goldfields Venture</span>
-                    <div class="level-number">3</div>
-                    <h2 class="level-title">WA Goldfields</h2>
-                    <div class="level-description">Bundled into Goldfields Venture: Southern Cross, Coolgardie, and Kalgoorlie with region investment limits.</div>
-                    <ul class="level-features">
-                        <li>🗺️ Named locations</li>
-                        <li>💎 Risk vs reward</li>
-                        <li>📈 Asset valuation</li>
-                        <li>🎯 Strategic planning</li>
-                    </ul>
-                    <a class="btn-play" href="levels/level-2-tycoon/index.html?level=3">Open in Goldfields Venture</a>
-                </article>
+        <hr class="divider">
 
-                <article class="level-card">
-                    <span class="status-badge status-complete">✅ Included in Goldfields Venture</span>
-                    <div class="level-number">4</div>
-                    <h2 class="level-title">Advanced Operations</h2>
-                    <div class="level-description">Bundled into Goldfields Venture: mine upgrades, company mode, and advanced random events.</div>
-                    <ul class="level-features">
-                        <li>🎲 Random events</li>
-                        <li>🏢 Company mode</li>
-                        <li>⚠️ High-risk regions</li>
-                        <li>📊 Complex strategy</li>
-                    </ul>
-                    <a class="btn-play" href="levels/level-2-tycoon/index.html?level=4">Open in Goldfields Venture</a>
-                </article>
-
-                <article class="level-card">
-                    <span class="status-badge status-complete">✅ Included in Goldfields Venture + Dashboard</span>
-                    <div class="level-number">5</div>
-                    <h2 class="level-title">Classroom Challenge</h2>
-                    <div class="level-description">Bundled into Goldfields Venture + Teacher Dashboard via shared local records and leaderboard statistics.</div>
-                    <ul class="level-features">
-                        <li>🏆 Class leaderboard</li>
-                        <li>👥 Student/company records</li>
-                        <li>📊 Class statistics</li>
-                        <li>⏸️ Teacher pause controls</li>
-                    </ul>
-                    <a class="btn-play" href="levels/level-2-tycoon/index.html?level=5">Open in Goldfields Venture</a>
-                </article>
-
-                <article class="level-card coming-soon">
-                    <span class="status-badge status-coming">🔜 Coming Soon</span>
-                    <div class="level-number">6</div>
-                    <h2 class="level-title">Empire Builder</h2>
-                    <div class="level-description">Full portfolio management: inter-region transport, export contracts, and multi-company competition.</div>
-                    <ul class="level-features">
-                        <li>🌏 Export contracts</li>
-                        <li>🚂 Transport networks</li>
-                        <li>🏦 Borrowing &amp; leverage</li>
-                        <li>🥇 Class championship</li>
-                    </ul>
-                    <span class="btn-play" aria-disabled="true" style="opacity:0.5;cursor:not-allowed;">Coming Soon</span>
-                </article>
-            </section>
-
-            <!-- Student Login Panel -->
-            <section class="competition-login" aria-label="Student competition login">
-                <h2>🏆 Student Login</h2>
-                <p>Enter your Student Code to join the leaderboard and track your progress across levels.</p>
-
-                <div id="loggedOutView">
-                    <div class="login-grid">
-                        <label for="inputStudentCode">Student Code <span style="color:#c62828">*</span>
-                            <input id="inputStudentCode" type="text" placeholder="e.g. SC-Y6-1042" autocomplete="off" maxlength="40">
-                        </label>
-                        <label for="inputLeaderboardName">Leaderboard Name <span style="color:#c62828">*</span>
-                            <input id="inputLeaderboardName" type="text" placeholder="Your public nickname" autocomplete="off" maxlength="30">
-                        </label>
-                        <label for="inputStudentID">Student ID <span style="color:#888;font-weight:normal">(optional)</span>
-                            <input id="inputStudentID" type="text" placeholder="School ID" autocomplete="off" maxlength="20">
-                        </label>
-                        <label for="inputClassCode">Class Code <span style="color:#888;font-weight:normal">(optional)</span>
-                            <input id="inputClassCode" type="text" placeholder="e.g. 6B" autocomplete="off" maxlength="20">
-                        </label>
-                    </div>
-                    <div class="login-actions">
-                        <button id="loginBtn" class="btn-play" type="button">Join Leaderboard</button>
-                    </div>
-                    <p id="loginStatus"></p>
-                </div>
-
-                <div id="loggedInView" style="display:none;">
-                    <div id="signedInChip" class="signed-in-chip"></div>
-                    <p id="loginStatus2" style="font-size:13px;color:#555;margin:6px 0 0;"></p>
-                    <p class="sync-status" id="syncStatus"></p>
-                    <div class="login-actions" style="margin-top:10px;">
-                        <button id="logoutBtn" class="btn-secondary" type="button">Log Out</button>
-                    </div>
-
-                    <!-- Investment Profile Panel -->
-                    <div id="investmentProfilePanel">
-                        <h3>📊 My Investment Profile</h3>
-                        <div class="profile-layout">
-                            <canvas id="investmentChart" aria-label="Investment strategy donut chart" role="img"></canvas>
-                            <div class="profile-details">
-                                <div class="profile-rating" id="profileRating"></div>
-                                <div class="profile-legend" id="profileLegend"></div>
-                                <p class="muted" id="profileNote" style="font-size:11px;color:#888;margin-top:6px;"></p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <div class="divider"></div>
-
-            <section class="admin-section" aria-label="Teacher and administrator tools">
-                <h2>👨‍🏫 Teachers &amp; Administrators</h2>
-                <p>Manage student accounts, assign levels, and monitor progress</p>
-                <a class="btn-teacher" href="teacher/dashboard.html">Access Teacher Dashboard</a>
-            </section>
-        </main>
+        <!-- Admin Section -->
+        <div class="admin-section">
+            <h2>👨‍🏫 Teachers & Administrators</h2>
+            <p>Manage students, review progression checkpoints, and monitor class performance</p>
+            <a href="teacher/dashboard.html" class="btn-teacher">📊 Teacher Dashboard</a>
+        </div>
     </div>
 
-    <script src="shared/investment-profile.js"></script>
-    <script src="shared/sharepoint-sync.js"></script>
     <script>
-        // =====================================================================
-        // Session keys
-        // =====================================================================
-        const STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
-
-        // =====================================================================
-        // Helpers
-        // =====================================================================
-        function escHtml(str) {
-            return String(str)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        function getSession() {
-            try {
-                const raw = localStorage.getItem(STUDENT_SESSION_KEY);
-                if (!raw) return null;
-                const s = JSON.parse(raw);
-                return s && s.studentCode ? s : null;
-            } catch (_) { return null; }
-        }
-
-        function saveSession(session) {
-            try {
-                localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(session));
-            } catch (_) {}
-        }
-
-        function clearSession() {
-            try { localStorage.removeItem(STUDENT_SESSION_KEY); } catch (_) {}
-        }
-
-        // =====================================================================
-        // Investment Profile rendering
-        // =====================================================================
-        function renderInvestmentProfile(session) {
-            const panel = document.getElementById('investmentProfilePanel');
-            if (!panel || typeof InvestmentProfile === 'undefined') return;
-
-            const code = session.studentCode;
-            const level = Number(session.lastLevel) || 2;
-
-            panel.style.display = 'block';
-
-            const canvas = document.getElementById('investmentChart');
-            InvestmentProfile.renderChart(canvas, code, level, { size: 110 });
-
-            const profile = InvestmentProfile.compute(code, level);
-
-            document.getElementById('profileRating').textContent =
-                `${profile.ratingEmoji} ${profile.ratingLabel}`;
-
-            document.getElementById('profileLegend').innerHTML =
-                InvestmentProfile.legendHtml(code, level);
-
-            const note = profile.total === 0
-                ? 'Play a level to build your investment profile.'
-                : `Dominant strategy: ${profile.dominantLabel} (${Math.round(profile.percentages[profile.dominantBucket] * 100)}%)`;
-            document.getElementById('profileNote').textContent = note;
-        }
-
-        // =====================================================================
-        // Render logged-in / logged-out state
-        // =====================================================================
-        function renderLoggedIn(session) {
-            document.getElementById('loggedOutView').style.display = 'none';
-            document.getElementById('loggedInView').style.display = '';
-
-            document.getElementById('signedInChip').textContent =
-                `⛏️ ${escHtml(session.leaderboardName)} (${escHtml(session.studentCode)})`;
-
-            document.getElementById('loginStatus2').textContent =
-                session.classCode
-                    ? `Class: ${session.classCode} · Ready to play!`
-                    : 'Ready to play!';
-
-            renderInvestmentProfile(session);
-            updateSyncStatus();
-        }
-
-        function renderLoggedOut() {
-            document.getElementById('loggedOutView').style.display = '';
-            document.getElementById('loggedInView').style.display = 'none';
-            document.getElementById('loginStatus').textContent = '';
-        }
-
-        function updateSyncStatus() {
-            const el = document.getElementById('syncStatus');
-            if (!el || typeof SharePointSync === 'undefined') return;
-            const q = SharePointSync.queueLength();
-            el.textContent = q > 0
-                ? `⚠️ ${q} progress update${q > 1 ? 's' : ''} waiting to sync`
-                : '';
-        }
-
-        // =====================================================================
-        // Login
-        // =====================================================================
-        document.getElementById('loginBtn').addEventListener('click', async () => {
-            const studentCode     = document.getElementById('inputStudentCode').value.trim();
-            const leaderboardName = document.getElementById('inputLeaderboardName').value.trim();
-            const studentId       = document.getElementById('inputStudentID').value.trim();
-            const classCode       = document.getElementById('inputClassCode').value.trim();
-
-            const statusEl = document.getElementById('loginStatus');
-
-            if (!studentCode) {
-                statusEl.textContent = '⚠️ Student Code is required.';
-                document.getElementById('inputStudentCode').focus();
-                return;
+        /**
+         * Level structure and access logic
+         */
+        const LEVELS = [
+            {
+                id: 1,
+                number: 1,
+                title: 'Basic Mining',
+                description: 'Learn the fundamentals with a single mine and 10 fixed rounds',
+                features: ['🎲 Dice-based mining', '💰 Safe/Medium/Deep digs', '⏱️ ~10 minutes'],
+                url: 'levels/level-1-basic/index.html',
+                requiresApproval: false,
+                status: 'available'
+            },
+            {
+                id: 2,
+                number: 2,
+                title: 'Goldfields Venture',
+                description: 'Expand to multiple mines, purchase equipment, and manage cash flow',
+                features: ['🏭 Multiple mines (up to 2)', '⚙️ Equipment system', '💸 Unending progression', '🎓 Checkpoint Quiz (Goal: $2,500)'],
+                url: 'levels/level-2-tycoon/index.html?level=2',
+                requiresApproval: false,
+                status: 'available'
+            },
+            {
+                id: 3,
+                number: 3,
+                title: 'WA Goldfields',
+                description: 'Add personnel, haulage systems, and strategic mine upgrades',
+                features: ['🗺️ Regional mining (up to 3 mines)', '👥 Personnel & haulage', '💎 Mine upgrades', '🎓 Checkpoint Quiz (Goal: $10,000)'],
+                url: 'levels/level-2-tycoon/index.html?level=3',
+                requiresApproval: true,
+                requiredCheckpointLevel: 2,
+                status: 'available'
+            },
+            {
+                id: 4,
+                number: 4,
+                title: 'Advanced Operations',
+                description: 'Master complex operations with random events and high-risk ventures',
+                features: ['🎲 Random events', '🏢 Company operations', '⚠️ Higher risk & reward', '🎓 Checkpoint Quiz (Goal: $50,000)'],
+                url: 'levels/level-2-tycoon/index.html?level=4',
+                requiresApproval: true,
+                requiredCheckpointLevel: 3,
+                status: 'available'
+            },
+            {
+                id: 5,
+                number: 5,
+                title: 'Classroom Challenge',
+                description: 'Compete on the class leaderboard with portfolio management features',
+                features: ['🏆 Class leaderboard', '👥 Multi-company competition', '📊 Portfolio dashboard', '🎓 Checkpoint Quiz (Goal: $250,000)'],
+                url: 'levels/level-2-tycoon/index.html?level=5',
+                requiresApproval: true,
+                requiredCheckpointLevel: 4,
+                status: 'available'
             }
-            if (!leaderboardName) {
-                statusEl.textContent = '⚠️ Leaderboard Name is required.';
-                document.getElementById('inputLeaderboardName').focus();
-                return;
-            }
+        ];
 
-            const session = {
-                studentCode,
-                leaderboardName,
-                studentId,
-                classCode,
-                loginAtUtc: new Date().toISOString(),
-                lastLevel: 2
-            };
-
-            saveSession(session);
-            statusEl.textContent = '';
-            renderLoggedIn(session);
-
-            // Non-blocking sync — gameplay is not affected if this fails
+        /**
+         * Check if a checkpoint is approved
+         */
+        function isCheckpointApproved(requiredLevel) {
             try {
-                const result = await SharePointSync.syncProfile({
-                    studentCode,
-                    leaderboardName,
-                    studentId,
-                    classCode
-                });
-                if (result && result.queued) {
-                    document.getElementById('syncStatus').textContent =
-                        '⚠️ Profile sync queued (will retry automatically).';
-                }
-            } catch (_) {}
+                const raw = localStorage.getItem('level2_autosave');
+                if (!raw) return false;
+                const data = JSON.parse(raw);
+                const gs = data.gameState;
+                return gs && gs.checkpointStatus === 'quiz_passed' && gs.approvalStatus === 'approved';
+            } catch (_) {
+                return false;
+            }
+        }
+
+        /**
+         * Check if level is accessible
+         */
+        function isLevelAccessible(level) {
+            if (!level.requiresApproval) {
+                return true;
+            }
+            return isCheckpointApproved(level.requiredCheckpointLevel);
+        }
+
+        /**
+         * Get lock reason for level
+         */
+        function getLockReason(level) {
+            if (!level.requiresApproval) {
+                return null;
+            }
+            return `Complete Level ${level.requiredCheckpointLevel} checkpoint quiz (4/5 correct) and wait for teacher approval.`;
+        }
+
+        /**
+         * Render levels grid
+         */
+        function renderLevels() {
+            const container = document.getElementById('main-content');
+            container.innerHTML = '';
+
+            LEVELS.forEach(level => {
+                const isAccessible = isLevelAccessible(level);
+                const lockReason = getLockReason(level);
+                const cardClass = isAccessible ? '' : 'locked';
+                const statusBadge = isAccessible ? 
+                    '<span class="status-badge status-available">✅ Available</span>' : 
+                    '<span class="status-badge status-locked">🔒 Locked</span>';
+                
+                const playButton = isAccessible ? 
+                    `<a href="${level.url}" class="btn-play">Play Level ${level.number}</a>` : 
+                    `<button class="btn-play" disabled>Play Level ${level.number}</button>`;
+
+                const lockMessage = lockReason ? `<div class="lock-message">🔒 ${lockReason}</div>` : '';
+
+                const card = document.createElement('div');
+                card.className = `level-card ${cardClass}`;
+                card.innerHTML = `
+                    <div class="lock-icon">🔒</div>
+                    <div class="level-number">${level.number}</div>
+                    <h3 class="level-title">${level.title}</h3>
+                    ${statusBadge}
+                    <p class="level-description">${level.description}</p>
+                    <div class="level-features">
+                        <ul style="margin: 0; padding-left: 20px;">
+                            ${level.features.map(f => `<li>${f}</li>`).join('')}
+                        </ul>
+                    </div>
+                    ${playButton}
+                    ${lockMessage}
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        /**
+         * Check for access error from level redirect
+         */
+        function checkAccessError() {
+            const params = new URLSearchParams(window.location.search);
+            if (params.has('error') && params.get('error') === 'level_locked') {
+                document.getElementById('accessErrorContainer').style.display = 'block';
+                // Clean URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            checkAccessError();
+            renderLevels();
         });
-
-        // =====================================================================
-        // Logout
-        // =====================================================================
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            clearSession();
-            renderLoggedOut();
-        });
-
-        // =====================================================================
-        // Initialise on load
-        // =====================================================================
-        (function init() {
-            const session = getSession();
-            if (session) {
-                renderLoggedIn(session);
-            } else {
-                renderLoggedOut();
-            }
-            updateSyncStatus();
-        })();
     </script>
 </body>
 </html>
