@@ -113,9 +113,11 @@ class GameState {
         const quizAttempts = Array.isArray(savedState.quizAttempts) ? savedState.quizAttempts : [];
         const totalProfitLoss = Number(savedState.totalProfitLoss);
         const ownedMineEntries = Object.entries(savedState.ownedMines || {});
-        const onlyStarterMine = ownedMineEntries.length <= 1 && ownedMineEntries.every(([mineId, mine]) =>
-            mineId === 'southern_cross' && mine?.owned && Array.isArray(mine.upgrades) && mine.upgrades.length === 0
-        );
+        const starterMine = savedState.ownedMines?.southern_cross;
+        const onlyStarterMine = ownedMineEntries.length === 1
+            && !!starterMine?.owned
+            && Array.isArray(starterMine.upgrades)
+            && starterMine.upgrades.length === 0;
 
         return numericCash === 0
             && (!Number.isFinite(numericRound) || numericRound <= 1)
