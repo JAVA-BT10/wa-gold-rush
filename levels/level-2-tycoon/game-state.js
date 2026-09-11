@@ -64,7 +64,7 @@ class GameState {
         if (!this.gameConfig || typeof this.gameConfig !== 'object') return;
 
         const levelKey = String(this.assignedLevel || 2);
-        const levelConfig = this.gameConfig?.levels?.[levelKey];
+        const levelConfig = this.gameConfig?.levels?.[levelKey] || this.gameConfig?.levels?.['2'];
         if (!levelConfig || typeof levelConfig !== 'object') return;
         const baseConfig = this.gameConfig;
 
