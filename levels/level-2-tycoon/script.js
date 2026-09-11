@@ -1248,7 +1248,7 @@ function updatePauseStateFromStorage() {
 function saveGame() {
     saveIdentity(false);
     const result = gameState.saveToLocalStorage();
-    alert(result.success ? '✅ Game saved successfully!' : `❌ Error saving game: ${result.error}`);
+    alert(result ? '✅ Game saved successfully!' : '❌ Error saving game.');
 }
 
 function loadGame() {
@@ -1286,12 +1286,9 @@ function removePlayerRecord(playerKey) {
 function resetGame() {
     if (!confirm('Start a new game? All progress will be lost.')) return;
     const playerKey = getOrCreatePlayerKey();
-    gameState.reset();
     gameState.assignedLevel = getAssignedLevelFromUrl();
+    gameState.reset();
     gameState.applyLevelConfigAdapter?.();
-    gameState.cash = gameState.gameConfig?.levels?.[String(gameState.assignedLevel)]?.startingCash
-        ?? gameState.gameConfig?.levels?.['2']?.startingCash
-        ?? gameState.cash;
     localStorage.removeItem('level2_autosave');
     removePlayerRecord(playerKey);
     hydrateIdentityInputs();

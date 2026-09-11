@@ -60,13 +60,53 @@ class GameState {
                 throw new Error(`HTTP ${response.status}`);
             }
             this.gameConfig = await response.json();
-            this.cash = this.gameConfig?.levels?.['2']?.startingCash || this.cash;
+            this.cash = this.getPlayableStartingCash();
             console.log('Game config loaded:', this.gameConfig);
             return true;
         } catch (error) {
             console.error('Failed to load game config:', error);
             return false;
         }
+    }
+
+    getConfiguredStartingCash(level = this.assignedLevel || 2) {
+        const configuredCash = Number(this.gameConfig?.levels?.[String(level)]?.startingCash);
+        if (Number.isFinite(configuredCash) && configuredCash >= 0) {
+            return configuredCash;
+        }
+
+        const levelTwoCash = Number(this.gameConfig?.levels?.['2']?.startingCash);
+        if (Number.isFinite(levelTwoCash) && levelTwoCash >= 0) {
+            return levelTwoCash;
+        }
+
+        return 200;
+    }
+
+    getPlayableStartingCash(level = this.assignedLevel || 2) {
+        const configuredCash = this.getConfiguredStartingCash(level);
+        if (configuredCash > 0) {
+            return configuredCash;
+        }
+
+        const levelTwoCash = this.getConfiguredStartingCash(2);
+        if (levelTwoCash > 0) {
+            return levelTwoCash;
+        }
+
+        return 200;
+    }
+
+    normalizeLoadedCash(cash) {
+        const numericCash = Number(cash);
+        if (Number.isFinite(numericCash) && numericCash > 0) {
+            return { cash: numericCash, recovered: false };
+        }
+
+        return {
+            cash: this.getPlayableStartingCash(),
+            recovered: true
+        };
     }
 
     getAllowedMineUpgradeIds(level = this.assignedLevel || 2) {
@@ -427,13 +467,17 @@ class GameState {
     loadFromLocalStorage(slotName = 'level2_autosave') {
         try {
             const raw = localStorage.getItem(slotName);
-            if (!raw) return false;
+            if (!raw) return { success: false, recoveredCash: false };
             const data = JSON.parse(raw);
-            if (!data.gameState) return false;
+            if (!data.gameState || typeof data.gameState !== 'object') {
+                return { success: false, recoveredCash: false };
+            }
             const gs = data.gameState;
-            this.round = gs.round || 1;
-            this.cash = gs.cash || 200;
-            this.assignedLevel = gs.assignedLevel || 2;
+            const numericRound = Number(gs.round);
+            this.assignedLevel = Number(gs.assignedLevel) || this.assignedLevel || 2;
+            this.round = Number.isFinite(numericRound) && numericRound >= 0 ? numericRound : 1;
+            const normalizedCash = this.normalizeLoadedCash(gs.cash);
+            this.cash = normalizedCash.cash;
             this.player = gs.player || this.player;
             this.ownedMines = gs.ownedMines || this.ownedMines;
             this.machinery = gs.machinery || [];
@@ -445,10 +489,13 @@ class GameState {
             this.approvalStatus = gs.approvalStatus || null;
             this.approverName = gs.approverName || null;
             this.approvalTimestamp = gs.approvalTimestamp || null;
-            return true;
+            if (normalizedCash.recovered) {
+                this.saveToLocalStorage(slotName);
+            }
+            return { success: true, recoveredCash: normalizedCash.recovered };
         } catch (error) {
             console.error('Failed to load game state:', error);
-            return false;
+            return { success: false, recoveredCash: false };
         }
     }
 
@@ -457,7 +504,7 @@ class GameState {
      */
     reset() {
         this.round = 1;
-        this.cash = this.gameConfig?.levels?.[String(this.assignedLevel)]?.startingCash || 200;
+        this.cash = this.getPlayableStartingCash();
         this.ownedMines = {
             'southern_cross': {
                 id: 'southern_cross',
