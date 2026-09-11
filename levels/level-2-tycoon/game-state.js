@@ -97,9 +97,40 @@ class GameState {
         return 200;
     }
 
-    normalizeLoadedCash(cash) {
+    shouldRecoverLoadedCash(cash, savedState = {}) {
         const numericCash = Number(cash);
-        if (Number.isFinite(numericCash) && numericCash > 0) {
+        if (!Number.isFinite(numericCash) || numericCash < 0) {
+            return true;
+        }
+
+        if (numericCash > 0) {
+            return false;
+        }
+
+        const numericRound = Number(savedState.round);
+        const roundHistory = Array.isArray(savedState.roundHistory) ? savedState.roundHistory : [];
+        const machinery = Array.isArray(savedState.machinery) ? savedState.machinery : [];
+        const quizAttempts = Array.isArray(savedState.quizAttempts) ? savedState.quizAttempts : [];
+        const totalProfitLoss = Number(savedState.totalProfitLoss);
+        const ownedMineEntries = Object.entries(savedState.ownedMines || {});
+        const onlyStarterMine = ownedMineEntries.length <= 1 && ownedMineEntries.every(([mineId, mine]) =>
+            mineId === 'southern_cross' && mine?.owned && Array.isArray(mine.upgrades) && mine.upgrades.length === 0
+        );
+
+        return numericCash === 0
+            && (!Number.isFinite(numericRound) || numericRound <= 1)
+            && roundHistory.length === 0
+            && machinery.length === 0
+            && quizAttempts.length === 0
+            && (!Number.isFinite(totalProfitLoss) || totalProfitLoss === 0)
+            && !savedState.checkpointStatus
+            && !savedState.approvalStatus
+            && onlyStarterMine;
+    }
+
+    normalizeLoadedCash(cash, savedState = {}) {
+        const numericCash = Number(cash);
+        if (!this.shouldRecoverLoadedCash(numericCash, savedState)) {
             return { cash: numericCash, recovered: false };
         }
 
@@ -476,7 +507,7 @@ class GameState {
             const numericRound = Number(gs.round);
             this.assignedLevel = Number(gs.assignedLevel) || this.assignedLevel || 2;
             this.round = Number.isFinite(numericRound) && numericRound >= 0 ? numericRound : 1;
-            const normalizedCash = this.normalizeLoadedCash(gs.cash);
+            const normalizedCash = this.normalizeLoadedCash(gs.cash, gs);
             this.cash = normalizedCash.cash;
             this.player = gs.player || this.player;
             this.ownedMines = gs.ownedMines || this.ownedMines;
