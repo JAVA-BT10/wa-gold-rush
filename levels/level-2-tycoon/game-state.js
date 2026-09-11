@@ -91,6 +91,9 @@ class GameState {
         const equipment = Object.fromEntries(
             Object.entries(levelConfig?.equipment || {}).map(([id, item]) => [id, normalizeAsset(item)])
         );
+        const directMachinery = Object.fromEntries(
+            Object.entries(levelConfig?.machinery || {}).map(([id, item]) => [id, normalizeAsset(item)])
+        );
         const personnel = Object.fromEntries(
             Object.entries(levelConfig?.personnel || {}).map(([id, item]) => [id, normalizeAsset(item)])
         );
@@ -99,6 +102,7 @@ class GameState {
         );
 
         const merged = {
+            ...directMachinery,
             ...equipment,
             ...personnel,
             ...haulage
@@ -107,15 +111,18 @@ class GameState {
     }
 
     flattenMines(levelConfig, baseConfig) {
-        return { ...(baseConfig?.mines || {}), ...(levelConfig?.mines || {}) };
+        const levelMines = levelConfig?.mines || levelConfig?.regionalMines || {};
+        return { ...(baseConfig?.mines || {}), ...levelMines };
     }
 
     flattenMineUpgrades(levelConfig, baseConfig) {
-        return { ...(baseConfig?.mineUpgrades || {}), ...(levelConfig?.mineUpgrades || {}) };
+        const levelMineUpgrades = levelConfig?.mineUpgrades || levelConfig?.upgrades || {};
+        return { ...(baseConfig?.mineUpgrades || {}), ...levelMineUpgrades };
     }
 
     flattenDigTypes(levelConfig, baseConfig) {
-        const digTypes = { ...(baseConfig?.digTypes || {}), ...(levelConfig?.digTypes || {}) };
+        const levelDigTypes = levelConfig?.digTypes || levelConfig?.digTypeConfig || {};
+        const digTypes = { ...(baseConfig?.digTypes || {}), ...levelDigTypes };
         return Object.fromEntries(
             Object.entries(digTypes).map(([id, dig]) => ([id, {
                 ...dig,
@@ -125,7 +132,8 @@ class GameState {
     }
 
     flattenRandomEvents(levelConfig, baseConfig) {
-        return { ...(baseConfig?.randomEvents || {}), ...(levelConfig?.randomEvents || {}) };
+        const levelRandomEvents = levelConfig?.randomEvents || levelConfig?.events || {};
+        return { ...(baseConfig?.randomEvents || {}), ...levelRandomEvents };
     }
 
     getAllowedMineUpgradeIds(level = this.assignedLevel || 2) {
