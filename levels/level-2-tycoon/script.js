@@ -91,6 +91,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     try {
         gameState.loadFromLocalStorage();
         gameState.assignedLevel = getAssignedLevelFromUrl();
+        gameState.applyLevelConfigAdapter?.();
         ensureInvestmentPlansForOwnedMines();
         hydrateIdentityInputs();
         applyCompetitionSessionToIdentity();
@@ -106,6 +107,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         try {
             gameState.reset();
             gameState.assignedLevel = getAssignedLevelFromUrl();
+            gameState.applyLevelConfigAdapter?.();
             ensureInvestmentPlansForOwnedMines();
             hydrateIdentityInputs();
             setupEventListeners();
@@ -420,6 +422,9 @@ function updateAllUI() {
     renderStats();
     renderFeaturesAndCosts();
     renderLeaderboard();
+    if (typeof checkProgressionGoal === 'function') {
+        checkProgressionGoal();
+    }
 }
 
 function openMineModal(mine) {
@@ -1079,6 +1084,7 @@ function loadGame() {
     } else {
         gameState.assignedLevel = urlLevel;
     }
+    gameState.applyLevelConfigAdapter?.();
     ensureInvestmentPlansForOwnedMines();
     hydrateIdentityInputs();
     updateAssignedLevelBadge();
@@ -1099,6 +1105,10 @@ function resetGame() {
     const playerKey = getOrCreatePlayerKey();
     gameState.reset();
     gameState.assignedLevel = getAssignedLevelFromUrl();
+    gameState.applyLevelConfigAdapter?.();
+    gameState.cash = gameState.gameConfig?.levels?.[String(gameState.assignedLevel)]?.startingCash
+        ?? gameState.gameConfig?.levels?.['2']?.startingCash
+        ?? gameState.cash;
     localStorage.removeItem('level2_autosave');
     removePlayerRecord(playerKey);
     hydrateIdentityInputs();
