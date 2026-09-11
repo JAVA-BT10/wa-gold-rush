@@ -49,8 +49,8 @@ class GameState {
             this.applyLevelConfigAdapter();
             const levelKey = String(this.assignedLevel || 2);
             this.cash = this.gameConfig?.levels?.[levelKey]?.startingCash
-                || this.gameConfig?.levels?.['2']?.startingCash
-                || this.cash;
+                ?? this.gameConfig?.levels?.['2']?.startingCash
+                ?? this.cash;
             console.log('Game config loaded:', this.gameConfig);
             return true;
         } catch (error) {
@@ -75,23 +75,27 @@ class GameState {
     }
 
     flattenMachinery(levelConfig, baseConfig) {
-        const normalizeAsset = (id, item = {}) => ({
+        const normalizeAsset = (item = {}) => ({
             ...item,
             purchaseLimit: item.purchaseLimit ?? item.maxPerMine ?? 1,
             baseValue: item.baseValue ?? item.cost ?? 0,
             profitBonus: item.profitBonus ?? 0,
-            canBeSold: item.canBeSold ?? baseConfig?.machinery?.[id]?.canBeSold ?? true,
-            resaleValue: item.resaleValue ?? baseConfig?.machinery?.[id]?.resaleValue ?? 0.75
+            canBeSold: item.canBeSold ?? true,
+            resaleValue: item.resaleValue ?? 0.75
         });
 
+        const baseMachinery = Object.fromEntries(
+            Object.entries(baseConfig?.machinery || {}).map(([id, item]) => [id, normalizeAsset(item)])
+        );
+
         const equipment = Object.fromEntries(
-            Object.entries(levelConfig?.equipment || {}).map(([id, item]) => [id, normalizeAsset(id, item)])
+            Object.entries(levelConfig?.equipment || {}).map(([id, item]) => [id, normalizeAsset(item)])
         );
         const personnel = Object.fromEntries(
-            Object.entries(levelConfig?.personnel || {}).map(([id, item]) => [id, normalizeAsset(id, item)])
+            Object.entries(levelConfig?.personnel || {}).map(([id, item]) => [id, normalizeAsset(item)])
         );
         const haulage = Object.fromEntries(
-            Object.entries(levelConfig?.haulage || {}).map(([id, item]) => [id, normalizeAsset(id, item)])
+            Object.entries(levelConfig?.haulage || {}).map(([id, item]) => [id, normalizeAsset(item)])
         );
 
         const merged = {
@@ -99,19 +103,19 @@ class GameState {
             ...personnel,
             ...haulage
         };
-        return merged;
+        return { ...baseMachinery, ...merged };
     }
 
     flattenMines(levelConfig, baseConfig) {
-        return levelConfig?.mines || baseConfig?.mines || {};
+        return { ...(baseConfig?.mines || {}), ...(levelConfig?.mines || {}) };
     }
 
     flattenMineUpgrades(levelConfig, baseConfig) {
-        return levelConfig?.mineUpgrades || baseConfig?.mineUpgrades || {};
+        return { ...(baseConfig?.mineUpgrades || {}), ...(levelConfig?.mineUpgrades || {}) };
     }
 
     flattenDigTypes(levelConfig, baseConfig) {
-        const digTypes = levelConfig?.digTypes || baseConfig?.digTypes || {};
+        const digTypes = { ...(baseConfig?.digTypes || {}), ...(levelConfig?.digTypes || {}) };
         return Object.fromEntries(
             Object.entries(digTypes).map(([id, dig]) => ([id, {
                 ...dig,
@@ -121,7 +125,7 @@ class GameState {
     }
 
     flattenRandomEvents(levelConfig, baseConfig) {
-        return levelConfig?.randomEvents || baseConfig?.randomEvents || {};
+        return { ...(baseConfig?.randomEvents || {}), ...(levelConfig?.randomEvents || {}) };
     }
 
     getAllowedMineUpgradeIds(level = this.assignedLevel || 2) {
