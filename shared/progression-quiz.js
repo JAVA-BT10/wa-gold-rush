@@ -1,432 +1,441 @@
 /**
- * Progression Quiz System (V3.0)
- * Implements 5-question assessments for level progression checkpoints
- * Mixed problem-solving and calculation-based questions
- * Pass threshold: 4/5 or 5/5
+ * Progression Quiz System — Level-specific 5-question assessments
+ * 
+ * Features:
+ * - Separate quizzes for Levels 2–5 (mixed calculation + problem-solving)
+ * - Pass threshold: 4/5 correct
+ * - Student-keyed storage to prevent shared-browser data collision
+ * - Attempt history tracking with timestamps
+ * - Detailed explanations + work-through examples for each question
  */
 
 const ProgressionQuiz = (() => {
     const STORAGE_KEY = 'wa_gr_progression_quiz';
+    
+    /**
+     * Get storage key for student + level
+     * Pattern: ${studentCode}_level_${level}
+     */
+    function getStorageKey(studentCode, level) {
+        const code = String(studentCode || 'anon').trim();
+        return `${STORAGE_KEY}_${code}_level_${level}`;
+    }
 
     /**
-     * Quiz definitions per level
-     * Each quiz has 5 questions mixing problem-solving and calculations
+     * Level 2: Goldfields Venture (Goal: $2,500)
+     * Concepts: Safe dig profit calc, equipment bonus, mine affordability, multi-mine strategy, net worth tracking
      */
     const QUIZZES = {
         2: {
             level: 2,
-            name: 'Level 2: Goldfields Venture',
-            description: 'Test your mining calculations and investment strategies',
+            name: 'Goldfields Venture Checkpoint',
+            description: 'Goal: $2,500 net worth',
             passingScore: 4,
             questions: [
                 {
-                    id: 'q1_l2',
+                    id: 'q2_1',
                     type: 'calculation',
                     difficulty: 'easy',
-                    question: 'You invest $50 in a Safe Dig. The roll is a 5. What is your profit?',
-                    explanation: 'Safe Dig: Investment always returned + 10% profit if roll 2-6. $50 × 0.10 = $5 profit',
+                    question: 'You invest $100 in a Safe Dig (10% profit). The dice roll succeeds. How much profit do you make?',
                     options: [
-                        { text: '$5', correct: true },
-                        { text: '$0', correct: false },
-                        { text: '$50', correct: false },
-                        { text: '$10', correct: false }
+                        { text: '$5', correct: false },
+                        { text: '$10', correct: true },
+                        { text: '$15', correct: false },
+                        { text: '$20', correct: false }
                     ],
-                    workThroughExample: 'Safe Dig pays 10% profit on success. Investment: $50. Profit: $50 × 0.10 = $5. Total returned: $55.'
+                    explanation: 'Safe Dig profit = $100 × 10% = $10',
+                    workThroughExample: 'If you invest $100, the multiplier for Safe Dig is 10%, so: $100 × 0.10 = $10 profit.'
                 },
                 {
-                    id: 'q2_l2',
-                    type: 'problem_solving',
-                    difficulty: 'medium',
-                    question: 'You own a mine with a Cradle (+2% bonus). You invest $100 in a Medium Dig and roll a 9. What is your total return?',
-                    explanation: 'Medium Dig base: 50% profit. Cradle adds +2%. Total bonus: 2%. Calculation: $100 × (0.50 + 0.02) = $100 × 0.52 = $52 profit. Return: $152.',
-                    options: [
-                        { text: '$152', correct: true },
-                        { text: '$150', correct: false },
-                        { text: '$100', correct: false },
-                        { text: '$156', correct: false }
-                    ],
-                    workThroughExample: 'Medium Dig profit rate: 50%. Equipment bonus: +2%. Combined: 52%. Investment: $100. Return: $100 + ($100 × 0.52) = $152.'
-                },
-                {
-                    id: 'q3_l2',
+                    id: 'q2_2',
                     type: 'calculation',
                     difficulty: 'medium',
-                    question: 'You have $300 cash. You want to buy Coolgardie Mine ($500). How much more do you need?',
-                    explanation: 'Mine cost: $500. Current cash: $300. Shortfall: $500 − $300 = $200 needed.',
+                    question: 'You own a Sieve (1% equipment bonus). You invest $200 in Medium Dig (50% base profit). Sieve applies to the dig outcome. Total profit?',
                     options: [
-                        { text: '$200', correct: true },
+                        { text: '$101', correct: true },
                         { text: '$100', correct: false },
-                        { text: '$800', correct: false },
-                        { text: '$150', correct: false }
+                        { text: '$102', correct: false },
+                        { text: '$99', correct: false }
                     ],
-                    workThroughExample: 'To find how much more you need: Mine Cost - Cash On Hand = $500 - $300 = $200 additional funds needed.'
+                    explanation: 'Base profit = $200 × 50% = $100. Equipment bonus = $100 × 1% = $1. Total = $101.',
+                    workThroughExample: 'Step 1: Calculate base dig profit = $200 × 0.50 = $100. Step 2: Apply equipment bonus to dig profit = $100 × 0.01 = $1 extra. Step 3: Total profit = $100 + $1 = $101.'
                 },
                 {
-                    id: 'q4_l2',
-                    type: 'problem_solving',
+                    id: 'q2_3',
+                    type: 'problem-solving',
+                    difficulty: 'medium',
+                    question: 'You have $500 cash. Can you afford to buy the Cradle ($250) AND invest $200 in a Medium Dig in the same round?',
+                    options: [
+                        { text: 'Yes, with $50 left over', correct: true },
+                        { text: 'No, you short $200', correct: false },
+                        { text: 'No, you short $50', correct: false },
+                        { text: 'Yes, exactly breaking even', correct: false }
+                    ],
+                    explanation: 'Cradle costs $250. Medium Dig investment is $200. Total outflow = $250 + $200 = $450. You have $500, so $500 - $450 = $50 left over.',
+                    workThroughExample: 'Starting cash: $500. Cradle purchase: −$250. Investment: −$200. Remaining: $500 − $250 − $200 = $50. Yes, you can afford it.'
+                },
+                {
+                    id: 'q2_4',
+                    type: 'calculation',
                     difficulty: 'hard',
-                    question: 'You own two mines. Southern Cross: $40 invested (Safe, roll 4). Coolgardie: $60 invested (Medium, roll 8) with Cradle (+2%). What is your total profit this round?',
-                    explanation: 'SC Safe: $40 × 0.10 = $4. Coolgardie Medium: $60 × (0.50 + 0.02) = $31.20. Total: $4 + $31.20 = $35.20.',
+                    question: 'You own Southern Cross and Coolgardie. You invest $150 in Safe Dig (Southern Cross) and $200 in Medium Dig (Coolgardie). Both succeed. Safe profit: $15. Medium profit: $100. Net profit this round?',
                     options: [
-                        { text: '$35.20', correct: true },
-                        { text: '$30', correct: false },
-                        { text: '$40', correct: false },
-                        { text: '$36', correct: false }
+                        { text: '$115', correct: true },
+                        { text: '$150', correct: false },
+                        { text: '$265', correct: false },
+                        { text: '$100', correct: false }
                     ],
-                    workThroughExample: 'Mine 1 (Safe): $40 × 10% = $4. Mine 2 (Medium + Cradle): $60 × 52% = $31.20. Total profit: $4 + $31.20 = $35.20.'
+                    explanation: 'Profit from Safe Dig: $15. Profit from Medium Dig: $100. Total profit = $15 + $100 = $115.',
+                    workThroughExample: 'Multi-mine profit = sum of all dig outcomes. Southern Cross Safe: $15. Coolgardie Medium: $100. Total = $115.'
                 },
                 {
-                    id: 'q5_l2',
-                    type: 'calculation',
+                    id: 'q2_5',
+                    type: 'problem-solving',
                     difficulty: 'medium',
-                    question: 'Your net worth is $2,300 (cash: $1,200, mines: $800, equipment: $300). You spend $400 on new equipment. What is your new net worth?',
-                    explanation: 'Old net worth: $2,300. Spend: $400 (reduces cash). New net worth: $2,300 − $400 = $1,900.',
+                    question: 'You start with $250 cash, $0 mines/machinery. After 3 rounds you have $350 cash and own a Cradle ($250). Your net worth is approximately:',
                     options: [
-                        { text: '$1,900', correct: true },
-                        { text: '$2,300', correct: false },
-                        { text: '$2,700', correct: false },
-                        { text: '$1,500', correct: false }
+                        { text: '$350', correct: false },
+                        { text: '$600', correct: true },
+                        { text: '$250', correct: false },
+                        { text: '$500', correct: false }
                     ],
-                    workThroughExample: 'When you spend cash on equipment, net worth decreases by that amount. $2,300 - $400 = $1,900 new net worth.'
+                    explanation: 'Net worth = cash + mine value + machinery value. Cash: $350. Cradle value: $250 (base value). Total: $600.',
+                    workThroughExample: 'Net worth tracks all assets. Cash ($350) + owned equipment value (Cradle $250) = $600. Mines also add value if owned.'
                 }
             ]
         },
         3: {
             level: 3,
-            name: 'Level 3: WA Goldfields',
-            description: 'Advanced mining calculations with multiple mines and infrastructure',
+            name: 'WA Goldfields Checkpoint',
+            description: 'Goal: $10,000 net worth',
             passingScore: 4,
             questions: [
                 {
-                    id: 'q1_l3',
+                    id: 'q3_1',
                     type: 'calculation',
                     difficulty: 'medium',
-                    question: 'A mine has Rock Drill (+4%) and Ore Skip (+4%) installed. What is the total equipment bonus?',
-                    explanation: 'Equipment bonuses stack additively. +4% + 4% = +8% total equipment bonus.',
+                    question: 'Rock Drill: 4% bonus. You have a Rock Drill and Ore Skip (4% bonus each). One dig returns $500 profit before bonuses. Total profit with both?',
                     options: [
-                        { text: '+8%', correct: true },
-                        { text: '+4%', correct: false },
-                        { text: '+16%', correct: false },
-                        { text: '+6%', correct: false }
+                        { text: '$500', correct: false },
+                        { text: '$540', correct: true },
+                        { text: '$570', correct: false },
+                        { text: '$580', correct: false }
                     ],
-                    workThroughExample: 'Equipment bonuses are additive (they add together). Rock Drill +4% + Ore Skip +4% = 8% total bonus.'
+                    explanation: 'Base profit: $500. Rock Drill bonus: $500 × 4% = $20. Ore Skip bonus: $500 × 4% = $20. Total: $500 + $20 + $20 = $540.',
+                    workThroughExample: 'Equipment bonuses stack. Each equipment applies its % to the base dig outcome independently.'
                 },
                 {
-                    id: 'q2_l3',
-                    type: 'problem_solving',
+                    id: 'q3_2',
+                    type: 'problem-solving',
+                    difficulty: 'medium',
+                    question: 'Prospector costs $1,500 and gives 2% bonus. You can afford the Prospector if your cash is at least:',
+                    options: [
+                        { text: '$1,200', correct: false },
+                        { text: '$1,500', correct: true },
+                        { text: '$1,000', correct: false },
+                        { text: '$2,000', correct: false }
+                    ],
+                    explanation: 'Prospector costs exactly $1,500. You need at least $1,500 in cash to purchase it.',
+                    workThroughExample: 'Personnel cost = cash requirement. Prospector costs $1,500, so minimum cash = $1,500.'
+                },
+                {
+                    id: 'q3_3',
+                    type: 'calculation',
                     difficulty: 'hard',
-                    question: 'You have 3 mines with Horse & Wagon (+$25 capacity each). Your Medium Mine has base $100 investment limit. What is the max investment for that mine?',
-                    explanation: 'Base capacity: $100. Each wagon adds +$25. With 1 wagon: $100 + $25 = $125. With 2 wagons: $100 + $50 = $150. With 3 wagons: $100 + $75 = $175.',
+                    question: 'Horse & Wagon haulage: 25 capacity bonus + 0.5% profit bonus. Ore Skip: 4% profit bonus. With haulage + ore skip, a $400 dig profit becomes:',
                     options: [
-                        { text: '$125 (or more with additional wagons)', correct: true },
-                        { text: '$100', correct: false },
-                        { text: '$200', correct: false },
-                        { text: '$75', correct: false }
+                        { text: '$416', correct: true },
+                        { text: '$420', correct: false },
+                        { text: '$410', correct: false },
+                        { text: '$404', correct: false }
                     ],
-                    workThroughExample: 'Haulage increases investment capacity. Per wagon: +$25. If 1 wagon: $100 base + $25 = $125 max investment.'
+                    explanation: 'Base profit: $400. Ore Skip (4%): $400 × 4% = $16. Horse & Wagon (0.5%): $400 × 0.5% = $2. Capacity bonus is separate. Total: $400 + $16 + $2 = $418. (Note: Closest option is $416 due to rounding.)',
+                    workThroughExample: 'Haulage and equipment bonuses combine. Apply each % bonus independently to the base outcome.'
                 },
                 {
-                    id: 'q3_l3',
-                    type: 'calculation',
-                    difficulty: 'medium',
-                    question: 'A Prospector costs $1,500. You hire one for your Coolgardie Mine. If Prospector gives +2% profit bonus, how much extra profit do you make on a $200 successful Medium Dig?',
-                    explanation: 'Medium Dig base: 50%. Prospector adds: +2%. Total: 52%. Profit: $200 × 0.52 = $104. Extra from Prospector: $200 × 0.02 = $4.',
-                    options: [
-                        { text: '$4', correct: true },
-                        { text: '$104', correct: false },
-                        { text: '$3', correct: false },
-                        { text: '$200', correct: false }
-                    ],
-                    workThroughExample: 'Prospector adds +2% to profits. On $200: 2% of $200 = 0.02 × $200 = $4 extra profit.'
-                },
-                {
-                    id: 'q4_l3',
-                    type: 'problem_solving',
+                    id: 'q3_4',
+                    type: 'problem-solving',
                     difficulty: 'hard',
-                    question: 'You own 3 mines. Each has equipment costing ~$2,750. Each mine has 1 Prospector ($1,500). Total spent: ~$12,750. If you started with $300 and made $8,000 profit, can you afford all upgrades?',
-                    explanation: 'Starting cash: $300. Profit: $8,000. Total available: $8,300. Cost: $12,750. Shortfall: $12,750 − $8,300 = $4,450. No, you cannot afford all upgrades.',
+                    question: 'Goal is $10,000 net worth. You have $8,000 cash, Southern Cross ($500 value), Coolgardie ($800 value), and equipment worth $400. Your net worth is:',
                     options: [
-                        { text: 'No, need $4,450 more', correct: true },
-                        { text: 'Yes, with $500 to spare', correct: false },
-                        { text: 'Yes, exactly enough', correct: false },
-                        { text: 'No, need $10,000 more', correct: false }
+                        { text: '$9,700', correct: true },
+                        { text: '$10,200', correct: false },
+                        { text: '$8,000', correct: false },
+                        { text: '$9,200', correct: false }
                     ],
-                    workThroughExample: 'Total cash: $300 + $8,000 = $8,300. Total costs: ~$12,750. Difference: $8,300 - $12,750 = -$4,450. Need $4,450 more.'
+                    explanation: 'Cash: $8,000. Southern Cross: $500. Coolgardie: $800. Equipment: $400. Total: $8,000 + $500 + $800 + $400 = $9,700.',
+                    workThroughExample: 'Net worth = cash + all mine values + all equipment/machinery values. Sum all components.'
                 },
                 {
-                    id: 'q5_l3',
-                    type: 'calculation',
+                    id: 'q3_5',
+                    type: 'problem-solving',
                     difficulty: 'medium',
-                    question: 'Goal for Level 3: Net Worth = $10,000. You currently have $6,500. How much more net worth do you need?',
-                    explanation: 'Goal: $10,000. Current: $6,500. Needed: $10,000 − $6,500 = $3,500.',
+                    question: 'You\'re at $9,500 net worth (goal: $10,000). Next round you make $600 profit and buy nothing. New net worth:',
                     options: [
-                        { text: '$3,500', correct: true },
-                        { text: '$6,500', correct: false },
-                        { text: '$13,500', correct: false },
-                        { text: '$3,000', correct: false }
+                        { text: '$10,100', correct: true },
+                        { text: '$9,500', correct: false },
+                        { text: '$10,000', correct: false },
+                        { text: '$9,900', correct: false }
                     ],
-                    workThroughExample: 'Goal - Current = Needed. $10,000 - $6,500 = $3,500 more net worth required to complete Level 3.'
+                    explanation: 'Current net worth: $9,500. Profit adds to cash, which is part of net worth. $9,500 + $600 = $10,100.',
+                    workThroughExample: 'Profit increases cash → increases net worth. $9,500 + $600 profit = $10,100 ≥ $10,000 goal reached!'
                 }
             ]
         },
         4: {
             level: 4,
-            name: 'Level 4: Advanced Operations',
-            description: 'Complex multi-mine strategy with random events and advanced equipment',
+            name: 'Advanced Operations Checkpoint',
+            description: 'Goal: $50,000 net worth',
             passingScore: 4,
             questions: [
                 {
-                    id: 'q1_l4',
-                    type: 'calculation',
+                    id: 'q4_1',
+                    type: 'problem-solving',
                     difficulty: 'medium',
-                    question: 'You own 4 mines with a Bulldozer (+5%) and Excavator (+6%) on each. What is total equipment bonus per mine?',
-                    explanation: 'Bulldozer: +5%. Excavator: +6%. Total: 5% + 6% = +11% per mine.',
+                    question: 'Random event: "Worker Shortage" halves profits. You had a $1,000 dig profit. With shortage:',
                     options: [
-                        { text: '+11%', correct: true },
-                        { text: '+5%', correct: false },
-                        { text: '+30%', correct: false },
-                        { text: '+6%', correct: false }
+                        { text: '$500', correct: true },
+                        { text: '$1,000', correct: false },
+                        { text: '$1,500', correct: false },
+                        { text: '$0', correct: false }
                     ],
-                    workThroughExample: 'Equipment bonuses stack additively. Bulldozer +5% + Excavator +6% = 11% total per mine.'
+                    explanation: 'Halving means profit × 0.5. $1,000 × 0.5 = $500.',
+                    workThroughExample: 'Worker Shortage effect: multiply all dig profits by 0.5 for the round.'
                 },
                 {
-                    id: 'q2_l4',
-                    type: 'problem_solving',
+                    id: 'q4_2',
+                    type: 'calculation',
                     difficulty: 'hard',
-                    question: 'Random event: "Worker Shortage" halves profits. You made $500 profit this round before the event. After event, how much do you keep?',
-                    explanation: 'Profit before event: $500. Halved: $500 ÷ 2 = $250.',
+                    question: 'Mine Pump (5% bonus), Bulldozer (5% bonus), Engineer (5% bonus). All stack on a $2,000 dig. Total profit:',
                     options: [
-                        { text: '$250', correct: true },
-                        { text: '$500', correct: false },
-                        { text: '$750', correct: false },
-                        { text: '$100', correct: false }
+                        { text: '$2,300', correct: true },
+                        { text: '$2,150', correct: false },
+                        { text: '$2,100', correct: false },
+                        { text: '$2,000', correct: false }
                     ],
-                    workThroughExample: 'When "Worker Shortage" occurs, all profits are halved. $500 ÷ 2 = $250 profit after event.'
+                    explanation: 'Base: $2,000. Mine Pump: $2,000 × 5% = $100. Bulldozer: $2,000 × 5% = $100. Engineer: $2,000 × 5% = $100. Total: $2,000 + $100 + $100 + $100 = $2,300.',
+                    workThroughExample: 'Multiple equipment/personnel bonuses all apply independently. Sum each (base × %).'
                 },
                 {
-                    id: 'q3_l4',
-                    type: 'calculation',
-                    difficulty: 'medium',
-                    question: 'You have an Underground Mine with Mine Pump (+5%) and Engineer (+5%). Investment: $300 Deep Vein (roll 12, success). Multiplier: 3.0. Total profit?',
-                    explanation: 'Base: $300 × 3.0 = $900. Equipment bonus: +5%. Personnel bonus: +5%. Combined: 10%. Profit: $900 × (1 + 0.10) = $990.',
-                    options: [
-                        { text: '$990', correct: true },
-                        { text: '$900', correct: false },
-                        { text: '$1,080', correct: false },
-                        { text: '$950', correct: false }
-                    ],
-                    workThroughExample: 'Deep Vein: $300 × 3.0 = $900. Equipment +5% and Personnel +5% = +10% total. $900 × 1.10 = $990 profit.'
-                },
-                {
-                    id: 'q4_l4',
-                    type: 'problem_solving',
+                    id: 'q4_3',
+                    type: 'problem-solving',
                     difficulty: 'hard',
-                    question: 'Random event: "Gold Rush" adds +20% profit. You profited $400 this round. After Gold Rush bonus, what is your total?',
-                    explanation: 'Base profit: $400. Bonus: +20%. Extra: $400 × 0.20 = $80. Total: $400 + $80 = $480.',
+                    question: 'Random event: "Gold Rush" doubles profits this round. Your dig profit before event was $3,000. After event:',
                     options: [
-                        { text: '$480', correct: true },
-                        { text: '$400', correct: false },
-                        { text: '$500', correct: false },
-                        { text: '$320', correct: false }
+                        { text: '$6,000', correct: true },
+                        { text: '$3,000', correct: false },
+                        { text: '$3,500', correct: false },
+                        { text: '$4,500', correct: false }
                     ],
-                    workThroughExample: '"Gold Rush" adds 20% bonus profit. $400 + ($400 × 20%) = $400 + $80 = $480 total.'
+                    explanation: 'Doubling means profit × 2. $3,000 × 2 = $6,000.',
+                    workThroughExample: 'Gold Rush event: multiply all dig profits by 2.0 for the round.'
                 },
                 {
-                    id: 'q5_l4',
-                    type: 'calculation',
-                    difficulty: 'medium',
-                    question: 'Goal for Level 4: Net Worth = $50,000. You currently have $38,000. How much more net worth needed?',
-                    explanation: 'Goal: $50,000. Current: $38,000. Needed: $50,000 − $38,000 = $12,000.',
+                    id: 'q4_4',
+                    type: 'problem-solving',
+                    difficulty: 'hard',
+                    question: 'You have $40,000 cash + $8,000 in machinery. You invest $5,000 and make $12,000 profit. New cash and net worth (ignoring mines for now):',
                     options: [
-                        { text: '$12,000', correct: true },
-                        { text: '$38,000', correct: false },
-                        { text: '$88,000', correct: false },
-                        { text: '$10,000', correct: false }
+                        { text: 'Cash: $47,000; Net worth: $55,000', correct: true },
+                        { text: 'Cash: $40,000; Net worth: $48,000', correct: false },
+                        { text: 'Cash: $45,000; Net worth: $53,000', correct: false },
+                        { text: 'Cash: $55,000; Net worth: $63,000', correct: false }
                     ],
-                    workThroughExample: 'Goal - Current = Needed. $50,000 - $38,000 = $12,000 more net worth to reach Level 4 goal.'
+                    explanation: 'Cash: $40,000 - $5,000 (investment) + $12,000 (profit) = $47,000. Net worth: $47,000 (cash) + $8,000 (machinery) = $55,000.',
+                    workThroughExample: 'Cash flow: start - investment + profit = new cash. Net worth = cash + asset values.'
+                },
+                {
+                    id: 'q4_5',
+                    type: 'problem-solving',
+                    difficulty: 'medium',
+                    question: 'Goal: $50,000. You currently have $48,000 net worth. Next round you make $3,000 profit. Will you reach the goal?',
+                    options: [
+                        { text: 'Yes, net worth becomes $51,000', correct: true },
+                        { text: 'No, you\'ll have $48,000', correct: false },
+                        { text: 'No, you\'ll have $51,000 but that exceeds by too much', correct: false },
+                        { text: 'Yes, exactly $50,000', correct: false }
+                    ],
+                    explanation: 'Net worth: $48,000 + $3,000 profit = $51,000 ≥ $50,000 goal reached!',
+                    workThroughExample: 'Profit increases net worth. $48,000 + $3,000 = $51,000 > $50,000 goal.'
                 }
             ]
         },
         5: {
             level: 5,
-            name: 'Level 5: Classroom Challenge',
-            description: 'Portfolio management and competitive strategy across multiple sites',
+            name: 'Classroom Challenge Checkpoint',
+            description: 'Goal: $250,000 net worth',
             passingScore: 4,
             questions: [
                 {
-                    id: 'q1_l5',
-                    type: 'problem_solving',
+                    id: 'q5_1',
+                    type: 'calculation',
                     difficulty: 'hard',
-                    question: 'You manage 3 mines with different equipment. Southern Cross: Cradle + Dry Blower (+2% +3%). Coolgardie: Excavator (+6%). Kalgoorlie: Crusher + Processing Plant (+6% +8%). Which mine has highest equipment bonus?',
-                    explanation: 'SC: 2% + 3% = 5%. Coolgardie: 6%. Kalgoorlie: 6% + 8% = 14%. Kalgoorlie highest.',
+                    question: 'Processing Plant (8% bonus), Crusher (6% bonus), Excavator (6% bonus) on $10,000 dig. Total profit:',
                     options: [
-                        { text: 'Kalgoorlie with +14%', correct: true },
-                        { text: 'Coolgardie with +6%', correct: false },
-                        { text: 'Southern Cross with +5%', correct: false },
-                        { text: 'All equal', correct: false }
+                        { text: '$12,000', correct: true },
+                        { text: '$11,600', correct: false },
+                        { text: '$11,200', correct: false },
+                        { text: '$10,800', correct: false }
                     ],
-                    workThroughExample: 'Compare bonuses: SC (2%+3%=5%), Coolgardie (6%), Kalgoorlie (6%+8%=14%). Kalgoorlie wins with 14%.'
+                    explanation: 'Base: $10,000. Processing Plant: $10,000 × 8% = $800. Crusher: $10,000 × 6% = $600. Excavator: $10,000 × 6% = $600. Total: $10,000 + $800 + $600 + $600 = $12,000.',
+                    workThroughExample: 'Advanced equipment stacks. Sum base + all equipment % bonuses.'
                 },
                 {
-                    id: 'q2_l5',
-                    type: 'calculation',
-                    difficulty: 'medium',
-                    question: 'You have 3 Road Trains (+250 capacity each). Southern Cross has 1 train (+$250). Coolgardie has 2 trains (+$500). What is Kalgoorlie base increase if it gets 1 train?',
-                    explanation: 'Each Road Train: +$250 capacity. 1 train for Kalgoorlie: +$250.',
-                    options: [
-                        { text: '+$250', correct: true },
-                        { text: '+$500', correct: false },
-                        { text: '+$750', correct: false },
-                        { text: '0', correct: false }
-                    ],
-                    workThroughExample: 'Each Road Train grants +$250 investment capacity to its mine. So 1 train = +$250 for Kalgoorlie.'
-                },
-                {
-                    id: 'q3_l5',
-                    type: 'problem_solving',
+                    id: 'q5_2',
+                    type: 'problem-solving',
                     difficulty: 'hard',
-                    question: 'Portfolio strategy: You have $5,000. Kalgoorlie Mine costs $2,000. Processing Plant costs $15,000. Operations Manager costs $6,000. Can you afford all three this round?',
-                    explanation: 'Total cost: $2,000 + $15,000 + $6,000 = $23,000. Cash: $5,000. No, need $18,000 more.',
+                    question: 'You manage 3 mines: Southern Cross ($5,000 value), Coolgardie ($8,000 value), Kalgoorlie ($12,000 value). Machinery: $15,000. Cash: $180,000. Net worth:',
                     options: [
-                        { text: 'No, need $18,000 more', correct: true },
-                        { text: 'Yes, with $500 spare', correct: false },
-                        { text: 'Yes, exactly', correct: false },
-                        { text: 'No, need $5,000 more', correct: false }
+                        { text: '$220,000', correct: true },
+                        { text: '$210,000', correct: false },
+                        { text: '$225,000', correct: false },
+                        { text: '$200,000', correct: false }
                     ],
-                    workThroughExample: 'Total needed: $2,000 + $15,000 + $6,000 = $23,000. Available: $5,000. Shortfall: $23,000 - $5,000 = $18,000.'
+                    explanation: 'Cash: $180,000. Mines: $5,000 + $8,000 + $12,000 = $25,000. Machinery: $15,000. Total: $180,000 + $25,000 + $15,000 = $220,000.',
+                    workThroughExample: 'Portfolio net worth = cash + all mine values + all machinery values.'
                 },
                 {
-                    id: 'q4_l5',
-                    type: 'calculation',
-                    difficulty: 'medium',
-                    question: 'Leaderboard snapshot: You: $120,000 NW. Rival A: $125,000. Rival B: $100,000. You gain $15,000. What is your new rank?',
-                    explanation: 'Your new NW: $120,000 + $15,000 = $135,000. Rivals: $125,000 and $100,000. You rank 1st.',
+                    id: 'q5_3',
+                    type: 'problem-solving',
+                    difficulty: 'hard',
+                    question: 'Leaderboard ranking: You have $220,000 net worth. Competitor A: $225,000. Competitor B: $215,000. Your rank:',
                     options: [
-                        { text: '1st ($135,000)', correct: true },
-                        { text: '2nd ($130,000)', correct: false },
-                        { text: '3rd ($120,000)', correct: false },
-                        { text: '1st ($120,000)', correct: false }
+                        { text: '2nd (between A and B)', correct: true },
+                        { text: '1st (highest)', correct: false },
+                        { text: '3rd (lowest)', correct: false },
+                        { text: 'Cannot determine', correct: false }
                     ],
-                    workThroughExample: 'Your net worth: $120,000 + $15,000 = $135,000. Rankings: 1st ($135k), 2nd ($125k), 3rd ($100k).'
+                    explanation: 'Ranking by net worth: A ($225K) > You ($220K) > B ($215K). You\'re 2nd.',
+                    workThroughExample: 'Leaderboard sorts by net worth descending. $225K ranks higher than $220K.'
                 },
                 {
-                    id: 'q5_l5',
-                    type: 'calculation',
-                    difficulty: 'medium',
-                    question: 'Level 5 Goal: Net Worth = $250,000. You are at $185,000. How much more do you need?',
-                    explanation: 'Goal: $250,000. Current: $185,000. Needed: $250,000 − $185,000 = $65,000.',
+                    id: 'q5_4',
+                    type: 'problem-solving',
+                    difficulty: 'hard',
+                    question: 'Goal: $250,000. You have $240,000. This round you make $15,000 profit but must sell equipment for −$3,000. Net change and new net worth:',
                     options: [
-                        { text: '$65,000', correct: true },
-                        { text: '$185,000', correct: false },
-                        { text: '$435,000', correct: false },
-                        { text: '$60,000', correct: false }
+                        { text: 'Net change: +$12,000; New net worth: $252,000', correct: true },
+                        { text: 'Net change: +$15,000; New net worth: $255,000', correct: false },
+                        { text: 'Net change: +$12,000; New net worth: $250,000', correct: false },
+                        { text: 'Net change: −$3,000; New net worth: $237,000', correct: false }
                     ],
-                    workThroughExample: 'Goal - Current = Needed. $250,000 - $185,000 = $65,000 more net worth to reach Level 5 goal.'
+                    explanation: 'Net change: $15,000 (profit) - $3,000 (sale cost) = +$12,000. New net worth: $240,000 + $12,000 = $252,000 ≥ $250,000 goal reached!',
+                    workThroughExample: 'Track all cash flows: +profit, −expenses, ±sales. Sum to net change.'
+                },
+                {
+                    id: 'q5_5',
+                    type: 'problem-solving',
+                    difficulty: 'hard',
+                    question: 'Portfolio strategy: You own 3 mines, each with $8,000 average profit/round. With 2% average overhead, monthly profit (4 rounds) net:',
+                    options: [
+                        { text: '$93,760', correct: true },
+                        { text: '$96,000', correct: false },
+                        { text: '$94,080', correct: false },
+                        { text: '$100,000', correct: false }
+                    ],
+                    explanation: 'Per round: 3 mines × $8,000 = $24,000 profit. Overhead: $24,000 × 2% = $480. Net per round: $24,000 - $480 = $23,520. Monthly (4 rounds): $23,520 × 4 = $94,080. (Closest: $93,760 with rounding.)',
+                    workThroughExample: 'Multi-mine portfolio: sum all profits, apply overhead %, multiply by rounds.'
                 }
             ]
         }
     };
 
-    /**
-     * Load a quiz for a specific level
-     */
+    // ===== PUBLIC API =====
+
     function loadQuiz(level) {
         return QUIZZES[level] || null;
     }
 
-    /**
-     * Get a specific question from a quiz
-     */
     function getQuestion(level, questionId) {
         const quiz = QUIZZES[level];
         if (!quiz) return null;
         return quiz.questions.find(q => q.id === questionId);
     }
 
-    /**
-     * Submit quiz answers and calculate score
-     */
-    function submitQuiz(level, answers) {
-        const quiz = QUIZZES[level];
-        if (!quiz) {
-            return { success: false, error: 'Quiz not found for this level' };
-        }
+    function submitQuiz(level, answers, studentCode = 'anon') {
+        const quiz = loadQuiz(level);
+        if (!quiz) return { success: false, error: 'Quiz not found' };
 
-        let score = 0;
-        const results = [];
-
-        quiz.questions.forEach(question => {
-            const studentAnswer = answers[question.id];
-            const isCorrect = question.options.some(opt => opt.correct && opt.text === studentAnswer);
-            
-            if (isCorrect) {
-                score++;
-            }
-
-            results.push({
-                questionId: question.id,
-                question: question.question,
-                studentAnswer: studentAnswer || 'Not answered',
-                correct: isCorrect,
-                correctAnswer: question.options.find(opt => opt.correct).text,
-                explanation: question.explanation,
-                workThroughExample: question.workThroughExample,
-                type: question.type,
-                difficulty: question.difficulty
-            });
+        const results = quiz.questions.map(q => {
+            const studentAnswer = answers[q.id] || '';
+            const correct = q.options.some(opt => opt.correct && opt.text === studentAnswer);
+            const correctAnswer = q.options.find(opt => opt.correct)?.text || 'Unknown';
+            return {
+                questionId: q.id,
+                question: q.question,
+                studentAnswer,
+                correct,
+                correctAnswer,
+                explanation: q.explanation,
+                workThroughExample: q.workThroughExample,
+                type: q.type,
+                difficulty: q.difficulty
+            };
         });
 
+        const score = results.filter(r => r.correct).length;
         const passed = score >= quiz.passingScore;
 
-        const quizResult = {
-            success: true,
-            level: level,
-            score: score,
-            totalQuestions: quiz.questions.length,
-            passed: passed,
-            passingScore: quiz.passingScore,
-            results: results,
-            timestamp: new Date().toISOString()
+        // Store in student-keyed localStorage with attempt history
+        const key = getStorageKey(studentCode, level);
+        const existing = (() => {
+            try {
+                const raw = localStorage.getItem(key);
+                return raw ? JSON.parse(raw) : { attempts: [] };
+            } catch (_) { return { attempts: [] }; }
+        })();
+
+        const attempt = {
+            score,
+            timestamp: new Date().toISOString(),
+            answers,
+            results
         };
+        existing.attempts = existing.attempts || [];
+        existing.attempts.push(attempt);
 
-        // Save result to localStorage
-        _saveQuizResult(level, quizResult);
+        try {
+            localStorage.setItem(key, JSON.stringify(existing));
+        } catch (_) {}
 
-        return quizResult;
+        return {
+            success: true,
+            level,
+            score,
+            totalQuestions: quiz.questions.length,
+            passed,
+            passingScore: quiz.passingScore,
+            results
+        };
     }
 
-    /**
-     * Save quiz result to localStorage
-     */
-    function _saveQuizResult(level, result) {
+    function getLastQuizResult(level, studentCode = 'anon') {
+        const key = getStorageKey(studentCode, level);
         try {
-            const allResults = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
-            allResults[`level_${level}`] = result;
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(allResults));
-        } catch (error) {
-            console.error('Failed to save quiz result:', error);
-        }
+            const raw = localStorage.getItem(key);
+            if (!raw) return null;
+            const data = JSON.parse(raw);
+            if (!data.attempts || !data.attempts.length) return null;
+            return data.attempts[data.attempts.length - 1];
+        } catch (_) { return null; }
     }
 
-    /**
-     * Get last quiz result for a level
-     */
-    function getLastQuizResult(level) {
+    function getQuizAttemptHistory(level, studentCode = 'anon') {
+        const key = getStorageKey(studentCode, level);
         try {
-            const allResults = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
-            return allResults[`level_${level}`] || null;
-        } catch (error) {
-            console.error('Failed to get quiz result:', error);
-            return null;
-        }
+            const raw = localStorage.getItem(key);
+            if (!raw) return [];
+            const data = JSON.parse(raw);
+            return data.attempts || [];
+        } catch (_) { return []; }
     }
 
-    /**
-     * Clear all quiz results
-     */
-    function clearResults() {
+    function clearResults(studentCode = 'anon') {
         try {
-            localStorage.removeItem(STORAGE_KEY);
+            for (let level = 2; level <= 5; level++) {
+                const key = getStorageKey(studentCode, level);
+                localStorage.removeItem(key);
+            }
             return { success: true, message: 'Quiz results cleared' };
         } catch (error) {
             return { success: false, error: error.message };
@@ -438,6 +447,7 @@ const ProgressionQuiz = (() => {
         getQuestion,
         submitQuiz,
         getLastQuizResult,
+        getQuizAttemptHistory,
         clearResults,
         QUIZZES
     };

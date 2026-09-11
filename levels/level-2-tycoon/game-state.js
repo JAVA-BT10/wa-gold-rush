@@ -1,6 +1,13 @@
 /**
- * Level 2: Mining Tycoon - Game State Manager
- * Handles all game state for multiple mines, machinery, upgrades, and net worth
+ * GameState — Goldfields Venture progression state
+ * 
+ * Tracks:
+ * - Mines owned & their upgrades
+ * - Cash & net worth
+ * - Machinery inventory
+ * - Investment plans (per mine, per dig type)
+ * - Checkpoint status for progression gates
+ * - Quiz attempts and teacher approval
  */
 
 class GameState {
@@ -34,7 +41,13 @@ class GameState {
         this.roundHistory = [];
         this.totalProfitLoss = 0;
         this.investmentPlans = {};
-        this.checkpointStatus = null;
+        
+        // ===== CHECKPOINT / PROGRESSION FIELDS =====
+        this.checkpointStatus = null;       // null | 'quiz_available' | 'quiz_passed'
+        this.quizAttempts = [];             // [{score, timestamp, answers, results}, ...]
+        this.approvalStatus = null;         // null | 'pending' | 'approved' | 'rejected' | 'retake_requested'
+        this.approverName = null;           // Teacher email or name
+        this.approvalTimestamp = null;      // ISO timestamp of approval
     }
 
     /**
@@ -47,94 +60,13 @@ class GameState {
                 throw new Error(`HTTP ${response.status}`);
             }
             this.gameConfig = await response.json();
-            this.applyLevelConfigAdapter();
-            const levelKey = String(this.assignedLevel || 2);
-            this.cash = this.gameConfig?.levels?.[levelKey]?.startingCash
-                ?? this.gameConfig?.levels?.['2']?.startingCash
-                ?? this.cash;
+            this.cash = this.gameConfig?.levels?.['2']?.startingCash || this.cash;
             console.log('Game config loaded:', this.gameConfig);
             return true;
         } catch (error) {
             console.error('Failed to load game config:', error);
             return false;
         }
-    }
-
-    applyLevelConfigAdapter() {
-        if (!this.gameConfig || typeof this.gameConfig !== 'object') return;
-
-        const levelKey = String(this.assignedLevel || 2);
-        const levelConfig = this.gameConfig?.levels?.[levelKey] || this.gameConfig?.levels?.['2'];
-        if (!levelConfig || typeof levelConfig !== 'object') return;
-        const baseConfig = this.gameConfig;
-
-        this.gameConfig.machinery = this.flattenMachinery(levelConfig, baseConfig);
-        this.gameConfig.mines = this.flattenMines(levelConfig, baseConfig);
-        this.gameConfig.mineUpgrades = this.flattenMineUpgrades(levelConfig, baseConfig);
-        this.gameConfig.digTypes = this.flattenDigTypes(levelConfig, baseConfig);
-        this.gameConfig.randomEvents = this.flattenRandomEvents(levelConfig, baseConfig);
-    }
-
-    flattenMachinery(levelConfig, baseConfig) {
-        const normalizeAsset = (item = {}) => ({
-            ...item,
-            purchaseLimit: item.purchaseLimit ?? item.maxPerMine ?? 1,
-            baseValue: item.baseValue ?? item.cost ?? 0,
-            profitBonus: item.profitBonus ?? 0,
-            canBeSold: item.canBeSold ?? true,
-            resaleValue: item.resaleValue ?? 0.75
-        });
-
-        const baseMachinery = Object.fromEntries(
-            Object.entries(baseConfig?.machinery || {}).map(([id, item]) => [id, normalizeAsset(item)])
-        );
-
-        const equipment = Object.fromEntries(
-            Object.entries(levelConfig?.equipment || {}).map(([id, item]) => [id, normalizeAsset(item)])
-        );
-        const directMachinery = Object.fromEntries(
-            Object.entries(levelConfig?.machinery || {}).map(([id, item]) => [id, normalizeAsset(item)])
-        );
-        const personnel = Object.fromEntries(
-            Object.entries(levelConfig?.personnel || {}).map(([id, item]) => [id, normalizeAsset(item)])
-        );
-        const haulage = Object.fromEntries(
-            Object.entries(levelConfig?.haulage || {}).map(([id, item]) => [id, normalizeAsset(item)])
-        );
-
-        const merged = {
-            ...directMachinery,
-            ...equipment,
-            ...personnel,
-            ...haulage
-        };
-        return { ...baseMachinery, ...merged };
-    }
-
-    flattenMines(levelConfig, baseConfig) {
-        const levelMines = levelConfig?.mines || levelConfig?.regionalMines || {};
-        return { ...(baseConfig?.mines || {}), ...levelMines };
-    }
-
-    flattenMineUpgrades(levelConfig, baseConfig) {
-        const levelMineUpgrades = levelConfig?.mineUpgrades || levelConfig?.upgrades || {};
-        return { ...(baseConfig?.mineUpgrades || {}), ...levelMineUpgrades };
-    }
-
-    flattenDigTypes(levelConfig, baseConfig) {
-        const levelDigTypes = levelConfig?.digTypes || levelConfig?.digTypeConfig || {};
-        const digTypes = { ...(baseConfig?.digTypes || {}), ...levelDigTypes };
-        return Object.fromEntries(
-            Object.entries(digTypes).map(([id, dig]) => ([id, {
-                ...dig,
-                multiplier: dig.multiplier ?? dig.baseMultiplier ?? 1
-            }]))
-        );
-    }
-
-    flattenRandomEvents(levelConfig, baseConfig) {
-        const levelRandomEvents = levelConfig?.randomEvents || levelConfig?.events || {};
-        return { ...(baseConfig?.randomEvents || {}), ...levelRandomEvents };
     }
 
     getAllowedMineUpgradeIds(level = this.assignedLevel || 2) {
@@ -146,21 +78,10 @@ class GameState {
     }
 
     getAllowedMachineryIds(level = this.assignedLevel || 2) {
-        const levelNum = Number(level) || 2;
-        const machineryEntries = Object.entries(this.gameConfig?.machinery || {});
-
-        const configDrivenIds = machineryEntries
-            .filter(([, machinery]) => this.isMachineryAvailableForLevel(machinery, levelNum))
-            .map(([id]) => id);
-
-        if (configDrivenIds.length) {
-            return configDrivenIds;
-        }
-
-        const fallbackOrder = ['excavator', 'drilling_rig', 'super_drill'];
-        if (levelNum <= 2) return fallbackOrder.slice(0, 1);
-        if (levelNum === 3) return fallbackOrder.slice(0, 2);
-        return [...fallbackOrder];
+        const order = ['excavator', 'drilling_rig', 'super_drill'];
+        if (level <= 2) return order.slice(0, 1);
+        if (level === 3) return order.slice(0, 2);
+        return [...order];
     }
 
     isMineUpgradeAllowed(upgradeId, level = this.assignedLevel || 2) {
@@ -169,20 +90,6 @@ class GameState {
 
     isMachineryAllowed(machineryId, level = this.assignedLevel || 2) {
         return this.getAllowedMachineryIds(level).includes(machineryId);
-    }
-
-    isMachineryAvailableForLevel(machinery, level) {
-        if (!machinery || typeof machinery !== 'object') {
-            return false;
-        }
-
-        const availableFromLevel = Number(machinery.availableFromLevel);
-        const obsoleteFromLevel = Number(machinery.obsoleteFromLevel);
-
-        const unlocked = Number.isFinite(availableFromLevel) ? level >= availableFromLevel : true;
-        const notObsolete = Number.isFinite(obsoleteFromLevel) ? level < obsoleteFromLevel : true;
-
-        return unlocked && notObsolete;
     }
 
     canRollRandomEvents(level = this.assignedLevel || 2) {
@@ -463,77 +370,31 @@ class GameState {
     }
 
     /**
-     * Get dig type with applied mine upgrades
+     * Check if checkpoint/progression goal reached
      */
-    getDigTypeMultiplier(mineId, digType) {
-        if (!this.gameConfig?.digTypes || !this.gameConfig?.mines) {
-            return 0;
-        }
-
-        const digConfig = this.gameConfig.digTypes[digType];
-        if (!digConfig) {
-            return 0;
-        }
-        let multiplier = digConfig.multiplier;
-        
-        // Check mine-specific overrides (like Leonora's 500% Deep Vein)
-        const mineConfig = this.gameConfig.mines[mineId];
-        if (digType === 'deep' && mineConfig.deepVeinMultiplier) {
-            multiplier = mineConfig.deepVeinMultiplier;
-        }
-        
-        // Apply mine upgrades
-        const mine = this.ownedMines[mineId];
-        if (mine?.upgrades?.length > 0) {
-            mine.upgrades.forEach(upgradeId => {
-                const upgrade = this.gameConfig.mineUpgrades[upgradeId];
-                if (upgrade.appliesTo === digType && upgrade.effectType === 'multiplier_override') {
-                    multiplier = upgrade.newMultiplier;
-                }
-            });
-        }
-        
-        return multiplier;
+    hasReachedProgressionGoal() {
+        const goal = this.gameConfig?.levels?.[String(this.assignedLevel)]?.progressionGoal;
+        if (!goal) return false;
+        return this.getNetWorth() >= goal;
     }
 
     /**
-     * Calculate outcome for a dig
+     * Checkpoint helper: can progress to next level?
      */
-    calculateOutcome(investment, digType, mineId, isSuccess, roundEffects = {}) {
-        if (!isSuccess) {
-            return -investment;
-        }
+    isCheckpointApproved() {
+        return this.approvalStatus === 'approved';
+    }
 
-        let profit = investment * this.getDigTypeMultiplier(mineId, digType);
-        const machineryBonus = this.getTotalMachineryBonus();
-        profit *= (1 + machineryBonus);
-
-        if (roundEffects.profitMultiplier) {
-            profit *= roundEffects.profitMultiplier;
-        }
-
-        return profit;
+    canProgressToNextLevel() {
+        return this.checkpointStatus === 'quiz_passed' && this.isCheckpointApproved();
     }
 
     /**
-     * Record an investment action for the Investment Profile tracker.
-     * Delegates to InvestmentProfile module if available.
-     * @param {string} bucket — one of: highRisk, lowRisk, profitChasing, assetBuilding, futureProofing
-     * @param {number} [weight]
-     */
-    recordInvestmentAction(bucket, weight) {
-        if (typeof InvestmentProfile !== 'undefined') {
-            const code = this.player?.studentCode || 'anon';
-            InvestmentProfile.recordAction(code, this.assignedLevel, bucket, weight || 1);
-        }
-    }
-
-    /**
-     * Save game state to localStorage
+     * Persist to localStorage
      */
     saveToLocalStorage(slotName = 'level2_autosave') {
         try {
-            const saveData = {
+            const data = {
                 timestamp: new Date().toISOString(),
                 gameState: {
                     round: this.round,
@@ -545,71 +406,58 @@ class GameState {
                     roundHistory: this.roundHistory,
                     totalProfitLoss: this.totalProfitLoss,
                     investmentPlans: this.investmentPlans,
-                    checkpointStatus: this.checkpointStatus
+                    checkpointStatus: this.checkpointStatus,
+                    quizAttempts: this.quizAttempts,
+                    approvalStatus: this.approvalStatus,
+                    approverName: this.approverName,
+                    approvalTimestamp: this.approvalTimestamp
                 }
             };
-            localStorage.setItem(slotName, JSON.stringify(saveData));
-            return { success: true, message: `Game saved to ${slotName}` };
+            localStorage.setItem(slotName, JSON.stringify(data));
+            return true;
         } catch (error) {
-            return { success: false, error: error.message };
+            console.error('Failed to save game state:', error);
+            return false;
         }
     }
 
     /**
-     * Load game state from localStorage
+     * Restore from localStorage
      */
     loadFromLocalStorage(slotName = 'level2_autosave') {
         try {
-            const saveData = JSON.parse(localStorage.getItem(slotName));
-            if (!saveData) {
-                return { success: false, error: 'No save data found' };
-            }
-            
-            const gs = saveData.gameState;
-            if (!gs || typeof gs !== 'object') {
-                return { success: false, error: 'Invalid save data format' };
-            }
-
-            this.round = typeof gs.round === 'number' ? gs.round : this.round;
-            this.cash = typeof gs.cash === 'number' ? gs.cash : this.cash;
-            this.assignedLevel = gs.assignedLevel || this.assignedLevel;
-            this.player = {
-                ...this.player,
-                ...(gs.player || {})
-            };
-            // Use saved value only if it is a valid non-null object/array to prevent
-            // undefined/null from corrupting state when loading old or partial saves.
-            this.ownedMines = (gs.ownedMines != null && typeof gs.ownedMines === 'object' && !Array.isArray(gs.ownedMines))
-                ? gs.ownedMines
-                : this.ownedMines;
-            this.machinery = Array.isArray(gs.machinery) ? gs.machinery : this.machinery;
-            this.roundHistory = Array.isArray(gs.roundHistory) ? gs.roundHistory : this.roundHistory;
-            this.totalProfitLoss = typeof gs.totalProfitLoss === 'number' ? gs.totalProfitLoss : this.totalProfitLoss;
-            this.investmentPlans = (gs.investmentPlans && typeof gs.investmentPlans === 'object') ? gs.investmentPlans : {};
-            this.checkpointStatus = (typeof gs.checkpointStatus === 'string' && gs.checkpointStatus)
-                ? gs.checkpointStatus
-                : null;
-            
-            return { success: true, message: 'Game loaded from save' };
+            const raw = localStorage.getItem(slotName);
+            if (!raw) return false;
+            const data = JSON.parse(raw);
+            if (!data.gameState) return false;
+            const gs = data.gameState;
+            this.round = gs.round || 1;
+            this.cash = gs.cash || 200;
+            this.assignedLevel = gs.assignedLevel || 2;
+            this.player = gs.player || this.player;
+            this.ownedMines = gs.ownedMines || this.ownedMines;
+            this.machinery = gs.machinery || [];
+            this.roundHistory = gs.roundHistory || [];
+            this.totalProfitLoss = gs.totalProfitLoss || 0;
+            this.investmentPlans = gs.investmentPlans || {};
+            this.checkpointStatus = gs.checkpointStatus || null;
+            this.quizAttempts = gs.quizAttempts || [];
+            this.approvalStatus = gs.approvalStatus || null;
+            this.approverName = gs.approverName || null;
+            this.approvalTimestamp = gs.approvalTimestamp || null;
+            return true;
         } catch (error) {
-            return { success: false, error: error.message };
+            console.error('Failed to load game state:', error);
+            return false;
         }
     }
 
     /**
-     * Reset game to initial state
+     * Reset to new game
      */
     reset() {
         this.round = 1;
-        this.cash = this.gameConfig?.levels?.['2']?.startingCash || 200;
-        this.assignedLevel = 2;
-        this.player = {
-            studentCode: '',
-            leaderboardName: '',
-            studentId: '',
-            studentName: '',
-            companyName: 'Untitled Mining Co.'
-        };
+        this.cash = this.gameConfig?.levels?.[String(this.assignedLevel)]?.startingCash || 200;
         this.ownedMines = {
             'southern_cross': {
                 id: 'southern_cross',
@@ -623,6 +471,10 @@ class GameState {
         this.totalProfitLoss = 0;
         this.investmentPlans = {};
         this.checkpointStatus = null;
+        this.quizAttempts = [];
+        this.approvalStatus = null;
+        this.approverName = null;
+        this.approvalTimestamp = null;
     }
 }
 
