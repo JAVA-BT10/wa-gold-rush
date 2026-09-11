@@ -1,6 +1,6 @@
 {
   "gameTitle": "WA Gold Rush",
-  "version": "2.0",
+  "version": "3.0",
   
   "levels": {
     "1": {
@@ -9,340 +9,163 @@
       "maxRounds": 10,
       "roundsUnending": false,
       "startingCash": 100,
-      "features": ["dice_rolls", "single_dig_type"]
+      "progressionGoal": null,
+      "maxActiveMines": 1,
+      "features": ["dice_rolls", "single_dig_type"],
+      "equipment": {},
+      "personnel": {},
+      "haulage": {}
     },
     "2": {
       "name": "Goldfields Venture",
-      "description": "Multiple mines, upgrades, machinery, unending growth",
+      "description": "Multiple mines, equipment, unending growth",
       "maxRounds": null,
       "roundsUnending": true,
-      "startingCash": 200,
-      "features": ["multiple_mines", "mine_upgrades", "machinery", "net_worth", "unending_rounds"]
+      "startingCash": 250,
+      "progressionGoal": 2500,
+      "maxActiveMines": 2,
+      "features": ["multiple_mines", "equipment", "net_worth", "unending_rounds"],
+      "equipment": {
+        "sieve": {"id": "sieve", "name": "Sieve", "cost": 100, "baseValue": 100, "profitBonus": 0.01, "description": "Separates gold dust from gravel", "icon": "🧲", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 2, "obsoleteFromLevel": 3},
+        "cradle": {"id": "cradle", "name": "Cradle", "cost": 250, "baseValue": 250, "profitBonus": 0.02, "description": "Rocks back and forth to extract gold", "icon": "🪶", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 2, "obsoleteFromLevel": 4},
+        "dry_blower": {"id": "dry_blower", "name": "Dry Blower", "cost": 500, "baseValue": 500, "profitBonus": 0.03, "description": "Blows away lighter materials to reveal gold", "icon": "💨", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 2, "obsoleteFromLevel": 4}
+      },
+      "personnel": {},
+      "haulage": {}
     },
     "3": {
       "name": "WA Goldfields",
-      "description": "Strategic expansion across named WA regions",
+      "description": "Strategic expansion with mine upgrades and infrastructure",
       "maxRounds": null,
       "roundsUnending": true,
-      "startingCash": 200,
-      "features": ["regional_mines", "location_strategy", "regional_limits"]
+      "startingCash": 300,
+      "progressionGoal": 10000,
+      "maxActiveMines": 3,
+      "features": ["regional_mines", "equipment", "personnel", "haulage", "net_worth"],
+      "equipment": {
+        "cradle": {"id": "cradle", "name": "Cradle", "cost": 250, "baseValue": 250, "profitBonus": 0.02, "description": "Rocks back and forth to extract gold", "icon": "🪶", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 3, "obsoleteFromLevel": 4},
+        "dry_blower": {"id": "dry_blower", "name": "Dry Blower", "cost": 500, "baseValue": 500, "profitBonus": 0.03, "description": "Blows away lighter materials to reveal gold", "icon": "💨", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 3, "obsoleteFromLevel": 4},
+        "rock_drill": {"id": "rock_drill", "name": "Rock Drill", "cost": 1000, "baseValue": 1000, "profitBonus": 0.04, "description": "Drills into rock to access deeper veins", "icon": "🔨", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 3, "obsoleteFromLevel": 5},
+        "ore_skip": {"id": "ore_skip", "name": "Ore Skip", "cost": 1500, "baseValue": 1500, "profitBonus": 0.04, "description": "Container system for hauling ore from the mine", "icon": "🪣", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 3, "obsoleteFromLevel": 5}
+      },
+      "personnel": {
+        "prospector": {"id": "prospector", "name": "Experienced Prospector", "cost": 1500, "baseValue": 1500, "profitBonus": 0.02, "description": "Finds the richest veins of gold", "icon": "👨‍🔬", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 3, "obsoleteFromLevel": null}
+      },
+      "haulage": {
+        "horse_wagon": {"id": "horse_wagon", "name": "Horse & Wagon", "cost": 1000, "baseValue": 1000, "capacityBonus": 25, "profitBonus": 0.005, "description": "Reliable transport of ore and equipment", "icon": "🐴", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 3, "obsoleteFromLevel": 4}
+      }
     },
     "4": {
       "name": "Advanced Operations",
-      "description": "Random events, company mode, high-risk regions",
+      "description": "Company management with random events and advanced infrastructure",
       "maxRounds": null,
       "roundsUnending": true,
-      "startingCash": 200,
-      "features": ["random_events", "company_mode", "high_risk_regions"]
+      "startingCash": 400,
+      "progressionGoal": 50000,
+      "maxActiveMines": 4,
+      "features": ["regional_mines", "equipment", "personnel", "haulage", "random_events", "net_worth"],
+      "equipment": {
+        "rock_drill": {"id": "rock_drill", "name": "Rock Drill", "cost": 1000, "baseValue": 1000, "profitBonus": 0.04, "description": "Drills into rock to access deeper veins", "icon": "🔨", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 4, "obsoleteFromLevel": 6},
+        "ore_skip": {"id": "ore_skip", "name": "Ore Skip", "cost": 1500, "baseValue": 1500, "profitBonus": 0.04, "description": "Container system for hauling ore from the mine", "icon": "🪣", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 4, "obsoleteFromLevel": 6},
+        "mine_pump": {"id": "mine_pump", "name": "Mine Pump", "cost": 3000, "baseValue": 3000, "profitBonus": 0.05, "description": "Removes water from underground workings", "icon": "💧", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 4, "obsoleteFromLevel": 6},
+        "bulldozer": {"id": "bulldozer", "name": "Bulldozer", "cost": 5000, "baseValue": 5000, "profitBonus": 0.05, "description": "Moves earth and rocks for mining access", "icon": "🚜", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 4, "obsoleteFromLevel": 6},
+        "excavator": {"id": "excavator", "name": "Excavator", "cost": 7500, "baseValue": 7500, "profitBonus": 0.06, "description": "Powerful digging machine for large-scale extraction", "icon": "🦖", "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 4, "obsoleteFromLevel": 6}
+      },
+      "personnel": {
+        "prospector": {"id": "prospector", "name": "Experienced Prospector", "cost": 1500, "baseValue": 1500, "profitBonus": 0.02, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 4, "obsoleteFromLevel": null},
+        "supervisor": {"id": "supervisor", "name": "Shift Supervisor", "cost": 2500, "baseValue": 2500, "profitBonus": 0.02, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 4, "obsoleteFromLevel": null},
+        "engineer": {"id": "engineer", "name": "Mine Engineer", "cost": 4000, "baseValue": 4000, "profitBonus": 0.05, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 4, "obsoleteFromLevel": null}
+      },
+      "haulage": {
+        "rail_cart": {"id": "rail_cart", "name": "Rail Cart System", "cost": 5000, "baseValue": 5000, "capacityBonus": 100, "profitBonus": 0.01, "maxPerMine": 2, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 4, "obsoleteFromLevel": 5}
+      }
     },
     "5": {
       "name": "Classroom Challenge",
-      "description": "Multiplayer leaderboards and class competition",
+      "description": "Multi-site portfolio management with leaderboards and competition",
       "maxRounds": null,
       "roundsUnending": true,
-      "startingCash": 200,
-      "features": ["multiplayer", "leaderboards", "class_stats", "teacher_dashboard"]
+      "startingCash": 500,
+      "progressionGoal": 250000,
+      "maxActiveMines": 3,
+      "features": ["portfolio_management", "leaderboards", "equipment", "personnel", "haulage", "random_events", "net_worth"],
+      "equipment": {
+        "mine_pump": {"id": "mine_pump", "name": "Mine Pump", "cost": 3000, "baseValue": 3000, "profitBonus": 0.05, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 5, "obsoleteFromLevel": null},
+        "bulldozer": {"id": "bulldozer", "name": "Bulldozer", "cost": 5000, "baseValue": 5000, "profitBonus": 0.05, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 5, "obsoleteFromLevel": null},
+        "excavator": {"id": "excavator", "name": "Excavator", "cost": 7500, "baseValue": 7500, "profitBonus": 0.06, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 5, "obsoleteFromLevel": null},
+        "crusher": {"id": "crusher", "name": "Crusher", "cost": 10000, "baseValue": 10000, "profitBonus": 0.06, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 5, "obsoleteFromLevel": null},
+        "processing_plant": {"id": "processing_plant", "name": "Processing Plant", "cost": 15000, "baseValue": 15000, "profitBonus": 0.08, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 5, "obsoleteFromLevel": null}
+      },
+      "personnel": {
+        "prospector": {"id": "prospector", "name": "Experienced Prospector", "cost": 1500, "baseValue": 1500, "profitBonus": 0.02, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 5, "obsoleteFromLevel": null},
+        "supervisor": {"id": "supervisor", "name": "Shift Supervisor", "cost": 2500, "baseValue": 2500, "profitBonus": 0.02, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 5, "obsoleteFromLevel": null},
+        "engineer": {"id": "engineer", "name": "Mine Engineer", "cost": 4000, "baseValue": 4000, "profitBonus": 0.05, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 5, "obsoleteFromLevel": null},
+        "manager": {"id": "manager", "name": "Operations Manager", "cost": 6000, "baseValue": 6000, "profitBonus": 0.07, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 5, "obsoleteFromLevel": null}
+      },
+      "haulage": {
+        "road_train": {"id": "road_train", "name": "Road Train", "cost": 10000, "baseValue": 10000, "capacityBonus": 250, "profitBonus": 0.015, "maxPerMine": 3, "canBeSold": true, "resaleValue": 0.75, "availableFromLevel": 5, "obsoleteFromLevel": null}
+      }
     }
   },
 
   "digTypes": {
     "safe": {
       "name": "Safe Dig",
-      "multiplier": 0.10,
-      "successRange": {
-        "min": 0,
-        "max": 100
-      },
+      "baseMultiplier": 0.10,
+      "successRange": {"min": 2, "max": 6},
       "icon": "✅",
       "riskLevel": "low",
-      "description": "Low risk, low reward. Always succeeds."
+      "description": "Investment always returned. Profit = 10% if roll 2-6, otherwise break-even."
     },
     "medium": {
       "name": "Medium Dig",
-      "multiplier": 0.50,
-      "successRange": {
-        "min": 7,
-        "max": 10
-      },
+      "baseMultiplier": 0.50,
+      "successRange": {"min": 7, "max": 10},
       "icon": "⚠️",
       "riskLevel": "medium",
-      "description": "Moderate risk. Succeeds on dice roll 7-10."
+      "description": "Moderate risk. Succeeds on dice roll 7-10, loses investment otherwise."
     },
     "deep": {
       "name": "Deep Vein Dig",
-      "multiplier": 3.0,
-      "successRange": {
-        "min": 11,
-        "max": 12
-      },
+      "baseMultiplier": 3.0,
+      "successRange": {"min": 11, "max": 12},
       "icon": "💰",
       "riskLevel": "high",
-      "description": "High risk, high reward. Succeeds on dice roll 11-12."
+      "description": "High risk, high reward. Succeeds on dice roll 11-12, loses investment otherwise."
     }
   },
 
   "mines": {
-    "southern_cross": {
-      "id": "southern_cross",
-      "name": "Southern Cross",
-      "region": "Southern Cross",
-      "cost": 0,
-      "baseValue": 100,
-      "maxInvestmentPerRound": 50,
-      "level": "starter",
-      "icon": "🏔️",
-      "riskLevel": "low",
-      "description": "Your first mine. Safe and reliable.",
-      "successMultiplier": 1.0,
-      "owned": true
-    },
-    "coolgardie": {
-      "id": "coolgardie",
-      "name": "Coolgardie",
-      "region": "Coolgardie",
-      "cost": 100,
-      "baseValue": 100,
-      "maxInvestmentPerRound": 100,
-      "level": "basic",
-      "icon": "⛏️",
-      "riskLevel": "medium",
-      "description": "Second mine location. Moderate investment potential.",
-      "successMultiplier": 1.0,
-      "owned": false
-    },
-    "kalgoorlie": {
-      "id": "kalgoorlie",
-      "name": "Kalgoorlie",
-      "region": "Kalgoorlie",
-      "cost": 200,
-      "baseValue": 100,
-      "maxInvestmentPerRound": 200,
-      "level": "advanced",
-      "icon": "⛏️",
-      "riskLevel": "medium",
-      "description": "Major goldfields location. Higher investment ceiling.",
-      "successMultiplier": 1.0,
-      "owned": false
-    },
-    "leonora": {
-      "id": "leonora",
-      "name": "Leonora",
-      "region": "Leonora",
-      "cost": 300,
-      "baseValue": 100,
-      "maxInvestmentPerRound": 300,
-      "level": "expert",
-      "icon": "⛏️",
-      "riskLevel": "high",
-      "description": "High-risk, high-reward region. Deep Vein Dig is 500%.",
-      "successMultiplier": 1.0,
-      "deepVeinMultiplier": 5.0,
-      "owned": false
-    },
-    "laverton": {
-      "id": "laverton",
-      "name": "Laverton",
-      "region": "Laverton",
-      "cost": 400,
-      "baseValue": 100,
-      "maxInvestmentPerRound": 400,
-      "level": "expert",
-      "icon": "⛏️",
-      "riskLevel": "extreme",
-      "description": "Extreme risk. Deep Vein Dig is 600%, but losses are total.",
-      "successMultiplier": 1.0,
-      "deepVeinMultiplier": 6.0,
-      "canLoseTotalInvestment": true,
-      "owned": false
-    }
+    "southern_cross": {"id": "southern_cross", "name": "Southern Cross", "region": "Southern Cross", "cost": 0, "baseValue": 100, "maxInvestmentPerRound": 50, "level": "starter", "icon": "🏔️", "riskLevel": "low", "description": "Your first mine. Safe and reliable.", "successMultiplier": 1.0, "owned": true, "minLevel": 1, "maxTrucksPerMine": 1},
+    "coolgardie": {"id": "coolgardie", "name": "Coolgardie", "region": "Coolgardie", "cost": 500, "baseValue": 150, "maxInvestmentPerRound": 100, "level": "basic", "icon": "⛏️", "riskLevel": "medium", "description": "Second mine location. Moderate investment potential.", "successMultiplier": 1.0, "owned": false, "minLevel": 2, "maxTrucksPerMine": 1},
+    "kalgoorlie": {"id": "kalgoorlie", "name": "Kalgoorlie", "region": "Kalgoorlie", "cost": 2000, "baseValue": 200, "maxInvestmentPerRound": 200, "level": "advanced", "icon": "⛏️", "riskLevel": "medium", "description": "Major goldfields location. Higher investment ceiling.", "successMultiplier": 1.0, "owned": false, "minLevel": 3, "maxTrucksPerMine": 2},
+    "leonora": {"id": "leonora", "name": "Leonora", "region": "Leonora", "cost": 10000, "baseValue": 300, "maxInvestmentPerRound": 500, "level": "expert", "icon": "⛏️", "riskLevel": "high", "description": "High-risk, high-reward region. Deep Vein Dig is 500%.", "successMultiplier": 1.0, "deepVeinMultiplier": 5.0, "owned": false, "minLevel": 4, "maxTrucksPerMine": 3},
+    "laverton": {"id": "laverton", "name": "Laverton", "region": "Laverton", "cost": 20000, "baseValue": 400, "maxInvestmentPerRound": 1000, "level": "extreme", "icon": "⛏️", "riskLevel": "extreme", "description": "Extreme risk. Deep Vein Dig is 600%, but losses are total.", "successMultiplier": 1.0, "deepVeinMultiplier": 6.0, "canLoseTotalInvestment": true, "owned": false, "minLevel": 5, "maxTrucksPerMine": 3}
   },
 
   "mineUpgrades": {
-    "silver": {
-      "id": "silver",
-      "name": "Silver Upgrade",
-      "cost": 100,
-      "appliesTo": "medium",
-      "effectType": "multiplier_override",
-      "newMultiplier": 1.0,
-      "description": "Medium Dig success becomes 100% profit.",
-      "icon": "🥈",
-      "requirementLevel": 1
-    },
-    "gold": {
-      "id": "gold",
-      "name": "Gold Upgrade",
-      "cost": 200,
-      "appliesTo": "deep",
-      "effectType": "multiplier_override",
-      "newMultiplier": 4.0,
-      "description": "Deep Vein Dig success becomes 400%.",
-      "icon": "🥇",
-      "requirementLevel": 2
-    },
-    "platinum": {
-      "id": "platinum",
-      "name": "Platinum Upgrade",
-      "cost": 500,
-      "appliesTo": "deep",
-      "effectType": "multiplier_override",
-      "newMultiplier": 8.0,
-      "description": "Deep Vein Dig success becomes 800%.",
-      "icon": "💎",
-      "requirementLevel": 3
-    }
-  },
-
-  "machinery": {
-    "excavator": {
-      "id": "excavator",
-      "name": "Excavator",
-      "cost": 100,
-      "baseValue": 100,
-      "profitBonus": 0.50,
-      "bonusType": "percentage",
-      "description": "+50% profit on all digs",
-      "icon": "🚜",
-      "purchaseLimit": 5,
-      "canBeSold": true,
-      "resaleValue": 0.75
-    },
-    "drilling_rig": {
-      "id": "drilling_rig",
-      "name": "Drilling Rig",
-      "cost": 200,
-      "baseValue": 200,
-      "profitBonus": 1.0,
-      "bonusType": "percentage",
-      "description": "+100% profit on all digs",
-      "icon": "🏭",
-      "purchaseLimit": 3,
-      "canBeSold": true,
-      "resaleValue": 0.75
-    },
-    "super_drill": {
-      "id": "super_drill",
-      "name": "Super Drill",
-      "cost": 400,
-      "baseValue": 400,
-      "profitBonus": 2.0,
-      "bonusType": "percentage",
-      "description": "+200% profit on all digs",
-      "icon": "⚙️",
-      "purchaseLimit": 2,
-      "canBeSold": true,
-      "resaleValue": 0.75
-    }
+    "silver": {"id": "silver", "name": "Silver Upgrade", "cost": 500, "appliesTo": "medium", "effectType": "multiplier_override", "newMultiplier": 1.0, "description": "Increases Medium Dig success profit to 100%", "icon": "🥈", "requirementLevel": 2, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75},
+    "gold": {"id": "gold", "name": "Gold Upgrade", "cost": 2000, "appliesTo": "deep", "effectType": "multiplier_override", "newMultiplier": 4.0, "description": "Increases Deep Vein Dig success profit to 400%", "icon": "🥇", "requirementLevel": 3, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75},
+    "platinum": {"id": "platinum", "name": "Platinum Upgrade", "cost": 5000, "appliesTo": "deep", "effectType": "multiplier_override", "newMultiplier": 8.0, "description": "Increases Deep Vein Dig success profit to 800%", "icon": "💎", "requirementLevel": 4, "maxPerMine": 1, "canBeSold": true, "resaleValue": 0.75}
   },
 
   "randomEvents": {
-    "equipment_breakdown": {
-      "id": "equipment_breakdown",
-      "name": "Equipment Breakdown",
-      "diceValue": 1,
-      "cost": 50,
-      "effect": "deduct_cash",
-      "description": "Equipment needs repair. Pay $50.",
-      "icon": "🔧"
-    },
-    "fuel_price_increase": {
-      "id": "fuel_price_increase",
-      "name": "Fuel Price Increase",
-      "diceValue": 2,
-      "cost": 20,
-      "effect": "deduct_cash",
-      "description": "Fuel costs spike. Pay $20.",
-      "icon": "⛽"
-    },
-    "worker_shortage": {
-      "id": "worker_shortage",
-      "name": "Worker Shortage",
-      "diceValue": 3,
-      "effect": "halve_profits",
-      "description": "All successful claims this round are halved.",
-      "icon": "👥"
-    },
-    "successful_recruitment": {
-      "id": "successful_recruitment",
-      "name": "Successful Recruitment",
-      "diceValue": 4,
-      "effect": "double_profits",
-      "description": "New staff hired! Double all profits this round.",
-      "icon": "🎉"
-    },
-    "gold_rush": {
-      "id": "gold_rush",
-      "name": "Gold Rush",
-      "diceValue": 5,
-      "bonusPercentage": 0.20,
-      "effect": "bonus_profit",
-      "description": "Massive strike! Extra 20% profit this round.",
-      "icon": "🌟"
-    },
-    "rich_vein_found": {
-      "id": "rich_vein_found",
-      "name": "Rich Vein Found",
-      "diceValue": 6,
-      "effect": "automatic_success",
-      "description": "Choose one dig type. It automatically succeeds!",
-      "icon": "💎"
-    }
-  },
-
-  "company": {
-    "suggestedNames": [
-      "Perth Prospectors",
-      "Kalgoorlie Kings",
-      "Gold Diggers WA",
-      "Outback Mining Co.",
-      "Red Earth Resources",
-      "Goldfield Ventures",
-      "WA Mining Syndicate",
-      "Nugget Networks",
-      "Desert Gold Ltd",
-      "Aussie Prospectors"
-    ],
-    "namingRules": {
-      "minLength": 3,
-      "maxLength": 50,
-      "allowSpecialChars": false,
-      "allowNumbers": true
-    }
+    "equipment_breakdown": {"id": "equipment_breakdown", "name": "Equipment Breakdown", "diceValue": 1, "cost": 50, "effect": "deduct_cash", "description": "Equipment needs repair. Pay $50.", "icon": "🔧"},
+    "fuel_price_increase": {"id": "fuel_price_increase", "name": "Fuel Price Increase", "diceValue": 2, "cost": 20, "effect": "deduct_cash", "description": "Fuel costs spike. Pay $20.", "icon": "⛽"},
+    "worker_shortage": {"id": "worker_shortage", "name": "Worker Shortage", "diceValue": 3, "effect": "halve_profits", "description": "All successful claims this round are halved.", "icon": "👥"},
+    "successful_recruitment": {"id": "successful_recruitment", "name": "Successful Recruitment", "diceValue": 4, "effect": "double_profits", "description": "New staff hired! Double all profits this round.", "icon": "🎉"},
+    "gold_rush": {"id": "gold_rush", "name": "Gold Rush", "diceValue": 5, "bonusPercentage": 0.20, "effect": "bonus_profit", "description": "Massive strike! Extra 20% profit this round.", "icon": "🌟"},
+    "rich_vein_found": {"id": "rich_vein_found", "name": "Rich Vein Found", "diceValue": 6, "effect": "automatic_success", "description": "Choose one dig type. It automatically succeeds!", "icon": "💎"}
   },
 
   "netWorthCalculation": {
-    "formula": "Cash + MineValue + MachineryValue",
-    "components": {
-      "cash": "Current available funds",
-      "mineValue": "Sum of all owned mines' base values",
-      "machineryValue": "Sum of all machinery item values"
-    },
-    "description": "Total net worth determines rank on leaderboard"
+    "formula": "Cash + MineValue + EquipmentValue + PersonnelValue + HaulageValue",
+    "components": {"cash": "Current available funds", "mineValue": "Sum of all owned mines' base values", "equipmentValue": "Sum of all equipment items' resale values (per mine)", "personnelValue": "Sum of all personnel items' resale values (per mine)", "haulageValue": "Sum of all haulage items' resale values (per mine)"}
   },
 
-  "teacherDashboard": {
-    "features": [
-      "student_import",
-      "level_assignment",
-      "progress_monitoring",
-      "pause_game",
-      "view_leaderboards",
-      "export_data",
-      "real_time_stats"
-    ],
-    "stats": {
-      "wealthiest_player": "Highest net worth",
-      "most_mines_owned": "Most developed mining operation",
-      "most_profitable_strategy": "Highest round profit average",
-      "average_class_wealth": "Mean net worth of all students"
-    }
-  },
-
-  "dataPrivacy": {
-    "storedOffsite": false,
-    "storage": "localStorage only",
-    "identifyingData": "None stored externally",
-    "complianceNotes": "Education department data policies compliant",
-    "region": "Australia (Western Australia)"
+  "progressionCheckpoint": {
+    "description": "Student must reach net worth goal and pass 5-question quiz (4/5 threshold). Teacher reviews and approves before unlocking next level.",
+    "quizConfig": {"totalQuestions": 5, "passingScore": 4, "difficulty": "mixed", "types": ["calculation", "problem_solving"]},
+    "levels": {"2": 2500, "3": 10000, "4": 50000, "5": 250000}
   }
 }
