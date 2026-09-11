@@ -60,7 +60,7 @@ class GameState {
                 throw new Error(`HTTP ${response.status}`);
             }
             this.gameConfig = await response.json();
-            this.cash = this.getConfiguredStartingCash();
+            this.cash = this.getPlayableStartingCash();
             console.log('Game config loaded:', this.gameConfig);
             return true;
         } catch (error) {
@@ -71,12 +71,26 @@ class GameState {
 
     getConfiguredStartingCash(level = this.assignedLevel || 2) {
         const configuredCash = Number(this.gameConfig?.levels?.[String(level)]?.startingCash);
-        if (Number.isFinite(configuredCash) && configuredCash > 0) {
+        if (Number.isFinite(configuredCash)) {
             return configuredCash;
         }
 
         const levelTwoCash = Number(this.gameConfig?.levels?.['2']?.startingCash);
-        if (Number.isFinite(levelTwoCash) && levelTwoCash > 0) {
+        if (Number.isFinite(levelTwoCash)) {
+            return levelTwoCash;
+        }
+
+        return 200;
+    }
+
+    getPlayableStartingCash(level = this.assignedLevel || 2) {
+        const configuredCash = this.getConfiguredStartingCash(level);
+        if (configuredCash > 0) {
+            return configuredCash;
+        }
+
+        const levelTwoCash = this.getConfiguredStartingCash(2);
+        if (levelTwoCash > 0) {
             return levelTwoCash;
         }
 
@@ -90,7 +104,7 @@ class GameState {
         }
 
         return {
-            cash: this.getConfiguredStartingCash(),
+            cash: this.getPlayableStartingCash(),
             recovered: true
         };
     }
@@ -489,7 +503,7 @@ class GameState {
      */
     reset() {
         this.round = 1;
-        this.cash = this.getConfiguredStartingCash();
+        this.cash = this.getPlayableStartingCash();
         this.ownedMines = {
             'southern_cross': {
                 id: 'southern_cross',
