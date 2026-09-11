@@ -411,6 +411,191 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+function getCurrentProgressionGoal() {
+    const levelKey = String(gameState?.assignedLevel || 2);
+    return gameState?.gameConfig?.progressionCheckpoint?.levels?.[levelKey] ?? null;
+}
+
+function getNextAssignedLevel() {
+    const currentLevel = Number(gameState?.assignedLevel || 2);
+    return currentLevel < 5 ? currentLevel + 1 : null;
+}
+
+function updateCheckpointQuizCopy(quiz) {
+    const currentLevel = Number(gameState?.assignedLevel || 2);
+    const nextLevel = getNextAssignedLevel();
+    const goal = getCurrentProgressionGoal();
+    const titleEl = document.getElementById('checkpointQuizTitle');
+    const promptEl = document.getElementById('checkpointQuizPrompt');
+    const continueBtn = document.getElementById('quizContinueButton');
+
+    if (titleEl) {
+        titleEl.textContent = `🎓 ${quiz?.name || `Level ${currentLevel} Progression Checkpoint`}`;
+    }
+
+    if (promptEl) {
+        promptEl.textContent = nextLevel
+            ? `You've reached the Level ${currentLevel} goal of $${goal}. Answer 5 questions to progress to Level ${nextLevel}.`
+            : `You've reached the Level ${currentLevel} goal of $${goal}. Answer 5 questions to complete the final progression checkpoint.`;
+    }
+
+    if (continueBtn) {
+        continueBtn.textContent = nextLevel ? `Continue to Level ${nextLevel}` : 'Continue Playing';
+    }
+}
+
+function checkProgressionGoal() {
+    const goal = getCurrentProgressionGoal();
+    if (!goal || gameState.getNetWorth() < goal || gameState.checkpointStatus === 'quiz_passed') {
+        return;
+    }
+
+    if (gameState.checkpointStatus !== 'quiz_available') {
+        gameState.checkpointStatus = 'quiz_available';
+        gameState.saveToLocalStorage();
+    }
+
+    const modal = document.getElementById('checkpointQuizModal');
+    if (!modal?.classList.contains('active')) {
+        showProgressionQuiz();
+    }
+}
+
+function showProgressionQuiz() {
+    if (typeof ProgressionQuiz === 'undefined') {
+        console.warn('ProgressionQuiz not loaded');
+        return;
+    }
+
+    const levelKey = String(gameState.assignedLevel || 2);
+    const quiz = ProgressionQuiz.loadQuiz(levelKey);
+
+    if (!quiz?.questions?.length) {
+        console.warn('No quiz available for level', levelKey);
+        return;
+    }
+
+    const modal = document.getElementById('checkpointQuizModal');
+    const container = document.getElementById('quizContainer');
+    const resultsContainer = document.getElementById('quizResultsContainer');
+    const submitDiv = document.getElementById('quizSubmitButton');
+    if (!modal || !container) return;
+
+    updateCheckpointQuizCopy(quiz);
+
+    container.style.display = 'block';
+    container.innerHTML = '';
+    if (resultsContainer) resultsContainer.style.display = 'none';
+    if (submitDiv) submitDiv.style.display = 'block';
+
+    quiz.questions.forEach((q, idx) => {
+        const qDiv = document.createElement('div');
+        qDiv.style.cssText = 'margin: 20px 0; padding: 15px; background: #f9f9f9; border-radius: 8px;';
+        const optionsHtml = Array.isArray(q.options)
+            ? q.options.map(opt => `
+                <label style="display: block; margin: 8px 0; cursor: pointer;">
+                    <input type="radio" name="q${q.id}" value="${escapeHtml(opt.text || opt)}" required>
+                    ${escapeHtml(opt.text || opt)}
+                </label>
+            `).join('')
+            : '';
+
+        qDiv.innerHTML = `
+            <p><strong>Q${idx + 1}: ${escapeHtml(q.question)}</strong></p>
+            ${optionsHtml}
+        `;
+        container.appendChild(qDiv);
+    });
+
+    const submitBtn = document.getElementById('submitQuizButton');
+    if (submitBtn) {
+        submitBtn.onclick = () => submitQuiz(quiz);
+    }
+
+    modal.classList.add('active');
+}
+
+function submitQuiz(quiz) {
+    const answers = {};
+    let missingAnswers = 0;
+
+    quiz.questions.forEach(q => {
+        const selected = document.querySelector(`input[name="q${q.id}"]:checked`);
+        answers[q.id] = selected ? selected.value : '';
+        if (!selected) {
+            missingAnswers += 1;
+        }
+    });
+
+    if (missingAnswers > 0) {
+        alert(`Please answer all 5 questions before submitting. ${missingAnswers} question(s) still need an answer.`);
+        return;
+    }
+
+    const levelKey = String(gameState.assignedLevel || 2);
+    const result = ProgressionQuiz.submitQuiz(levelKey, answers);
+    if (!result?.success) {
+        alert(result?.error || 'Unable to submit quiz right now.');
+        return;
+    }
+    displayQuizResults(result, quiz);
+}
+
+function displayQuizResults(result, quiz) {
+    const container = document.getElementById('quizContainer');
+    const resultsContainer = document.getElementById('quizResultsContainer');
+    const submitDiv = document.getElementById('quizSubmitButton');
+    const retakeBtn = document.getElementById('quizRetakeButton');
+    const continueBtn = document.getElementById('quizContinueButton');
+    const resultTitle = document.getElementById('quizResultTitle');
+    const scoreDisplay = document.getElementById('quizScoreDisplay');
+    const answerReview = document.getElementById('quizAnswerReview');
+
+    if (container) container.style.display = 'none';
+    if (submitDiv) submitDiv.style.display = 'none';
+    if (resultsContainer) resultsContainer.style.display = 'block';
+
+    const passed = !!result.passed;
+    if (resultTitle) {
+        resultTitle.textContent = passed ? '🎉 Quiz Passed!' : '❌ Quiz Failed';
+    }
+    if (scoreDisplay) {
+        scoreDisplay.textContent = `${result.score} / ${result.totalQuestions}`;
+        scoreDisplay.style.color = passed ? '#4caf50' : '#f44336';
+    }
+
+    if (answerReview && Array.isArray(result.results)) {
+        answerReview.innerHTML = result.results.map(r => `
+            <div style="margin: 10px 0; padding: 10px; background: ${r.correct ? '#e8f5e9' : '#ffebee'}; border-radius: 4px; border-left: 4px solid ${r.correct ? '#4caf50' : '#f44336'};">
+                <p style="margin: 0 0 5px 0;"><strong>${r.correct ? '✅' : '❌'} ${escapeHtml(r.question)}</strong></p>
+                <p style="margin: 0 0 5px 0; font-size: 12px; color: #666;">Your answer: ${escapeHtml(r.studentAnswer)}</p>
+                <p style="margin: 0 0 5px 0; font-size: 12px; color: #4caf50;"><strong>Correct:</strong> ${escapeHtml(r.correctAnswer)}</p>
+                <p style="margin: 0; font-size: 12px; color: #555; font-style: italic;">${escapeHtml(r.explanation)}</p>
+            </div>
+        `).join('');
+    }
+
+    if (passed) {
+        gameState.checkpointStatus = 'quiz_passed';
+        gameState.saveToLocalStorage();
+        if (retakeBtn) retakeBtn.style.display = 'none';
+        if (continueBtn) {
+            continueBtn.style.display = 'block';
+            continueBtn.onclick = () => closeAllModals();
+        }
+    } else {
+        if (retakeBtn) {
+            retakeBtn.style.display = 'block';
+            retakeBtn.onclick = () => {
+                gameState.checkpointStatus = 'quiz_available';
+                gameState.saveToLocalStorage();
+                showProgressionQuiz();
+            };
+        }
+        if (continueBtn) continueBtn.style.display = 'none';
+    }
+}
+
 function updateAllUI() {
     updateAssignedLevelBadge();
     updateCompetitionStatus();
@@ -422,9 +607,7 @@ function updateAllUI() {
     renderStats();
     renderFeaturesAndCosts();
     renderLeaderboard();
-    if (typeof checkProgressionGoal === 'function') {
-        checkProgressionGoal();
-    }
+    checkProgressionGoal();
 }
 
 function openMineModal(mine) {
