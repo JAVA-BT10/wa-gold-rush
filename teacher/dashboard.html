@@ -43,13 +43,13 @@
         }
         #authRequiredMessage .btn-home { background: #842029; color: #fff; }
 
-        /* Leaderboard tabs */
+        /* Checkpoint tabs */
         .tab-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
-        .tab-btn {
+        .tab-btn, .checkpoint-tab-btn {
             background: #eee; border: none; border-radius: 6px 6px 0 0;
             padding: 8px 14px; cursor: pointer; font-size: 13px; font-weight: bold; color: #555;
         }
-        .tab-btn.active { background: #f4b400; color: #fff; }
+        .tab-btn.active, .checkpoint-tab-btn.active { background: #f4b400; color: #fff; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
 
@@ -92,6 +92,20 @@
             </label>
             <p id="pauseStatus"      class="muted"></p>
             <p id="strictModeStatus" class="muted"></p>
+        </section>
+
+        <!-- Progression Checkpoints -->
+        <section class="card">
+            <h2>🎓 Progression Checkpoints</h2>
+            <p class="muted">Review and approve student quiz attempts to unlock progression to higher levels.</p>
+            <div class="tab-bar">
+                <button class="checkpoint-tab-btn active" data-level="2">Level 2→3</button>
+                <button class="checkpoint-tab-btn" data-level="3">Level 3→4</button>
+                <button class="checkpoint-tab-btn" data-level="4">Level 4→5</button>
+            </div>
+            <div id="checkpointTableContainer" style="overflow-x: auto;">
+                <!-- Populated by checkpoint-dashboard.js -->
+            </div>
         </section>
 
         <!-- Student Management -->
@@ -240,6 +254,8 @@
 
     <script src="dashboard-state.js"></script>
     <script src="../shared/investment-profile.js"></script>
+    <script src="checkpoint-approval.js"></script>
+    <script src="checkpoint-dashboard.js"></script>
     <script>
         const CLASS_RECORDS_KEY = 'wa_gold_rush_class_records';
         const PAUSE_STATE_KEY   = 'wa_gold_rush_pause_state';
@@ -499,190 +515,248 @@
         document.getElementById('addStudentBtn').addEventListener('click', () => {
             const studentCode     = document.getElementById('studentCode').value.trim();
             const leaderboardName = document.getElementById('studentLeaderboardName').value.trim();
-            if (!studentCode) { alert('Student Code is required.'); return; }
-            if (!leaderboardName) { alert('Leaderboard Name is required.'); return; }
-            dashboard.addStudent({
-                studentCode,
-                leaderboardName,
-                studentName: document.getElementById('studentName').value.trim(),
-                studentId:   document.getElementById('studentDisplayId').value.trim(),
-                classCode:   document.getElementById('studentClassCode').value.trim(),
-                level:       parseInt(document.getElementById('studentLevel').value, 10)
+            const studentName     = document.getElementById('studentName').value.trim();
+            const studentId       = document.getElementById('studentDisplayId').value.trim();
+            const classCode       = document.getElementById('studentClassCode').value.trim();
+            const level           = parseInt(document.getElementById('studentLevel').value, 10);
+
+            if (!studentCode || !leaderboardName) {
+                alert('Student Code and Leaderboard Name are required.');
+                return;
+            }
+
+            const result = dashboard.addStudent({
+                studentCode, leaderboardName, studentName, studentId, classCode, level
             });
-            ['studentCode','studentLeaderboardName','studentName','studentDisplayId','studentClassCode'].forEach(id => {
-                document.getElementById(id).value = '';
-            });
+
+            if (!result.success) {
+                alert(`Error: ${result.error}`);
+                return;
+            }
+
+            document.getElementById('studentCode').value = '';
+            document.getElementById('studentLeaderboardName').value = '';
+            document.getElementById('studentName').value = '';
+            document.getElementById('studentDisplayId').value = '';
+            document.getElementById('studentClassCode').value = '';
             document.getElementById('studentLevel').value = '2';
+
             refresh();
         });
 
         // =====================================================================
-        // Student bulk import
+        // Bulk Import
         // =====================================================================
-        document.getElementById('importFormat').addEventListener('change', function () {
-            const ta = document.getElementById('bulkInput');
-            if (this.value === 'json') {
-                ta.placeholder = '[{"studentCode":"SC-001","leaderboardName":"GoldDigger","studentName":"Alex","classCode":"6B","level":2},{"teacherEmail":"teacher@education.wa.edu.au","teacherName":"Ms Smith","classCode":"6B","role":"teacher"}]';
-            } else {
-                ta.placeholder = 'StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level\nSC-Y6-001,Golddigger,123456,Alex Smith,6B,2';
-            }
-        });
-
         document.getElementById('importBtn').addEventListener('click', () => {
-            const data   = document.getElementById('bulkInput').value.trim();
             const format = document.getElementById('importFormat').value;
-            const resultEl = document.getElementById('importResult');
-            if (!data) { alert('Paste CSV or JSON data first.'); return; }
-            try {
-                const r = dashboard.bulkImportStudents(data, format);
-                let html = `<span class="ok">✅ Imported ${r.added.length} student${r.added.length !== 1 ? 's' : ''}.</span>`;
-                const teacherTotals = (r.teachers?.added.length || 0) + (r.teachers?.updated.length || 0) + (r.teachers?.skipped.length || 0);
-                const teacherApplied = (r.teachers?.added.length || 0) + (r.teachers?.updated.length || 0);
-                if (teacherTotals) {
-                    if (teacherApplied) {
-                        html += `<br><span class="ok">👩‍🏫 Teachers — Added ${r.teachers.added.length} · Updated ${r.teachers.updated.length}.</span>`;
-                    }
-                    if (r.teachers.skipped.length) {
-                        html += `<br><span class="err">⚠️ Teacher rows skipped ${r.teachers.skipped.length}:</span>`;
-                        html += r.teachers.skipped.map(s => `<br><span class="err muted">  Row ${s.row}: ${escHtml(s.reason)}</span>`).join('');
-                    }
-                }
-                if (r.skipped.length) {
-                    html += `<br><span class="err">⚠️ Skipped ${r.skipped.length} row${r.skipped.length !== 1 ? 's' : ''}:</span>`;
-                    html += r.skipped.map(s => `<br><span class="err muted">  Row ${s.row}: ${escHtml(s.reason)}</span>`).join('');
-                }
-                resultEl.innerHTML = html;
-                refresh();
-            } catch (err) {
-                resultEl.innerHTML = `<span class="err">❌ Import failed: ${escHtml(err.message)}</span>`;
-            }
-        });
-
-        // =====================================================================
-        // Teacher import
-        // =====================================================================
-        document.getElementById('teacherImportBtn').addEventListener('click', () => {
-            const data = document.getElementById('teacherImportInput').value.trim();
-            const resultEl = document.getElementById('teacherImportResult');
-            if (!data) { alert('Paste teacher CSV data first.'); return; }
-            try {
-                const r = dashboard.bulkImportTeachers(data);
-                let html = `<span class="ok">✅ Added ${r.added.length} · Updated ${r.updated.length}.</span>`;
-                if (r.skipped.length) {
-                    html += `<br><span class="err">⚠️ Skipped ${r.skipped.length}:</span>`;
-                    html += r.skipped.map(s => `<br><span class="err muted">  Row ${s.row}: ${escHtml(s.reason)}</span>`).join('');
-                }
-                resultEl.innerHTML = html;
-                renderTeacherList();
-            } catch (err) {
-                resultEl.innerHTML = `<span class="err">❌ Import failed: ${escHtml(err.message)}</span>`;
-            }
-        });
-
-        // =====================================================================
-        // Teacher list
-        // =====================================================================
-        function renderTeacherList() {
-            const body = document.getElementById('teacherListBody');
-            const teachers = dashboard.getTeacherList();
-            if (!teachers.length) {
-                body.innerHTML = '<tr><td colspan="5" class="muted">No teachers added yet.</td></tr>';
+            const input = document.getElementById('bulkInput').value.trim();
+            if (!input) {
+                alert('Please enter data to import.');
                 return;
             }
-            body.innerHTML = teachers.map((t, i) => `<tr>
+
+            let records = [];
+            try {
+                if (format === 'json') {
+                    records = JSON.parse(input);
+                    if (!Array.isArray(records)) records = [records];
+                } else {
+                    // Parse CSV
+                    const lines = input.split('\n').map(l => l.trim()).filter(l => l);
+                    if (!lines.length) throw new Error('No data');
+                    const header = lines[0].split(',').map(h => h.trim().toLowerCase());
+                    const isLegacy = header.includes('email') && header.includes('name') && !header.includes('studentcode');
+
+                    for (let i = 1; i < lines.length; i++) {
+                        const parts = lines[i].split(',').map(p => p.trim());
+                        const row = {};
+                        for (let j = 0; j < header.length && j < parts.length; j++) {
+                            row[header[j]] = parts[j];
+                        }
+
+                        // Detect teacher row
+                        if (row.teacheremail || (row.role && ['teacher', 'admin'].includes(row.role.toLowerCase()))) {
+                            // Skip for now (handled by teacher import)
+                            continue;
+                        }
+
+                        // Map fields
+                        let student = {
+                            studentCode: row.studentcode || row['student code'] || '',
+                            leaderboardName: row.leaderboardname || row['leaderboard name'] || row.name || '',
+                            studentName: row.studentname || row['student name'] || row.name || '',
+                            studentId: row.studentid || row['student id'] || row.email || '',
+                            classCode: row.classcode || row['class code'] || '',
+                            level: parseInt(row.level, 10) || 2
+                        };
+
+                        if (student.leaderboardName) records.push(student);
+                    }
+                }
+            } catch (e) {
+                alert(`Parse error: ${e.message}`);
+                return;
+            }
+
+            let added = 0, failed = 0;
+            records.forEach(r => {
+                const result = dashboard.addStudent(r);
+                if (result.success) added++;
+                else failed++;
+            });
+
+            const msg = `Imported: <span class="ok">${added} added</span>${failed ? `, <span class="err">${failed} failed</span>` : ''}.`;
+            document.getElementById('importResult').innerHTML = msg;
+            refresh();
+        });
+
+        // =====================================================================
+        // Teacher Import
+        // =====================================================================
+        document.getElementById('teacherImportBtn').addEventListener('click', () => {
+            const input = document.getElementById('teacherImportInput').value.trim();
+            if (!input) {
+                alert('Please enter teacher data to import.');
+                return;
+            }
+
+            const lines = input.split('\n').map(l => l.trim()).filter(l => l);
+            if (!lines.length) {
+                alert('No data');
+                return;
+            }
+
+            const header = lines[0].split(',').map(h => h.trim().toLowerCase());
+            let added = 0, failed = 0;
+
+            for (let i = 1; i < lines.length; i++) {
+                const parts = lines[i].split(',').map(p => p.trim());
+                const row = {};
+                for (let j = 0; j < header.length && j < parts.length; j++) {
+                    row[header[j]] = parts[j];
+                }
+
+                const email = row.teacheremail || '';
+                const name = row.teachername || '';
+                const classCode = row.classcode || '';
+                const role = (row.role || 'teacher').toLowerCase();
+
+                if (!email || !name) {
+                    failed++;
+                    continue;
+                }
+
+                const result = dashboard.addTeacher(email, name, classCode, role);
+                if (result.success) added++;
+                else failed++;
+            }
+
+            const msg = `Imported: <span class="ok">${added} added</span>${failed ? `, <span class="err">${failed} failed</span>` : ''}.`;
+            document.getElementById('teacherImportResult').innerHTML = msg;
+            refreshTeachers();
+        });
+
+        // =====================================================================
+        // Add Teacher
+        // =====================================================================
+        document.getElementById('addTeacherBtn').addEventListener('click', () => {
+            const email = document.getElementById('newTeacherEmail').value.trim();
+            if (!email) {
+                alert('Email required.');
+                return;
+            }
+            const result = dashboard.addTeacher(email, email.split('@')[0], '', 'teacher');
+            if (!result.success) {
+                alert(`Error: ${result.error}`);
+                return;
+            }
+            document.getElementById('newTeacherEmail').value = '';
+            refreshTeachers();
+        });
+
+        function refreshTeachers() {
+            const body = document.getElementById('teacherListBody');
+            const teachers = dashboard.getAllTeachers();
+            if (!teachers.length) {
+                body.innerHTML = '<tr><td colspan="5">No teachers added yet.</td></tr>';
+                return;
+            }
+            body.innerHTML = teachers.map(t => `<tr>
                 <td>${escHtml(t.email)}</td>
-                <td>${escHtml(t.name || '')}</td>
+                <td>${escHtml(t.name)}</td>
                 <td>${escHtml(t.classCode || '')}</td>
                 <td>${escHtml(t.role || 'teacher')}</td>
                 <td>
-                    <button class="btn-danger" data-action="remove-teacher" data-index="${i}"
-                        style="width:auto;padding:4px 10px;">Remove</button>
+                    <button class="btn-danger" style="width:auto;padding:6px 10px;" onclick="if(confirm('Delete ${escHtml(t.name)}?')) { dashboard.deleteTeacher('${CSS.escape(t.id)}'); refreshTeachers(); }">Delete</button>
                 </td>
             </tr>`).join('');
         }
 
-        document.getElementById('teacherListBody').addEventListener('click', e => {
-            const t = e.target;
-            if (t.getAttribute('data-action') !== 'remove-teacher') return;
-            const idx = parseInt(t.getAttribute('data-index'), 10);
-            const list = dashboard._loadTeacherList();
-            const entry = list[idx];
-            if (!entry || !confirm(`Remove ${entry.email}?`)) return;
-            list.splice(idx, 1);
-            dashboard._saveTeacherList(list);
-            renderTeacherList();
+        // =====================================================================
+        // Class Control Buttons
+        // =====================================================================
+        document.getElementById('pauseClassBtn').addEventListener('click', () => {
+            localStorage.setItem(PAUSE_STATE_KEY, JSON.stringify({ paused: true, at: new Date().toISOString() }));
+            renderPauseStatus();
+            alert('Gameplay paused for all students.');
         });
 
-        document.getElementById('addTeacherBtn').addEventListener('click', () => {
-            const email = document.getElementById('newTeacherEmail').value.trim().toLowerCase();
-            const msgEl = document.getElementById('teacherAddMsg');
-            if (!email) { msgEl.textContent = 'Enter an email address.'; return; }
-            const EMAIL_RE = /^[^\s@]+@[^\s@.][^\s@]*\.[^\s@]+$/;
-            if (!EMAIL_RE.test(email)) { msgEl.textContent = 'Invalid email format.'; return; }
-            const list = dashboard._loadTeacherList();
-            if (list.find(t => t.email === email)) {
-                msgEl.textContent = 'Already in list.';
-                return;
+        document.getElementById('resumeClassBtn').addEventListener('click', () => {
+            localStorage.removeItem(PAUSE_STATE_KEY);
+            renderPauseStatus();
+            alert('Gameplay resumed.');
+        });
+
+        document.getElementById('strictModeToggle').addEventListener('change', (e) => {
+            if (e.target.checked) {
+                localStorage.setItem(STRICT_MODE_KEY, JSON.stringify({ enabled: true }));
+            } else {
+                localStorage.removeItem(STRICT_MODE_KEY);
             }
-            list.push({ email, name: '', classCode: '', role: 'teacher', addedAt: new Date().toISOString() });
-            dashboard._saveTeacherList(list);
-            document.getElementById('newTeacherEmail').value = '';
-            msgEl.textContent = `Added: ${email}`;
-            renderTeacherList();
+            renderStrictModeStatus();
+        });
+
+        document.getElementById('refreshBtn').addEventListener('click', () => {
+            refresh();
+            alert('Stats refreshed.');
         });
 
         // =====================================================================
-        // Export
+        // Export CSV
         // =====================================================================
         document.getElementById('exportCsvBtn').addEventListener('click', () => {
-            const csv  = dashboard.exportAsCSV();
+            const students = dashboard.getAllStudents();
+            let csv = 'StudentCode,LeaderboardName,StudentName,StudentID,ClassCode,Level,NetWorth,Round,LastPlayed\n';
+            students.forEach(s => {
+                csv += `"${(s.studentCode || '').replace(/"/g, '""')}","${(s.leaderboardName || '').replace(/"/g, '""')}","${(s.studentName || '').replace(/"/g, '""')}","${(s.studentId || '').replace(/"/g, '""')}","${(s.classCode || '').replace(/"/g, '""')}",${s.level || 2},${s.gameState?.netWorth || 0},${s.gameState?.round || 1},"${s.gameState?.lastPlayed || ''}".\n`;
+            });
             const blob = new Blob([csv], { type: 'text/csv' });
-            const url  = URL.createObjectURL(blob);
-            const a    = document.createElement('a');
-            a.href     = url;
-            a.download = `goldrush-roster-${new Date().toISOString().slice(0,10)}.csv`;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `roster_${new Date().toISOString().slice(0, 10)}.csv`;
             a.click();
             URL.revokeObjectURL(url);
         });
 
         // =====================================================================
-        // Controls
-        // =====================================================================
-        document.getElementById('pauseClassBtn').addEventListener('click', () => {
-            localStorage.setItem(PAUSE_STATE_KEY, JSON.stringify({ paused: true }));
-            refresh();
-        });
-        document.getElementById('resumeClassBtn').addEventListener('click', () => {
-            localStorage.setItem(PAUSE_STATE_KEY, JSON.stringify({ paused: false }));
-            refresh();
-        });
-        document.getElementById('refreshBtn').addEventListener('click', refresh);
-        document.getElementById('strictModeToggle').addEventListener('change', e => {
-            localStorage.setItem(STRICT_MODE_KEY, JSON.stringify({ enabled: !!e.target.checked }));
-            renderStrictModeStatus();
-        });
-
-        // =====================================================================
-        // Full refresh
+        // Initialize
         // =====================================================================
         function refresh() {
-            renderPauseStatus();
-            renderStrictModeStatus();
             renderStats();
             renderRoster();
             renderLeaderboardForLevel(_activeLeaderboardLevel);
-            renderTeacherList();
         }
 
-        // =====================================================================
-        // Init
-        // =====================================================================
-        (function init() {
-            const ok = enforceTeacherDashboardAccess();
-            if (!ok) return;
-            dashboard.loadFromLocalStorage();
+        function init() {
+            if (!enforceTeacherDashboardAccess()) return;
+            renderPauseStatus();
+            renderStrictModeStatus();
             refresh();
-        })();
+            refreshTeachers();
+        }
+
+        document.addEventListener('DOMContentLoaded', init);
     </script>
 </body>
 </html>
