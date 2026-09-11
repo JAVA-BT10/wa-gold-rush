@@ -114,7 +114,7 @@ class GameState {
         return Object.fromEntries(
             Object.entries(digTypes).map(([id, dig]) => ([id, {
                 ...dig,
-                multiplier: dig.multiplier ?? dig.baseMultiplier ?? 0
+                multiplier: dig.multiplier ?? dig.baseMultiplier ?? 1
             }]))
         );
     }
