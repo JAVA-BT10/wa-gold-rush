@@ -65,22 +65,23 @@ class GameState {
         const levelKey = String(this.assignedLevel || 2);
         const levelConfig = this.gameConfig?.levels?.[levelKey];
         if (!levelConfig || typeof levelConfig !== 'object') return;
+        const baseConfig = this.gameConfig;
 
-        this.gameConfig.machinery = this.flattenMachinery(levelConfig);
-        this.gameConfig.mines = this.flattenMines(levelConfig);
-        this.gameConfig.mineUpgrades = this.flattenMineUpgrades(levelConfig);
-        this.gameConfig.digTypes = this.flattenDigTypes(levelConfig);
-        this.gameConfig.randomEvents = this.flattenRandomEvents(levelConfig);
+        this.gameConfig.machinery = this.flattenMachinery(levelConfig, baseConfig);
+        this.gameConfig.mines = this.flattenMines(levelConfig, baseConfig);
+        this.gameConfig.mineUpgrades = this.flattenMineUpgrades(levelConfig, baseConfig);
+        this.gameConfig.digTypes = this.flattenDigTypes(levelConfig, baseConfig);
+        this.gameConfig.randomEvents = this.flattenRandomEvents(levelConfig, baseConfig);
     }
 
-    flattenMachinery(levelConfig) {
+    flattenMachinery(levelConfig, baseConfig) {
         const normalizeAsset = (id, item = {}) => ({
             ...item,
             purchaseLimit: item.purchaseLimit ?? item.maxPerMine ?? 1,
             baseValue: item.baseValue ?? item.cost ?? 0,
             profitBonus: item.profitBonus ?? 0,
-            canBeSold: item.canBeSold ?? this.gameConfig?.machinery?.[id]?.canBeSold ?? true,
-            resaleValue: item.resaleValue ?? this.gameConfig?.machinery?.[id]?.resaleValue ?? 0.75
+            canBeSold: item.canBeSold ?? baseConfig?.machinery?.[id]?.canBeSold ?? true,
+            resaleValue: item.resaleValue ?? baseConfig?.machinery?.[id]?.resaleValue ?? 0.75
         });
 
         const equipment = Object.fromEntries(
@@ -98,19 +99,19 @@ class GameState {
             ...personnel,
             ...haulage
         };
-        return Object.keys(merged).length ? merged : (this.gameConfig?.machinery || {});
+        return merged;
     }
 
-    flattenMines(levelConfig) {
-        return levelConfig?.mines || this.gameConfig?.mines || {};
+    flattenMines(levelConfig, baseConfig) {
+        return levelConfig?.mines || baseConfig?.mines || {};
     }
 
-    flattenMineUpgrades(levelConfig) {
-        return levelConfig?.mineUpgrades || this.gameConfig?.mineUpgrades || {};
+    flattenMineUpgrades(levelConfig, baseConfig) {
+        return levelConfig?.mineUpgrades || baseConfig?.mineUpgrades || {};
     }
 
-    flattenDigTypes(levelConfig) {
-        const digTypes = levelConfig?.digTypes || this.gameConfig?.digTypes || {};
+    flattenDigTypes(levelConfig, baseConfig) {
+        const digTypes = levelConfig?.digTypes || baseConfig?.digTypes || {};
         return Object.fromEntries(
             Object.entries(digTypes).map(([id, dig]) => ([id, {
                 ...dig,
@@ -119,8 +120,8 @@ class GameState {
         );
     }
 
-    flattenRandomEvents(levelConfig) {
-        return levelConfig?.randomEvents || this.gameConfig?.randomEvents || {};
+    flattenRandomEvents(levelConfig, baseConfig) {
+        return levelConfig?.randomEvents || baseConfig?.randomEvents || {};
     }
 
     getAllowedMineUpgradeIds(level = this.assignedLevel || 2) {
