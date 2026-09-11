@@ -46,13 +46,94 @@ class GameState {
                 throw new Error(`HTTP ${response.status}`);
             }
             this.gameConfig = await response.json();
-            this.cash = this.gameConfig?.levels?.['2']?.startingCash || this.cash;
+            this.applyLevelConfigAdapter();
+            const levelKey = String(this.assignedLevel || 2);
+            this.cash = this.gameConfig?.levels?.[levelKey]?.startingCash
+                ?? this.gameConfig?.levels?.['2']?.startingCash
+                ?? this.cash;
             console.log('Game config loaded:', this.gameConfig);
             return true;
         } catch (error) {
             console.error('Failed to load game config:', error);
             return false;
         }
+    }
+
+    applyLevelConfigAdapter() {
+        if (!this.gameConfig || typeof this.gameConfig !== 'object') return;
+
+        const levelKey = String(this.assignedLevel || 2);
+        const levelConfig = this.gameConfig?.levels?.[levelKey];
+        if (!levelConfig || typeof levelConfig !== 'object') return;
+        const baseConfig = this.gameConfig;
+
+        this.gameConfig.machinery = this.flattenMachinery(levelConfig, baseConfig);
+        this.gameConfig.mines = this.flattenMines(levelConfig, baseConfig);
+        this.gameConfig.mineUpgrades = this.flattenMineUpgrades(levelConfig, baseConfig);
+        this.gameConfig.digTypes = this.flattenDigTypes(levelConfig, baseConfig);
+        this.gameConfig.randomEvents = this.flattenRandomEvents(levelConfig, baseConfig);
+    }
+
+    flattenMachinery(levelConfig, baseConfig) {
+        const normalizeAsset = (item = {}) => ({
+            ...item,
+            purchaseLimit: item.purchaseLimit ?? item.maxPerMine ?? 1,
+            baseValue: item.baseValue ?? item.cost ?? 0,
+            profitBonus: item.profitBonus ?? 0,
+            canBeSold: item.canBeSold ?? true,
+            resaleValue: item.resaleValue ?? 0.75
+        });
+
+        const baseMachinery = Object.fromEntries(
+            Object.entries(baseConfig?.machinery || {}).map(([id, item]) => [id, normalizeAsset(item)])
+        );
+
+        const equipment = Object.fromEntries(
+            Object.entries(levelConfig?.equipment || {}).map(([id, item]) => [id, normalizeAsset(item)])
+        );
+        const directMachinery = Object.fromEntries(
+            Object.entries(levelConfig?.machinery || {}).map(([id, item]) => [id, normalizeAsset(item)])
+        );
+        const personnel = Object.fromEntries(
+            Object.entries(levelConfig?.personnel || {}).map(([id, item]) => [id, normalizeAsset(item)])
+        );
+        const haulage = Object.fromEntries(
+            Object.entries(levelConfig?.haulage || {}).map(([id, item]) => [id, normalizeAsset(item)])
+        );
+
+        const merged = {
+            ...directMachinery,
+            ...equipment,
+            ...personnel,
+            ...haulage
+        };
+        return { ...baseMachinery, ...merged };
+    }
+
+    flattenMines(levelConfig, baseConfig) {
+        const levelMines = levelConfig?.mines || levelConfig?.regionalMines || {};
+        return { ...(baseConfig?.mines || {}), ...levelMines };
+    }
+
+    flattenMineUpgrades(levelConfig, baseConfig) {
+        const levelMineUpgrades = levelConfig?.mineUpgrades || levelConfig?.upgrades || {};
+        return { ...(baseConfig?.mineUpgrades || {}), ...levelMineUpgrades };
+    }
+
+    flattenDigTypes(levelConfig, baseConfig) {
+        const levelDigTypes = levelConfig?.digTypes || levelConfig?.digTypeConfig || {};
+        const digTypes = { ...(baseConfig?.digTypes || {}), ...levelDigTypes };
+        return Object.fromEntries(
+            Object.entries(digTypes).map(([id, dig]) => ([id, {
+                ...dig,
+                multiplier: dig.multiplier ?? dig.baseMultiplier ?? 1
+            }]))
+        );
+    }
+
+    flattenRandomEvents(levelConfig, baseConfig) {
+        const levelRandomEvents = levelConfig?.randomEvents || levelConfig?.events || {};
+        return { ...(baseConfig?.randomEvents || {}), ...levelRandomEvents };
     }
 
     getAllowedMineUpgradeIds(level = this.assignedLevel || 2) {
