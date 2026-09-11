@@ -506,7 +506,7 @@ class GameState {
             const gs = data.gameState;
             const numericRound = Number(gs.round);
             this.assignedLevel = Number(gs.assignedLevel) || this.assignedLevel || 2;
-            this.round = Number.isFinite(numericRound) && numericRound >= 0 ? numericRound : 1;
+            this.round = Number.isFinite(numericRound) && numericRound >= 1 ? numericRound : 1;
             const normalizedCash = this.normalizeLoadedCash(gs.cash, gs);
             this.cash = normalizedCash.cash;
             this.player = gs.player || this.player;
