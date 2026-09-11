@@ -34,6 +34,7 @@ class GameState {
         this.roundHistory = [];
         this.totalProfitLoss = 0;
         this.investmentPlans = {};
+        this.checkpointStatus = null;
     }
 
     /**
@@ -145,10 +146,21 @@ class GameState {
     }
 
     getAllowedMachineryIds(level = this.assignedLevel || 2) {
-        const order = ['excavator', 'drilling_rig', 'super_drill'];
-        if (level <= 2) return order.slice(0, 1);
-        if (level === 3) return order.slice(0, 2);
-        return [...order];
+        const levelNum = Number(level) || 2;
+        const machineryEntries = Object.entries(this.gameConfig?.machinery || {});
+
+        const configDrivenIds = machineryEntries
+            .filter(([, machinery]) => this.isMachineryAvailableForLevel(machinery, levelNum))
+            .map(([id]) => id);
+
+        if (configDrivenIds.length) {
+            return configDrivenIds;
+        }
+
+        const fallbackOrder = ['excavator', 'drilling_rig', 'super_drill'];
+        if (levelNum <= 2) return fallbackOrder.slice(0, 1);
+        if (levelNum === 3) return fallbackOrder.slice(0, 2);
+        return [...fallbackOrder];
     }
 
     isMineUpgradeAllowed(upgradeId, level = this.assignedLevel || 2) {
@@ -157,6 +169,20 @@ class GameState {
 
     isMachineryAllowed(machineryId, level = this.assignedLevel || 2) {
         return this.getAllowedMachineryIds(level).includes(machineryId);
+    }
+
+    isMachineryAvailableForLevel(machinery, level) {
+        if (!machinery || typeof machinery !== 'object') {
+            return false;
+        }
+
+        const availableFromLevel = Number(machinery.availableFromLevel);
+        const obsoleteFromLevel = Number(machinery.obsoleteFromLevel);
+
+        const unlocked = Number.isFinite(availableFromLevel) ? level >= availableFromLevel : true;
+        const notObsolete = Number.isFinite(obsoleteFromLevel) ? level < obsoleteFromLevel : true;
+
+        return unlocked && notObsolete;
     }
 
     canRollRandomEvents(level = this.assignedLevel || 2) {
@@ -518,7 +544,8 @@ class GameState {
                     machinery: this.machinery,
                     roundHistory: this.roundHistory,
                     totalProfitLoss: this.totalProfitLoss,
-                    investmentPlans: this.investmentPlans
+                    investmentPlans: this.investmentPlans,
+                    checkpointStatus: this.checkpointStatus
                 }
             };
             localStorage.setItem(slotName, JSON.stringify(saveData));
@@ -559,6 +586,9 @@ class GameState {
             this.roundHistory = Array.isArray(gs.roundHistory) ? gs.roundHistory : this.roundHistory;
             this.totalProfitLoss = typeof gs.totalProfitLoss === 'number' ? gs.totalProfitLoss : this.totalProfitLoss;
             this.investmentPlans = (gs.investmentPlans && typeof gs.investmentPlans === 'object') ? gs.investmentPlans : {};
+            this.checkpointStatus = (typeof gs.checkpointStatus === 'string' && gs.checkpointStatus)
+                ? gs.checkpointStatus
+                : null;
             
             return { success: true, message: 'Game loaded from save' };
         } catch (error) {
@@ -592,6 +622,7 @@ class GameState {
         this.roundHistory = [];
         this.totalProfitLoss = 0;
         this.investmentPlans = {};
+        this.checkpointStatus = null;
     }
 }
 
