@@ -66,7 +66,7 @@ function shouldRollRandomEvent() {
 
 function enforceCurrentLevelAccess() {
     if (typeof LevelAccessGuard === 'undefined') return true;
-    const guard = new LevelAccessGuard(gameState?.assignedLevel || getAssignedLevelFromUrl());
+    const guard = new LevelAccessGuard(getAssignedLevelFromUrl());
     if (!guard.isLevelAccessible()) {
         guard.enforceAccess();
         return false;

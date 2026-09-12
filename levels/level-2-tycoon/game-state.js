@@ -122,11 +122,22 @@ class GameState {
 
     persistProgressionStateForLevel(level = this.assignedLevel || 2) {
         const state = this.getProgressionState(level);
-        state.checkpointStatus = this.checkpointStatus || null;
-        state.quizAttempts = Array.isArray(this.quizAttempts) ? this.quizAttempts : [];
-        state.approvalStatus = this.approvalStatus || null;
-        state.approverName = this.approverName || null;
-        state.approvalTimestamp = this.approvalTimestamp || null;
+        const isAssignedLevel = this.normalizeLevel(level) === this.normalizeLevel(this.assignedLevel);
+        const sourceState = isAssignedLevel
+            ? {
+                checkpointStatus: this.checkpointStatus || null,
+                quizAttempts: Array.isArray(this.quizAttempts) ? this.quizAttempts : [],
+                approvalStatus: this.approvalStatus || null,
+                approverName: this.approverName || null,
+                approvalTimestamp: this.approvalTimestamp || null
+            }
+            : state;
+
+        state.checkpointStatus = sourceState.checkpointStatus || null;
+        state.quizAttempts = Array.isArray(sourceState.quizAttempts) ? sourceState.quizAttempts : [];
+        state.approvalStatus = sourceState.approvalStatus || null;
+        state.approverName = sourceState.approverName || null;
+        state.approvalTimestamp = sourceState.approvalTimestamp || null;
         if (state.quizScore == null && state.quizAttempts.length) {
             state.quizScore = Number(state.quizAttempts[state.quizAttempts.length - 1]?.score) || null;
         }
