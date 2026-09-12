@@ -215,7 +215,7 @@ function renderMineShop() {
     }
 
     if (mineLimitReached) {
-        shop.innerHTML = `<p class="empty-state">Mine limit reached for Level ${gameState.assignedLevel}. Sell nothing yet, so keep growing with upgrades and assets.</p>`;
+        shop.innerHTML = `<p class="empty-state">You already own the maximum number of mines for Level ${gameState.assignedLevel}. Keep growing with upgrades and other assets until the next level unlocks more capacity.</p>`;
         return;
     }
 

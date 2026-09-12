@@ -99,15 +99,12 @@ const CheckpointApproval = (() => {
 
             progressionStateByLevel[levelKey] = levelState;
             data.gameState.progressionStateByLevel = progressionStateByLevel;
-
-            if (String(data.gameState.assignedLevel || '') === levelKey) {
-                data.gameState.checkpointStatus = levelState.checkpointStatus;
-                data.gameState.quizAttempts = levelState.quizAttempts;
-                data.gameState.approvalStatus = levelState.approvalStatus;
-                data.gameState.approverName = levelState.approverName;
-                data.gameState.approvalTimestamp = levelState.approvalTimestamp;
-                data.gameState.quizScore = levelState.quizScore;
-            }
+            data.gameState.checkpointStatus = levelState.checkpointStatus;
+            data.gameState.quizAttempts = levelState.quizAttempts;
+            data.gameState.approvalStatus = levelState.approvalStatus;
+            data.gameState.approverName = levelState.approverName;
+            data.gameState.approvalTimestamp = levelState.approvalTimestamp;
+            data.gameState.quizScore = levelState.quizScore;
 
             localStorage.setItem('level2_autosave', JSON.stringify(data));
             return true;

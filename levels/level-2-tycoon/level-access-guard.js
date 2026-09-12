@@ -113,7 +113,12 @@ function getAssignedLevelFromPageUrl() {
     try {
         const params = new URLSearchParams(window.location.search);
         const level = Number(params.get('level'));
-        return [2, 3, 4, 5].includes(level) ? level : 2;
+        if ([2, 3, 4, 5].includes(level)) {
+            return level;
+        }
+        const pathMatch = String(window.location.pathname || '').match(/level-(\d+)/);
+        const pathLevel = Number(pathMatch?.[1]);
+        return [2, 3, 4, 5].includes(pathLevel) ? pathLevel : 2;
     } catch (_) {
         return 2;
     }
