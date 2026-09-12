@@ -758,7 +758,7 @@
                     const studentCount = result.added.length;
                     const skippedCount = result.skipped.length;
                     const teacherChanges = result.teachers.added.length + result.teachers.updated.length;
-                    const tone = studentCount || teacherChanges ? 'success' : 'error';
+                    const tone = studentCount || teacherChanges ? 'success' : 'info';
                     const summaryParts = [
                         `${studentCount} student${studentCount === 1 ? '' : 's'} added`
                     ];
@@ -807,7 +807,7 @@
                 const result = dashboard.bulkImportTeachers(input);
                 const changedCount = result.added.length + result.updated.length;
                 const skippedCount = result.skipped.length;
-                const tone = changedCount ? 'success' : 'error';
+                const tone = changedCount ? 'success' : 'info';
                 const summary = `Teacher import finished: ${result.added.length} added, ${result.updated.length} updated${skippedCount ? `, ${skippedCount} skipped` : ''}.`;
 
                 setStatusMessage('teacherImportResult', tone, summary, formatSkipDetails(result.skipped));

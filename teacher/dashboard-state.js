@@ -648,8 +648,11 @@ class TeacherDashboard {
         if (typeof updates.studentCode === 'string') {
             const v = updates.studentCode.trim();
             if (!v) return this.failureResult('Student Code cannot be empty');
+            const shouldMirrorDisplayId = !student.displayId || student.displayId === student.studentCode;
             student.studentCode = v;
-            student.displayId = v;
+            if (shouldMirrorDisplayId) {
+                student.displayId = v;
+            }
         }
         if (typeof updates.leaderboardName === 'string') {
             const v = updates.leaderboardName.trim();
