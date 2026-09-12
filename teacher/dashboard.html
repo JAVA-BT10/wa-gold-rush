@@ -5,13 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Goldfields Goldrush W.A. - Teacher Dashboard</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 0; background: #f5f5f5; color: #222; }
-        .container { display: none; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        body { font-family: Arial, sans-serif; margin: 0; background: linear-gradient(180deg, #f7f3e8 0, #f5f5f5 180px); color: #1f2933; }
+        .container { display: none; max-width: 1200px; margin: 0 auto; padding: 24px 20px 36px; }
         body.authorized .container { display: block; }
-        .card { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+        h1 { margin-bottom: 8px; }
+        h2 { margin: 0 0 6px; }
+        .card { background: #fff; border: 1px solid #ece7da; border-radius: 12px; padding: 18px; margin-bottom: 16px; box-shadow: 0 6px 18px rgba(39, 55, 77, .08); }
+        .card-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
+        .card-copy p { margin: 4px 0 0; }
         .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-        input, textarea, select, button { width: 100%; padding: 8px; box-sizing: border-box; margin-top: 4px; }
-        button { cursor: pointer; border: 0; border-radius: 6px; font-weight: bold; }
+        label { display: block; font-size: 14px; font-weight: bold; }
+        input, textarea, select, button { width: 100%; padding: 10px; box-sizing: border-box; margin-top: 6px; border: 1px solid #cfd8dc; border-radius: 8px; font: inherit; }
+        input:focus, textarea:focus, select:focus { outline: none; border-color: #f4b400; box-shadow: 0 0 0 3px rgba(244, 180, 0, .18); }
+        textarea { resize: vertical; min-height: 110px; }
+        button { cursor: pointer; border: 0; border-radius: 8px; font-weight: bold; transition: transform .15s ease, filter .15s ease, opacity .15s ease; }
+        button:hover:not(:disabled) { filter: brightness(.97); transform: translateY(-1px); }
+        button:disabled { cursor: wait; opacity: .7; transform: none; }
         .btn  { background: #f4b400; color: #fff; }
         .btn-secondary { background: #2e7d32; color: #fff; }
         .btn-danger    { background: #c62828; color: #fff; }
@@ -26,6 +35,46 @@
         .toggle-row  { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; }
         .toggle-row input[type="checkbox"] { width: auto; margin-top: 2px; }
         .toggle-copy strong { display: block; margin-bottom: 4px; }
+        .form-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+        .form-actions button { width: auto; min-width: 160px; margin-top: 0; }
+        .helper-list { margin: 8px 0 0 18px; padding: 0; color: #5f6b76; font-size: 12px; line-height: 1.5; }
+        .table-wrap { overflow-x: auto; }
+        .table-meta { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+        .table-meta p { margin: 0; }
+
+        /* Status */
+        .status-message {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            margin: -1px;
+            padding: 0;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+            clip-path: inset(50%);
+            white-space: nowrap;
+            border: 0;
+        }
+        .status-message.is-visible {
+            position: static;
+            width: auto;
+            height: auto;
+            margin-top: 12px;
+            padding: 10px 12px;
+            overflow: visible;
+            clip: auto;
+            clip-path: none;
+            white-space: normal;
+            border-radius: 8px;
+            border: 1px solid transparent;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .status-message.success { background: #edf7ed; border-color: #c8e6c9; color: #1b5e20; }
+        .status-message.error { background: #fff4f4; border-color: #f2c0c0; color: #8a1f17; }
+        .status-message.info { background: #edf4ff; border-color: #c8d8ff; color: #1d4ed8; }
+        .status-message ul { margin: 8px 0 0 18px; padding: 0; }
+        .status-banner.is-visible { margin-bottom: 16px; }
 
         /* Access denied panel */
         #authRequiredMessage {
@@ -57,14 +106,11 @@
         .profile-cell { display: flex; align-items: center; gap: 6px; }
         .profile-dot  { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 
-        /* Import result */
-        .import-result { margin-top: 10px; font-size: 13px; line-height: 1.6; }
-        .import-result .ok  { color: #2e7d32; }
-        .import-result .err { color: #c62828; }
-
         @media (max-width: 640px) {
             .grid { grid-template-columns: 1fr; }
             .row-actions { grid-template-columns: 1fr; }
+            .card-header { display: block; }
+            .form-actions button { width: 100%; }
         }
     </style>
 </head>
@@ -72,7 +118,9 @@
     <div id="authRequiredMessage" role="alert"></div>
 
     <div class="container">
+        <div id="dashboardStatus" class="status-message status-banner" role="status" aria-live="polite"></div>
         <h1>👨‍🏫 Goldfields Goldrush W.A. — Teacher Dashboard</h1>
+        <p class="muted">Manage local teacher and student records, import rosters, and monitor classroom progress with clearer feedback on every action.</p>
         <p><a href="../index.html">← Back to Home</a></p>
 
         <!-- Class Controls -->
@@ -110,7 +158,12 @@
 
         <!-- Student Management -->
         <section class="card">
-            <h2>Add Student</h2>
+            <div class="card-header">
+                <div class="card-copy">
+                    <h2>Add Student</h2>
+                    <p class="muted">Create a single student login. Required fields are marked <span style="color:#c62828">*</span>; optional fields remain teacher-facing only.</p>
+                </div>
+            </div>
             <div class="grid">
                 <label>Student Code <span style="color:#c62828">*</span>
                     <input id="studentCode" type="text" placeholder="e.g. SC-Y6-1042"></label>
@@ -133,15 +186,28 @@
                     </select>
                 </label>
             </div>
-            <p><button id="addStudentBtn" class="btn">Add Student</button></p>
+            <ul class="helper-list">
+                <li>Use a unique Student Code so students can sign in again later.</li>
+                <li>Leaderboard Name is public; Student Name and Student ID stay in the teacher dashboard.</li>
+            </ul>
+            <div class="form-actions">
+                <button id="addStudentBtn" class="btn">Add Student to Roster</button>
+            </div>
+            <div id="studentActionMsg" class="status-message" role="status" aria-live="polite"></div>
         </section>
 
         <!-- Bulk Import (Students / Class Teachers) -->
         <section class="card">
-            <h2>Bulk Import — Students / Class Teachers</h2>
+            <div class="card-header">
+                <div class="card-copy">
+                    <h2>Bulk Import — Students / Class Teachers</h2>
+                    <p class="muted">Paste CSV or JSON to add many roster entries at once. Student rows are added locally, and compatible teacher rows are routed through the restored teacher import flow.</p>
+                </div>
+            </div>
             <p class="muted">
                 CSV headers: <code>StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level</code><br>
                 Legacy CSV: <code>name,email,level</code> also accepted.<br>
+                JSON can be a single object or an array of objects.<br>
                 Mixed CSV/JSON can also include class-teacher rows with
                 <code>TeacherEmail,TeacherName,ClassCode,Role</code>. Admin rows should still use
                 the separate Teacher Import box below.
@@ -160,26 +226,57 @@
             </div>
             <textarea id="bulkInput" rows="5"
                 placeholder="StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level&#10;SC-Y6-001,Golddigger,123456,Alex Smith,6B,2"></textarea>
-            <div id="importResult" class="import-result"></div>
+            <div id="importResult" class="status-message" role="status" aria-live="polite"></div>
         </section>
 
         <!-- Bulk Import (Teachers) -->
         <section class="card">
-            <h2>Teacher Import</h2>
+            <div class="card-header">
+                <div class="card-copy">
+                    <h2>Teacher Import</h2>
+                    <p class="muted">Add or update multiple teacher records in one go. Existing teachers are matched by email so legacy records stay compatible.</p>
+                </div>
+            </div>
             <p class="muted">
                 CSV headers: <code>TeacherEmail,TeacherName,ClassCode,Role</code><br>
                 TeacherEmail and TeacherName are required. Role: <code>teacher</code> or <code>admin</code>.<br>
-                <code>ClassCode</code> is optional (can be blank for admins or teachers without assigned classes).
+                <code>ClassCode</code> is required for <code>teacher</code> rows and optional for <code>admin</code> rows.
             </p>
             <textarea id="teacherImportInput" rows="4"
                 placeholder="TeacherEmail,TeacherName,ClassCode,Role&#10;teacher@education.wa.edu.au,Ms Smith,6B,teacher"></textarea>
-            <p><button id="teacherImportBtn" class="btn-secondary">Import Teachers</button></p>
-            <div id="teacherImportResult" class="import-result"></div>
+            <div class="form-actions">
+                <button id="teacherImportBtn" class="btn-secondary">Import Teachers</button>
+            </div>
+            <div id="teacherImportResult" class="status-message" role="status" aria-live="polite"></div>
         </section>
 
         <!-- Teacher List -->
         <section class="card" id="teacherListSection">
-            <h2>🔑 Teacher / Admin List</h2>
+            <div class="card-header">
+                <div class="card-copy">
+                    <h2>🔑 Teacher / Admin List</h2>
+                    <p class="muted">Single-entry adds use the same local teacher CRUD storage as imports, so updates remain compatible with older saved records.</p>
+                </div>
+            </div>
+            <div class="grid">
+                <label>Teacher Email <span style="color:#c62828">*</span>
+                    <input id="newTeacherEmail" type="email" placeholder="teacher@education.wa.edu.au"></label>
+                <label>Teacher Name <span style="color:#c62828">*</span>
+                    <input id="newTeacherName" type="text" placeholder="e.g. Ms Smith"></label>
+                <label>Class Code <span class="muted">(required for teachers)</span>
+                    <input id="newTeacherClassCode" type="text" placeholder="e.g. 6B"></label>
+                <label>Role
+                    <select id="newTeacherRole">
+                        <option value="teacher" selected>Teacher</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </label>
+            </div>
+            <div class="form-actions">
+                <button id="addTeacherBtn" class="btn-secondary">Add Teacher</button>
+            </div>
+            <div id="teacherAddMsg" class="status-message" role="status" aria-live="polite"></div>
+            <div class="table-wrap">
             <table>
                 <thead>
                     <tr>
@@ -192,20 +289,18 @@
                 </thead>
                 <tbody id="teacherListBody"></tbody>
             </table>
-            <div style="margin-top:10px;">
-                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
-                    <label style="flex:1;min-width:220px;">Add teacher email
-                        <input id="newTeacherEmail" type="email" placeholder="teacher@education.wa.edu.au">
-                    </label>
-                    <button id="addTeacherBtn" class="btn-secondary" style="width:auto;margin-top:4px;">Add Teacher</button>
-                </div>
-                <p id="teacherAddMsg" class="muted" style="margin-top:6px;"></p>
             </div>
         </section>
 
         <!-- Student Roster -->
         <section class="card">
-            <h2>Student Roster</h2>
+            <div class="card-header">
+                <div class="card-copy">
+                    <h2>Student Roster</h2>
+                    <p class="muted">Edit roster details in place, then save each row. Delete only removes the local dashboard record.</p>
+                </div>
+            </div>
+            <div class="table-wrap">
             <table>
                 <thead>
                     <tr>
@@ -223,6 +318,8 @@
                 </thead>
                 <tbody id="rosterBody"></tbody>
             </table>
+            </div>
+            <div id="rosterActionMsg" class="status-message" role="status" aria-live="polite"></div>
         </section>
 
         <!-- Class Statistics -->
@@ -311,6 +408,82 @@
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#39;');
+        }
+
+        function setStatusMessage(id, tone, message, details = []) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const variants = new Set(['success', 'error', 'info']);
+            const appliedTone = variants.has(tone) ? tone : 'info';
+            const extraClass = id === 'dashboardStatus' ? ' status-banner' : '';
+            const detailItems = Array.isArray(details) ? details.filter(Boolean) : [];
+            const detailHtml = detailItems.length
+                ? `<ul>${detailItems.map(item => `<li>${escHtml(item)}</li>`).join('')}</ul>`
+                : '';
+            const isError = appliedTone === 'error';
+
+            el.className = `status-message${extraClass} ${appliedTone} is-visible`;
+            el.setAttribute('role', isError ? 'alert' : 'status');
+            el.setAttribute('aria-live', isError ? 'assertive' : 'polite');
+            el.innerHTML = `${escHtml(message)}${detailHtml}`;
+        }
+
+        function clearStatusMessage(...ids) {
+            ids.flat().forEach((id) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.className = id === 'dashboardStatus'
+                    ? 'status-message status-banner'
+                    : 'status-message';
+                el.setAttribute('role', 'status');
+                el.setAttribute('aria-live', 'polite');
+                el.innerHTML = '';
+            });
+        }
+
+        function getResultError(result, fallback) {
+            const message = String(result?.error || '').trim();
+            return message || fallback;
+        }
+
+        function withBusyButton(buttonId, busyLabel, callback) {
+            const button = document.getElementById(buttonId);
+            const originalLabel = button?.dataset.originalLabel || button?.textContent || '';
+            const restoreButton = () => {
+                if (!button) return;
+                button.disabled = false;
+                button.textContent = button.dataset.originalLabel;
+            };
+
+            if (button) {
+                button.dataset.originalLabel = originalLabel;
+                button.disabled = true;
+                button.textContent = busyLabel;
+            }
+
+            try {
+                const result = callback();
+                if (result && typeof result.then === 'function') {
+                    return result.finally(restoreButton);
+                }
+                restoreButton();
+                return result;
+            } catch (error) {
+                restoreButton();
+                throw error;
+            }
+        }
+
+        function describeStudent(student) {
+            return student?.leaderboardName || student?.studentName || student?.studentCode || 'Student';
+        }
+
+        function describeTeacher(teacher) {
+            return teacher?.name || teacher?.email || 'Teacher';
+        }
+
+        function formatSkipDetails(skipped = []) {
+            return skipped.slice(0, 5).map(item => `Row ${item.row}: ${item.reason}`);
         }
 
         function getRecords() {
@@ -479,15 +652,24 @@
             const esc = CSS.escape(studentId);
             const get = (field, tag = 'input') =>
                 document.querySelector(`${tag}[data-field="${field}"][data-id="${esc}"]`)?.value || '';
-            const result = dashboard.updateStudent(studentId, {
+            const studentName = get('studentName').trim();
+            const updates = {
                 studentCode:     get('studentCode').trim(),
                 leaderboardName: get('leaderboardName').trim(),
-                studentName:     get('studentName').trim(),
+                studentName:     studentName,
                 studentId:       get('studentId').trim(),
                 classCode:       get('classCode').trim(),
                 level:           parseInt(get('level', 'select'), 10)
-            });
-            if (!result.success) { alert(`Save failed: ${result.error}`); return; }
+            };
+            const result = dashboard.updateStudent(studentId, updates);
+            if (!result.success) {
+                const error = getResultError(result, 'Unable to save student changes.');
+                setStatusMessage('rosterActionMsg', 'error', `Could not save student changes. ${error}`);
+                setStatusMessage('dashboardStatus', 'error', `Could not save student changes. ${error}`);
+                return;
+            }
+            setStatusMessage('rosterActionMsg', 'success', `Saved changes for ${describeStudent(result.student)}.`);
+            setStatusMessage('dashboardStatus', 'success', `Saved changes for ${describeStudent(result.student)}.`);
             refresh();
         }
 
@@ -495,7 +677,14 @@
             const student = dashboard.getStudent(studentId);
             if (!confirm(`Delete ${student?.leaderboardName || student?.name || 'this student'}? Cannot be undone.`)) return;
             const result = dashboard.deleteStudent(studentId);
-            if (!result.success) { alert(`Delete failed: ${result.error}`); return; }
+            if (!result.success) {
+                const error = getResultError(result, 'Unable to delete this student.');
+                setStatusMessage('rosterActionMsg', 'error', `Could not delete this student. ${error}`);
+                setStatusMessage('dashboardStatus', 'error', `Could not delete this student. ${error}`);
+                return;
+            }
+            setStatusMessage('rosterActionMsg', 'success', result.message || 'Student deleted.');
+            setStatusMessage('dashboardStatus', 'success', result.message || 'Student deleted.');
             refresh();
         }
 
@@ -513,165 +702,163 @@
         // Add student
         // =====================================================================
         document.getElementById('addStudentBtn').addEventListener('click', () => {
-            const studentCode     = document.getElementById('studentCode').value.trim();
-            const leaderboardName = document.getElementById('studentLeaderboardName').value.trim();
-            const studentName     = document.getElementById('studentName').value.trim();
-            const studentId       = document.getElementById('studentDisplayId').value.trim();
-            const classCode       = document.getElementById('studentClassCode').value.trim();
-            const level           = parseInt(document.getElementById('studentLevel').value, 10);
+            withBusyButton('addStudentBtn', 'Adding…', () => {
+                const studentCode     = document.getElementById('studentCode').value.trim();
+                const leaderboardName = document.getElementById('studentLeaderboardName').value.trim();
+                const studentName     = document.getElementById('studentName').value.trim();
+                const studentId       = document.getElementById('studentDisplayId').value.trim();
+                const classCode       = document.getElementById('studentClassCode').value.trim();
+                const level           = parseInt(document.getElementById('studentLevel').value, 10);
 
-            if (!studentCode || !leaderboardName) {
-                alert('Student Code and Leaderboard Name are required.');
-                return;
-            }
+                if (!studentCode || !leaderboardName) {
+                    const message = 'Student Code and Leaderboard Name are required.';
+                    setStatusMessage('studentActionMsg', 'error', message);
+                    setStatusMessage('dashboardStatus', 'error', message);
+                    return;
+                }
 
-            const result = dashboard.addStudent({
-                studentCode, leaderboardName, studentName, studentId, classCode, level
+                const result = dashboard.addStudent({
+                    studentCode, leaderboardName, studentName, studentId, classCode, level
+                });
+
+                if (!result.success) {
+                    const error = getResultError(result, 'Unable to add this student.');
+                    setStatusMessage('studentActionMsg', 'error', error);
+                    setStatusMessage('dashboardStatus', 'error', error);
+                    return;
+                }
+
+                document.getElementById('studentCode').value = '';
+                document.getElementById('studentLeaderboardName').value = '';
+                document.getElementById('studentName').value = '';
+                document.getElementById('studentDisplayId').value = '';
+                document.getElementById('studentClassCode').value = '';
+                document.getElementById('studentLevel').value = '2';
+
+                setStatusMessage('studentActionMsg', 'success', `Added ${describeStudent(result.student)} to the roster.`);
+                setStatusMessage('dashboardStatus', 'success', `Added ${describeStudent(result.student)} to the roster.`);
+                refresh();
             });
-
-            if (!result.success) {
-                alert(`Error: ${result.error}`);
-                return;
-            }
-
-            document.getElementById('studentCode').value = '';
-            document.getElementById('studentLeaderboardName').value = '';
-            document.getElementById('studentName').value = '';
-            document.getElementById('studentDisplayId').value = '';
-            document.getElementById('studentClassCode').value = '';
-            document.getElementById('studentLevel').value = '2';
-
-            refresh();
         });
 
         // =====================================================================
         // Bulk Import
         // =====================================================================
         document.getElementById('importBtn').addEventListener('click', () => {
-            const format = document.getElementById('importFormat').value;
-            const input = document.getElementById('bulkInput').value.trim();
-            if (!input) {
-                alert('Please enter data to import.');
-                return;
-            }
-
-            let records = [];
-            try {
-                if (format === 'json') {
-                    records = JSON.parse(input);
-                    if (!Array.isArray(records)) records = [records];
-                } else {
-                    // Parse CSV
-                    const lines = input.split('\n').map(l => l.trim()).filter(l => l);
-                    if (!lines.length) throw new Error('No data');
-                    const header = lines[0].split(',').map(h => h.trim().toLowerCase());
-                    const isLegacy = header.includes('email') && header.includes('name') && !header.includes('studentcode');
-
-                    for (let i = 1; i < lines.length; i++) {
-                        const parts = lines[i].split(',').map(p => p.trim());
-                        const row = {};
-                        for (let j = 0; j < header.length && j < parts.length; j++) {
-                            row[header[j]] = parts[j];
-                        }
-
-                        // Detect teacher row
-                        if (row.teacheremail || (row.role && ['teacher', 'admin'].includes(row.role.toLowerCase()))) {
-                            // Skip for now (handled by teacher import)
-                            continue;
-                        }
-
-                        // Map fields
-                        let student = {
-                            studentCode: row.studentcode || row['student code'] || '',
-                            leaderboardName: row.leaderboardname || row['leaderboard name'] || row.name || '',
-                            studentName: row.studentname || row['student name'] || row.name || '',
-                            studentId: row.studentid || row['student id'] || row.email || '',
-                            classCode: row.classcode || row['class code'] || '',
-                            level: parseInt(row.level, 10) || 2
-                        };
-
-                        if (student.leaderboardName) records.push(student);
-                    }
+            withBusyButton('importBtn', 'Importing…', () => {
+                const format = document.getElementById('importFormat').value;
+                const input = document.getElementById('bulkInput').value.trim();
+                if (!input) {
+                    const message = 'Paste CSV or JSON data before importing.';
+                    setStatusMessage('importResult', 'error', message);
+                    setStatusMessage('dashboardStatus', 'error', message);
+                    return;
                 }
-            } catch (e) {
-                alert(`Parse error: ${e.message}`);
-                return;
-            }
 
-            let added = 0, failed = 0;
-            records.forEach(r => {
-                const result = dashboard.addStudent(r);
-                if (result.success) added++;
-                else failed++;
+                try {
+                    const result = dashboard.bulkImportStudents(input, format);
+                    const studentCount = result.added.length;
+                    const skippedCount = result.skipped.length;
+                    const teacherChanges = result.teachers.added.length + result.teachers.updated.length;
+                    const tone = studentCount || teacherChanges ? 'success' : 'info';
+                    const summaryParts = [
+                        `${studentCount} student${studentCount === 1 ? '' : 's'} added`
+                    ];
+
+                    if (teacherChanges) {
+                        summaryParts.push(`${teacherChanges} class teacher${teacherChanges === 1 ? '' : 's'} processed`);
+                    }
+                    if (skippedCount) {
+                        summaryParts.push(`${skippedCount} student row${skippedCount === 1 ? '' : 's'} skipped`);
+                    }
+                    if (result.teachers.skipped.length) {
+                        const teacherSkipCount = result.teachers.skipped.length;
+                        summaryParts.push(`${teacherSkipCount} class teacher row${teacherSkipCount === 1 ? '' : 's'} skipped`);
+                    }
+
+                    const details = [
+                        ...formatSkipDetails(result.skipped),
+                        ...formatSkipDetails(result.teachers.skipped)
+                    ];
+
+                    setStatusMessage('importResult', tone, `Roster import finished: ${summaryParts.join(', ')}.`, details);
+                    setStatusMessage('dashboardStatus', tone, `Roster import finished: ${summaryParts.join(', ')}.`);
+                    refresh();
+                    refreshTeachers();
+                } catch (error) {
+                    const message = `Could not import roster data. ${error?.message || 'Check the format and try again.'}`;
+                    setStatusMessage('importResult', 'error', message);
+                    setStatusMessage('dashboardStatus', 'error', message);
+                }
             });
-
-            const msg = `Imported: <span class="ok">${added} added</span>${failed ? `, <span class="err">${failed} failed</span>` : ''}.`;
-            document.getElementById('importResult').innerHTML = msg;
-            refresh();
         });
 
         // =====================================================================
         // Teacher Import
         // =====================================================================
         document.getElementById('teacherImportBtn').addEventListener('click', () => {
-            const input = document.getElementById('teacherImportInput').value.trim();
-            if (!input) {
-                alert('Please enter teacher data to import.');
-                return;
-            }
-
-            const lines = input.split('\n').map(l => l.trim()).filter(l => l);
-            if (!lines.length) {
-                alert('No data');
-                return;
-            }
-
-            const header = lines[0].split(',').map(h => h.trim().toLowerCase());
-            let added = 0, failed = 0;
-
-            for (let i = 1; i < lines.length; i++) {
-                const parts = lines[i].split(',').map(p => p.trim());
-                const row = {};
-                for (let j = 0; j < header.length && j < parts.length; j++) {
-                    row[header[j]] = parts[j];
+            withBusyButton('teacherImportBtn', 'Importing…', () => {
+                const input = document.getElementById('teacherImportInput').value.trim();
+                if (!input) {
+                    const message = 'Paste teacher CSV data before importing.';
+                    setStatusMessage('teacherImportResult', 'error', message);
+                    setStatusMessage('dashboardStatus', 'error', message);
+                    return;
                 }
 
-                const email = row.teacheremail || '';
-                const name = row.teachername || '';
-                const classCode = row.classcode || '';
-                const role = (row.role || 'teacher').toLowerCase();
+                const result = dashboard.bulkImportTeachers(input);
+                const changedCount = result.added.length + result.updated.length;
+                const skippedCount = result.skipped.length;
+                const tone = changedCount ? 'success' : 'info';
+                const summary = `Teacher import finished: ${result.added.length} added, ${result.updated.length} updated${skippedCount ? `, ${skippedCount} skipped` : ''}.`;
 
-                if (!email || !name) {
-                    failed++;
-                    continue;
-                }
-
-                const result = dashboard.addTeacher(email, name, classCode, role);
-                if (result.success) added++;
-                else failed++;
-            }
-
-            const msg = `Imported: <span class="ok">${added} added</span>${failed ? `, <span class="err">${failed} failed</span>` : ''}.`;
-            document.getElementById('teacherImportResult').innerHTML = msg;
-            refreshTeachers();
+                setStatusMessage('teacherImportResult', tone, summary, formatSkipDetails(result.skipped));
+                setStatusMessage('dashboardStatus', tone, summary);
+                refreshTeachers();
+            });
         });
 
         // =====================================================================
         // Add Teacher
         // =====================================================================
         document.getElementById('addTeacherBtn').addEventListener('click', () => {
-            const email = document.getElementById('newTeacherEmail').value.trim();
-            if (!email) {
-                alert('Email required.');
-                return;
-            }
-            const result = dashboard.addTeacher(email, email.split('@')[0], '', 'teacher');
-            if (!result.success) {
-                alert(`Error: ${result.error}`);
-                return;
-            }
-            document.getElementById('newTeacherEmail').value = '';
-            refreshTeachers();
+            withBusyButton('addTeacherBtn', 'Saving…', () => {
+                const email = document.getElementById('newTeacherEmail').value.trim();
+                const name = document.getElementById('newTeacherName').value.trim();
+                const classCode = document.getElementById('newTeacherClassCode').value.trim();
+                const role = document.getElementById('newTeacherRole').value;
+
+                if (!email || !name) {
+                    const message = 'Teacher Email and Teacher Name are required.';
+                    setStatusMessage('teacherAddMsg', 'error', message);
+                    setStatusMessage('dashboardStatus', 'error', message);
+                    return;
+                }
+                if (role === 'teacher' && !classCode) {
+                    const message = 'Class Code is required when adding a teacher.';
+                    setStatusMessage('teacherAddMsg', 'error', message);
+                    setStatusMessage('dashboardStatus', 'error', message);
+                    return;
+                }
+
+                const result = dashboard.addTeacher(email, name, classCode, role);
+                if (!result.success) {
+                    const error = getResultError(result, 'Unable to add this teacher.');
+                    setStatusMessage('teacherAddMsg', 'error', error);
+                    setStatusMessage('dashboardStatus', 'error', error);
+                    return;
+                }
+
+                document.getElementById('newTeacherEmail').value = '';
+                document.getElementById('newTeacherName').value = '';
+                document.getElementById('newTeacherClassCode').value = '';
+                document.getElementById('newTeacherRole').value = 'teacher';
+
+                const prefix = result.updated ? 'Updated' : 'Added';
+                setStatusMessage('teacherAddMsg', 'success', `${prefix} ${describeTeacher(result.teacher)}.`);
+                setStatusMessage('dashboardStatus', 'success', `${prefix} ${describeTeacher(result.teacher)}.`);
+                refreshTeachers();
+            });
         });
 
         function refreshTeachers() {
@@ -687,10 +874,33 @@
                 <td>${escHtml(t.classCode || '')}</td>
                 <td>${escHtml(t.role || 'teacher')}</td>
                 <td>
-                    <button class="btn-danger" style="width:auto;padding:6px 10px;" onclick="if(confirm('Delete ${escHtml(t.name)}?')) { dashboard.deleteTeacher(${JSON.stringify(t.id)}); refreshTeachers(); }">Delete</button>
+                    <button class="btn-danger" style="width:auto;padding:6px 10px;" data-action="delete-teacher" data-id="${escHtml(t.id)}">Delete</button>
                 </td>
             </tr>`).join('');
         }
+
+        document.getElementById('teacherListBody').addEventListener('click', (e) => {
+            const target = e.target;
+            if (!(target instanceof HTMLElement)) return;
+            const actionButton = target.closest('[data-action="delete-teacher"]');
+            if (!(actionButton instanceof HTMLElement)) return;
+
+            const teacherId = actionButton.getAttribute('data-id');
+            const teacher = dashboard.getTeacher(teacherId);
+            if (!confirm(`Delete ${describeTeacher(teacher)}? Cannot be undone.`)) return;
+
+            const result = dashboard.deleteTeacher(teacherId);
+            if (!result || result.success !== true) {
+                const error = getResultError(result, 'Unable to delete this teacher.');
+                setStatusMessage('teacherAddMsg', 'error', error);
+                setStatusMessage('dashboardStatus', 'error', error);
+                return;
+            }
+
+            setStatusMessage('teacherAddMsg', 'success', `Deleted ${describeTeacher(result.teacher)}.`);
+            setStatusMessage('dashboardStatus', 'success', `Deleted ${describeTeacher(result.teacher)}.`);
+            refreshTeachers();
+        });
 
         // =====================================================================
         // Class Control Buttons
@@ -698,13 +908,13 @@
         document.getElementById('pauseClassBtn').addEventListener('click', () => {
             localStorage.setItem(PAUSE_STATE_KEY, JSON.stringify({ paused: true, at: new Date().toISOString() }));
             renderPauseStatus();
-            alert('Gameplay paused for all students.');
+            setStatusMessage('dashboardStatus', 'info', 'Gameplay paused for all students.');
         });
 
         document.getElementById('resumeClassBtn').addEventListener('click', () => {
             localStorage.removeItem(PAUSE_STATE_KEY);
             renderPauseStatus();
-            alert('Gameplay resumed.');
+            setStatusMessage('dashboardStatus', 'success', 'Gameplay resumed for all students.');
         });
 
         document.getElementById('strictModeToggle').addEventListener('change', (e) => {
@@ -718,7 +928,7 @@
 
         document.getElementById('refreshBtn').addEventListener('click', () => {
             refresh();
-            alert('Stats refreshed.');
+            setStatusMessage('dashboardStatus', 'success', 'Dashboard stats and rosters refreshed.');
         });
 
         // =====================================================================

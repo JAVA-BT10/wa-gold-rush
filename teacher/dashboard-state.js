@@ -88,6 +88,18 @@ class TeacherDashboard {
         return Number.isFinite(numeric) ? numeric : fallback;
     }
 
+    successResult(data = {}) {
+        return { success: true, ...data };
+    }
+
+    failureResult(error, data = {}) {
+        return {
+            success: false,
+            error: String(error || 'Unable to complete this action.').trim() || 'Unable to complete this action.',
+            ...data
+        };
+    }
+
     parseCsvRows(csvText) {
         const rows = [];
         const text = String(csvText || '');
@@ -255,7 +267,7 @@ class TeacherDashboard {
      * Supports the extended SharePoint-aligned field set:
      *   StudentCode, LeaderboardName, StudentID, StudentName, ClassCode
      */
-    addStudent(studentData) {
+    addStudent(studentData = {}) {
         const autoId = this.generateStudentId();
 
         // Legacy compat: map name→studentName, email→studentId if new fields absent
@@ -272,6 +284,15 @@ class TeacherDashboard {
             studentData.studentId || studentData.email || ''
         ).trim();
         const classCode = String(studentData.classCode || '').trim();
+        const parsedLevel = parseInt(studentData.level, 10);
+        const level = (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : 2;
+
+        if (!studentCode) {
+            return this.failureResult('Student Code is required.');
+        }
+        if (!leaderboardName) {
+            return this.failureResult('Leaderboard Name is required.');
+        }
 
         const student = {
             id: autoId,
@@ -285,7 +306,7 @@ class TeacherDashboard {
             studentId,
             studentName,
             classCode,
-            level: studentData.level || 1,
+            level,
             assignedDate: new Date().toISOString(),
             gameState: {
                 round: 1,
@@ -302,7 +323,7 @@ class TeacherDashboard {
 
         this.students.push(student);
         this.saveToLocalStorage();
-        return student;
+        return this.successResult({ student, created: true });
     }
 
     generateStudentId() {
@@ -387,10 +408,8 @@ class TeacherDashboard {
 
         } else if (format === 'json') {
             const parsed = JSON.parse(data);
-            if (!Array.isArray(parsed)) {
-                throw new TypeError('JSON must be an array of student objects.');
-            }
-            parsed.forEach((item, idx) => {
+            const items = Array.isArray(parsed) ? parsed : [parsed];
+            items.forEach((item, idx) => {
                 if (!item || typeof item !== 'object' || Array.isArray(item)) {
                     rawStudents.push({ _row: idx + 1, _skipReason: 'Row must be an object' });
                     return;
@@ -438,7 +457,12 @@ class TeacherDashboard {
                 skipped.push({ row: studentData._row || '?', reason: 'Missing StudentCode or name' });
                 return;
             }
-            added.push(this.addStudent(studentData));
+            const result = this.addStudent(studentData);
+            if (!result.success) {
+                skipped.push({ row: studentData._row || '?', reason: result.error });
+                return;
+            }
+            added.push(result.student);
         });
 
         const teachers = this.importTeacherRows(rawTeachers, { allowAdmin: false });
@@ -616,35 +640,65 @@ class TeacherDashboard {
         const student = this.students.find(s => s.id === studentId);
         if (!student) return { success: false, error: 'Student not found' };
 
-        // Legacy + new field updates
+        const hasCodeUpdate = typeof updates.displayId === 'string' || typeof updates.studentCode === 'string';
+        const hasNameUpdate = typeof updates.name === 'string' || typeof updates.studentName === 'string';
+        const hasStudentIdUpdate = typeof updates.email === 'string' || typeof updates.studentId === 'string';
+
+        let nextStudentCode = String(student.studentCode || student.displayId || '').trim();
+        let nextStudentName = String(student.studentName || student.name || '').trim();
+        let nextStudentId = String(student.studentId || student.email || '').trim();
+        const currentStudentName = nextStudentName;
+        const currentLeaderboardName = String(student.leaderboardName || '').trim();
+
         if (typeof updates.displayId === 'string') {
-            const v = updates.displayId.trim();
-            if (v) { student.displayId = v; student.studentCode = v; }
+            const value = updates.displayId.trim();
+            if (!value) return this.failureResult('Student Code cannot be empty');
+            nextStudentCode = value;
         }
         if (typeof updates.studentCode === 'string') {
-            const v = updates.studentCode.trim();
-            if (v) { student.studentCode = v; student.displayId = v; }
-        }
-        if (typeof updates.leaderboardName === 'string') {
-            student.leaderboardName = updates.leaderboardName.trim();
+            const value = updates.studentCode.trim();
+            if (!value) return this.failureResult('Student Code cannot be empty');
+            nextStudentCode = value;
         }
         if (typeof updates.name === 'string') {
-            const v = updates.name.trim();
-            if (!v) return { success: false, error: 'Name cannot be empty' };
-            student.name = v; student.studentName = v;
+            const value = updates.name.trim();
+            if (!value && currentStudentName) return this.failureResult('Student Name cannot be empty');
+            nextStudentName = value;
         }
         if (typeof updates.studentName === 'string') {
-            const v = updates.studentName.trim();
-            if (!v) return { success: false, error: 'StudentName cannot be empty' };
-            student.studentName = v; student.name = v;
+            const value = updates.studentName.trim();
+            if (!value && currentStudentName) return this.failureResult('Student Name cannot be empty');
+            nextStudentName = value;
         }
         if (typeof updates.email === 'string') {
-            student.email = updates.email.trim();
-            student.studentId = updates.email.trim();
+            nextStudentId = updates.email.trim();
         }
         if (typeof updates.studentId === 'string') {
-            student.studentId = updates.studentId.trim();
-            student.email = updates.studentId.trim();
+            nextStudentId = updates.studentId.trim();
+        }
+
+        if (hasCodeUpdate) {
+            const previousStudentCode = String(student.studentCode || '').trim();
+            const previousDisplayId = String(student.displayId || '').trim();
+            student.studentCode = nextStudentCode;
+            if (!previousDisplayId || previousDisplayId === previousStudentCode) {
+                student.displayId = nextStudentCode;
+            }
+        }
+        if (typeof updates.leaderboardName === 'string') {
+            const value = updates.leaderboardName.trim();
+            if (!value && currentLeaderboardName) {
+                return this.failureResult('Leaderboard Name cannot be empty');
+            }
+            student.leaderboardName = value;
+        }
+        if (hasNameUpdate) {
+            student.studentName = nextStudentName;
+            student.name = nextStudentName;
+        }
+        if (hasStudentIdUpdate) {
+            student.studentId = nextStudentId;
+            student.email = nextStudentId;
         }
         if (typeof updates.classCode === 'string') {
             student.classCode = updates.classCode.trim();
