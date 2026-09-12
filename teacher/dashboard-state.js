@@ -647,6 +647,8 @@ class TeacherDashboard {
         let nextStudentCode = String(student.studentCode || student.displayId || '').trim();
         let nextStudentName = String(student.studentName || student.name || '').trim();
         let nextStudentId = String(student.studentId || student.email || '').trim();
+        const currentStudentName = nextStudentName;
+        const currentLeaderboardName = String(student.leaderboardName || '').trim();
 
         if (typeof updates.displayId === 'string') {
             const value = updates.displayId.trim();
@@ -660,12 +662,12 @@ class TeacherDashboard {
         }
         if (typeof updates.name === 'string') {
             const value = updates.name.trim();
-            if (!value) return this.failureResult('Student Name cannot be empty');
+            if (!value && currentStudentName) return this.failureResult('Student Name cannot be empty');
             nextStudentName = value;
         }
         if (typeof updates.studentName === 'string') {
             const value = updates.studentName.trim();
-            if (!value) return this.failureResult('Student Name cannot be empty');
+            if (!value && currentStudentName) return this.failureResult('Student Name cannot be empty');
             nextStudentName = value;
         }
         if (typeof updates.email === 'string') {
@@ -685,7 +687,9 @@ class TeacherDashboard {
         }
         if (typeof updates.leaderboardName === 'string') {
             const value = updates.leaderboardName.trim();
-            if (!value) return this.failureResult('Leaderboard Name cannot be empty');
+            if (!value && currentLeaderboardName) {
+                return this.failureResult('Leaderboard Name cannot be empty');
+            }
             student.leaderboardName = value;
         }
         if (hasNameUpdate) {

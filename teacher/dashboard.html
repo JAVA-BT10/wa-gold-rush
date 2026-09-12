@@ -656,13 +656,11 @@
             const updates = {
                 studentCode:     get('studentCode').trim(),
                 leaderboardName: get('leaderboardName').trim(),
+                studentName:     studentName,
                 studentId:       get('studentId').trim(),
                 classCode:       get('classCode').trim(),
                 level:           parseInt(get('level', 'select'), 10)
             };
-            if (studentName) {
-                updates.studentName = studentName;
-            }
             const result = dashboard.updateStudent(studentId, updates);
             if (!result.success) {
                 const error = getResultError(result, 'Unable to save student changes.');
