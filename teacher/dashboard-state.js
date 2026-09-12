@@ -214,7 +214,7 @@ class TeacherDashboard {
                 updated.push(existing);
             } else {
                 const entry = {
-                    id: this.generateTeacherId(),
+                    id: teacher.email,
                     email: teacher.email,
                     name: teacher.name,
                     classCode: teacher.classCode,
@@ -480,13 +480,6 @@ class TeacherDashboard {
         return this.importTeacherRows(rawTeachers, { allowAdmin: true, allowPartialUpdates: true });
     }
 
-    generateTeacherId() {
-        if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
-            return globalThis.crypto.randomUUID();
-        }
-        return 'TCH' + Date.now() + Math.random().toString(36).slice(2, 11);
-    }
-
     addTeacher(email, name, classCode, role = 'teacher') {
         const teacherList = this._loadTeacherList();
         const existingTeacher = teacherList.find(teacher => teacher.email === String(email || '').trim().toLowerCase());
@@ -510,7 +503,7 @@ class TeacherDashboard {
         }
 
         const entry = {
-            id: this.generateTeacherId(),
+            id: teacher.email,
             email: teacher.email,
             name: teacher.name,
             classCode: teacher.classCode,
@@ -564,7 +557,7 @@ class TeacherDashboard {
                     const email = String(teacher.email || '').trim().toLowerCase();
                     const normalizedTeacher = {
                         ...teacher,
-                        id: String(teacher.id || '').trim() || this.generateTeacherId(),
+                        id: String(teacher.id || '').trim() || email,
                         email,
                         name: String(teacher.name || '').trim(),
                         classCode: String(teacher.classCode || '').trim(),
