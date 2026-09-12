@@ -169,7 +169,7 @@
             <p class="muted">
                 CSV headers: <code>TeacherEmail,TeacherName,ClassCode,Role</code><br>
                 TeacherEmail and TeacherName are required. Role: <code>teacher</code> or <code>admin</code>.<br>
-                <code>ClassCode</code> is required for teachers and may be blank for admins.
+                <code>ClassCode</code> is optional (can be blank for admins or teachers without assigned classes).
             </p>
             <textarea id="teacherImportInput" rows="4"
                 placeholder="TeacherEmail,TeacherName,ClassCode,Role&#10;teacher@education.wa.edu.au,Ms Smith,6B,teacher"></textarea>
@@ -687,7 +687,7 @@
                 <td>${escHtml(t.classCode || '')}</td>
                 <td>${escHtml(t.role || 'teacher')}</td>
                 <td>
-                    <button class="btn-danger" style="width:auto;padding:6px 10px;" onclick="if(confirm('Delete ${escHtml(t.name)}?')) { dashboard.deleteTeacher('${CSS.escape(t.id)}'); refreshTeachers(); }">Delete</button>
+                    <button class="btn-danger" style="width:auto;padding:6px 10px;" onclick="if(confirm('Delete ${escHtml(t.name)}?')) { dashboard.deleteTeacher(${JSON.stringify(t.id)}); refreshTeachers(); }">Delete</button>
                 </td>
             </tr>`).join('');
         }
@@ -728,7 +728,7 @@
             const students = dashboard.getAllStudents();
             let csv = 'StudentCode,LeaderboardName,StudentName,StudentID,ClassCode,Level,NetWorth,Round,LastPlayed\n';
             students.forEach(s => {
-                csv += `"${(s.studentCode || '').replace(/"/g, '""')}","${(s.leaderboardName || '').replace(/"/g, '""')}","${(s.studentName || '').replace(/"/g, '""')}","${(s.studentId || '').replace(/"/g, '""')}","${(s.classCode || '').replace(/"/g, '""')}",${s.level || 2},${s.gameState?.netWorth || 0},${s.gameState?.round || 1},"${s.gameState?.lastPlayed || ''}".\n`;
+                csv += `"${(s.studentCode || '').replace(/"/g, '""')}","${(s.leaderboardName || '').replace(/"/g, '""')}","${(s.studentName || '').replace(/"/g, '""')}","${(s.studentId || '').replace(/"/g, '""')}","${(s.classCode || '').replace(/"/g, '""')}",${s.level || 1},$${(s.gameState?.netWorth || 0).toFixed(2)},${s.gameState?.round || 1},"${(s.gameState?.lastPlayed || '').replace(/"/g, '""')}"\n`;
             });
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = URL.createObjectURL(blob);
