@@ -124,11 +124,11 @@
         <p>Enter your teacher email and class code to open the dashboard.</p>
         <form id="teacherLoginForm">
             <div class="grid">
-                <label>Teacher Email
-                    <input id="teacherEmail" type="email" autocomplete="username" placeholder="teacher@education.wa.edu.au" required>
+                <label for="teacherEmail">Teacher Email
+                    <input id="teacherEmail" type="email" autocomplete="username" aria-describedby="authStatusMessage" placeholder="teacher@education.wa.edu.au" required>
                 </label>
-                <label>Class Code
-                    <input id="teacherClassCode" type="text" autocomplete="off" placeholder="e.g. NB5" required>
+                <label for="teacherClassCode">Class Code
+                    <input id="teacherClassCode" type="text" autocomplete="off" aria-describedby="authStatusMessage" placeholder="e.g. NB5" required>
                 </label>
             </div>
             <div class="auth-actions">
@@ -397,6 +397,44 @@
             return classCodes.join(', ');
         }
 
+        function getAuthorizedClassCodes() {
+            const session = dashboard.getTeacherSession();
+            if (!session) return [];
+            return Array.isArray(session.classCodes) && session.classCodes.length
+                ? session.classCodes
+                : [session.classCode].filter(Boolean);
+        }
+
+        function getPrimaryAuthorizedClassCode() {
+            return getAuthorizedClassCodes()[0] || '';
+        }
+
+        function getAuthorizedStudents() {
+            return dashboard.getAllStudents()
+                .filter(student => dashboard.canTeacherAccessClass(student.classCode));
+        }
+
+        function getAuthorizedTeachers() {
+            const session = dashboard.getTeacherSession();
+            if (!session) return [];
+
+            return dashboard.getAllTeachers().filter((teacher) => {
+                if (session.role.toLowerCase() === 'admin') return true;
+                return teacher.email === session.teacherEmail
+                    || dashboard.canTeacherAccessClass(teacher.classCode);
+            });
+        }
+
+        function withAuthorizedStudents(callback) {
+            const originalStudents = dashboard.students;
+            dashboard.students = getAuthorizedStudents();
+            try {
+                return callback();
+            } finally {
+                dashboard.students = originalStudents;
+            }
+        }
+
         function renderTeacherSessionSummary() {
             const session = dashboard.getTeacherSession();
             const summary = document.getElementById('teacherSessionSummary');
@@ -530,7 +568,14 @@
             try {
                 const raw = localStorage.getItem(CLASS_RECORDS_KEY);
                 const records = JSON.parse(raw);
-                return Array.isArray(records) ? records : [];
+                if (!Array.isArray(records)) return [];
+
+                return records.filter((record) => {
+                    const recordClassCode = String(
+                        record?.classCode || record?.gameState?.classCode || ''
+                    ).trim();
+                    return dashboard.canTeacherAccessClass(recordClassCode);
+                });
             } catch (_) { return []; }
         }
 
@@ -567,7 +612,7 @@
         // =====================================================================
         function renderStats() {
             syncFromRecords();
-            const stats = dashboard.calculateClassStats();
+            const stats = withAuthorizedStudents(() => dashboard.calculateClassStats());
             const records = getRecords();
             const byStrategy = {};
             records.forEach(r => {
@@ -594,7 +639,7 @@
 
         function renderLeaderboardForLevel(level) {
             _activeLeaderboardLevel = Number(level) || 2;
-            const lb = dashboard.getLevelLeaderboard(_activeLeaderboardLevel);
+            const lb = withAuthorizedStudents(() => dashboard.getLevelLeaderboard(_activeLeaderboardLevel));
             const content = document.getElementById('leaderboardContent');
 
             let html = '';
@@ -652,9 +697,9 @@
         // =====================================================================
         function renderRoster() {
             const body = document.getElementById('rosterBody');
-            const students = dashboard.getAllStudents();
+            const students = getAuthorizedStudents();
             if (!students.length) {
-                body.innerHTML = '<tr><td colspan="10">No students added yet.</td></tr>';
+                body.innerHTML = '<tr><td colspan="10">No students in your authorized classes yet.</td></tr>';
                 return;
             }
             body.innerHTML = students.map(s => {
@@ -693,14 +738,21 @@
             const get = (field, tag = 'input') =>
                 document.querySelector(`${tag}[data-field="${field}"][data-id="${esc}"]`)?.value || '';
             const studentName = get('studentName').trim();
+            const classCode = get('classCode').trim();
             const updates = {
                 studentCode:     get('studentCode').trim(),
                 leaderboardName: get('leaderboardName').trim(),
                 studentName:     studentName,
                 studentId:       get('studentId').trim(),
-                classCode:       get('classCode').trim(),
+                classCode,
                 level:           parseInt(get('level', 'select'), 10)
             };
+            if (!dashboard.canTeacherAccessClass(classCode)) {
+                const message = 'Student Class Code must match one of your authorized classes.';
+                setStatusMessage('rosterActionMsg', 'error', message);
+                setStatusMessage('dashboardStatus', 'error', message);
+                return;
+            }
             const result = dashboard.updateStudent(studentId, updates);
             if (!result.success) {
                 const error = getResultError(result, 'Unable to save student changes.');
@@ -747,11 +799,18 @@
                 const leaderboardName = document.getElementById('studentLeaderboardName').value.trim();
                 const studentName     = document.getElementById('studentName').value.trim();
                 const studentId       = document.getElementById('studentDisplayId').value.trim();
-                const classCode       = document.getElementById('studentClassCode').value.trim();
+                const classCodeInput  = document.getElementById('studentClassCode').value.trim();
+                const classCode       = classCodeInput || getPrimaryAuthorizedClassCode();
                 const level           = parseInt(document.getElementById('studentLevel').value, 10);
 
                 if (!studentCode || !leaderboardName) {
                     const message = 'Student Code and Leaderboard Name are required.';
+                    setStatusMessage('studentActionMsg', 'error', message);
+                    setStatusMessage('dashboardStatus', 'error', message);
+                    return;
+                }
+                if (!dashboard.canTeacherAccessClass(classCode)) {
+                    const message = 'Student Class Code must match one of your authorized classes.';
                     setStatusMessage('studentActionMsg', 'error', message);
                     setStatusMessage('dashboardStatus', 'error', message);
                     return;
@@ -903,9 +962,9 @@
 
         function refreshTeachers() {
             const body = document.getElementById('teacherListBody');
-            const teachers = dashboard.getAllTeachers();
+            const teachers = getAuthorizedTeachers();
             if (!teachers.length) {
-                body.innerHTML = '<tr><td colspan="5">No teachers added yet.</td></tr>';
+                body.innerHTML = '<tr><td colspan="5">No teachers in your authorized classes yet.</td></tr>';
                 return;
             }
             body.innerHTML = teachers.map(t => `<tr>
@@ -975,7 +1034,7 @@
         // Export CSV
         // =====================================================================
         document.getElementById('exportCsvBtn').addEventListener('click', () => {
-            const students = dashboard.getAllStudents();
+            const students = getAuthorizedStudents();
             let csv = 'StudentCode,LeaderboardName,StudentName,StudentID,ClassCode,Level,NetWorth,Round,LastPlayed\n';
             students.forEach(s => {
                 csv += `"${(s.studentCode || '').replace(/"/g, '""')}","${(s.leaderboardName || '').replace(/"/g, '""')}","${(s.studentName || '').replace(/"/g, '""')}","${(s.studentId || '').replace(/"/g, '""')}","${(s.classCode || '').replace(/"/g, '""')}",${s.level || 1},$${(s.gameState?.netWorth || 0).toFixed(2)},${s.gameState?.round || 1},"${(s.gameState?.lastPlayed || '').replace(/"/g, '""')}"\n`;
@@ -1015,6 +1074,11 @@
                 setStatusMessage('authStatusMessage', 'error', error);
                 return;
             }
+            if (!dashboard.canTeacherAccessClass(result.session.classCode)) {
+                dashboard.clearTeacherSession();
+                setStatusMessage('authStatusMessage', 'error', 'Teacher access denied for the requested class.');
+                return;
+            }
 
             showTeacherDashboard();
             initializeDashboard();
@@ -1022,6 +1086,8 @@
         }
 
         function initializeDashboard() {
+            clearProtectedDashboardContent();
+            document.getElementById('studentClassCode').value = getPrimaryAuthorizedClassCode();
             renderPauseStatus();
             renderStrictModeStatus();
             refresh();

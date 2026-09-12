@@ -120,7 +120,7 @@ class TeacherDashboard {
         if (session.role.toLowerCase() === 'admin') return true;
 
         const requestedClassCode = String(classCode || '').trim().toUpperCase();
-        if (!requestedClassCode) return true;
+        if (!requestedClassCode) return false;
 
         const allowedClassCodes = session.classCodes.length
             ? session.classCodes
