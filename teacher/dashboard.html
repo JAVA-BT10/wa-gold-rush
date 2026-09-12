@@ -652,14 +652,18 @@
             const esc = CSS.escape(studentId);
             const get = (field, tag = 'input') =>
                 document.querySelector(`${tag}[data-field="${field}"][data-id="${esc}"]`)?.value || '';
-            const result = dashboard.updateStudent(studentId, {
+            const studentName = get('studentName').trim();
+            const updates = {
                 studentCode:     get('studentCode').trim(),
                 leaderboardName: get('leaderboardName').trim(),
-                studentName:     get('studentName').trim(),
                 studentId:       get('studentId').trim(),
                 classCode:       get('classCode').trim(),
                 level:           parseInt(get('level', 'select'), 10)
-            });
+            };
+            if (studentName) {
+                updates.studentName = studentName;
+            }
+            const result = dashboard.updateStudent(studentId, updates);
             if (!result.success) {
                 const error = getResultError(result, 'Unable to save student changes.');
                 setStatusMessage('rosterActionMsg', 'error', `Could not save student changes. ${error}`);
@@ -888,7 +892,7 @@
             if (!confirm(`Delete ${describeTeacher(teacher)}? Cannot be undone.`)) return;
 
             const result = dashboard.deleteTeacher(teacherId);
-            if (!result.success) {
+            if (!result || result.success !== true) {
                 const error = getResultError(result, 'Unable to delete this teacher.');
                 setStatusMessage('teacherAddMsg', 'error', error);
                 setStatusMessage('dashboardStatus', 'error', error);
