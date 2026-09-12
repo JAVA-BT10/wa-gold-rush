@@ -193,7 +193,7 @@ class TeacherDashboard {
 
         const savedSession = this.saveTeacherSession({
             teacherEmail,
-            classCode,
+            classCode: payload.classCode || classCode,
             teacherName: payload.teacherName,
             role: payload.role,
             classCodes: payload.classCodes

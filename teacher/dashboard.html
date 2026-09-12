@@ -7,6 +7,7 @@
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background: linear-gradient(180deg, #f7f3e8 0, #f5f5f5 180px); color: #1f2933; }
         .container { display: none; max-width: 1200px; margin: 0 auto; padding: 24px 20px 36px; }
+        body:not(.authorized) .container { display: none; }
         body.authorized .container { display: block; }
         h1 { margin-bottom: 8px; }
         h2 { margin: 0 0 6px; }
