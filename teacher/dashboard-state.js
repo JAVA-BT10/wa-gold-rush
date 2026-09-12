@@ -523,11 +523,14 @@ class TeacherDashboard {
         const lookupKey = String(id || '').trim();
         if (!lookupKey) return null;
         const emailLookupKey = lookupKey.toLowerCase();
-        return this._loadTeacherList().find(teacher => (
-            teacher.id === lookupKey ||
-            teacher.id === emailLookupKey ||
-            teacher.email === emailLookupKey
-        )) || null;
+        return this._loadTeacherList().find((teacher) => {
+            const teacherId = String(teacher.id || '').trim();
+            return (
+                teacherId === lookupKey ||
+                teacherId.toLowerCase() === emailLookupKey ||
+                teacher.email === emailLookupKey
+            );
+        }) || null;
     }
 
     deleteTeacher(id) {
@@ -536,11 +539,14 @@ class TeacherDashboard {
         const emailLookupKey = lookupKey.toLowerCase();
 
         const teacherList = this._loadTeacherList();
-        const index = teacherList.findIndex(teacher => (
-            teacher.id === lookupKey ||
-            teacher.id === emailLookupKey ||
-            teacher.email === emailLookupKey
-        ));
+        const index = teacherList.findIndex((teacher) => {
+            const teacherId = String(teacher.id || '').trim();
+            return (
+                teacherId === lookupKey ||
+                teacherId.toLowerCase() === emailLookupKey ||
+                teacher.email === emailLookupKey
+            );
+        });
         if (index === -1) return { success: false, error: 'Teacher not found' };
 
         const deletedTeacher = teacherList.splice(index, 1)[0];
@@ -562,7 +568,7 @@ class TeacherDashboard {
                     const email = String(teacher.email || legacyId || '').trim().toLowerCase();
                     const normalizedTeacher = {
                         ...teacher,
-                        id: email || legacyId,
+                        id: legacyId || email,
                         email,
                         name: String(teacher.name || '').trim(),
                         classCode: String(teacher.classCode || '').trim(),
