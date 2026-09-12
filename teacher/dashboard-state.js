@@ -699,6 +699,8 @@ class TeacherDashboard {
 
         if (record.studentName) student.studentName = record.studentName;
         if (record.leaderboardName) student.leaderboardName = record.leaderboardName;
+        if (record.companyName) student.companyName = record.companyName;
+        if (record.level != null) student.level = record.level;
 
         student.gameState = {
             ...student.gameState,
@@ -712,6 +714,14 @@ class TeacherDashboard {
             strategyLabel:       record.strategyLabel       ?? student.gameState.strategyLabel,
             companyName:         record.companyName         ?? student.gameState.companyName,
             investmentProfile:   record.investmentProfile   ?? student.gameState.investmentProfile,
+            assignedLevel:       record.gameState?.assignedLevel       ?? record.level ?? student.gameState.assignedLevel,
+            checkpointStatus:    record.gameState?.checkpointStatus    ?? student.gameState.checkpointStatus,
+            approvalStatus:      record.gameState?.approvalStatus      ?? student.gameState.approvalStatus,
+            approverName:        record.gameState?.approverName        ?? student.gameState.approverName,
+            approvalTimestamp:   record.gameState?.approvalTimestamp   ?? student.gameState.approvalTimestamp,
+            quizScore:           record.gameState?.quizScore           ?? student.gameState.quizScore,
+            quizAttempts:        record.gameState?.quizAttempts        ?? student.gameState.quizAttempts,
+            progressionStateByLevel: record.gameState?.progressionStateByLevel ?? student.gameState.progressionStateByLevel,
             lastPlayed:          record.updatedAt || new Date().toISOString()
         };
         return student;

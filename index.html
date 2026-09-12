@@ -335,7 +335,17 @@
                 if (!raw) return false;
                 const data = JSON.parse(raw);
                 const gs = data.gameState;
-                return gs && gs.checkpointStatus === 'quiz_passed' && gs.approvalStatus === 'approved';
+                if (!gs) return false;
+                const levelKey = String(requiredLevel);
+                const progressionState = gs.progressionStateByLevel?.[levelKey]
+                    || (String(gs.assignedLevel || '') === levelKey
+                        ? {
+                            checkpointStatus: gs.checkpointStatus,
+                            approvalStatus: gs.approvalStatus
+                        }
+                        : null);
+                return progressionState?.checkpointStatus === 'quiz_passed'
+                    && progressionState?.approvalStatus === 'approved';
             } catch (_) {
                 return false;
             }

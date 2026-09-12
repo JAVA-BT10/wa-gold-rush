@@ -66,14 +66,47 @@ const CheckpointApproval = (() => {
             const data = JSON.parse(raw);
             if (!data.gameState) return false;
 
-            // Update checkpoint approval status
+            const levelKey = String(level);
+            const progressionStateByLevel = (data.gameState.progressionStateByLevel && typeof data.gameState.progressionStateByLevel === 'object')
+                ? data.gameState.progressionStateByLevel
+                : {};
+            const levelState = {
+                checkpointStatus: null,
+                quizAttempts: [],
+                approvalStatus: null,
+                approverName: null,
+                approvalTimestamp: null,
+                quizScore: null,
+                quizPassedAt: null,
+                ...(progressionStateByLevel[levelKey] || {})
+            };
+
             if (approvalRecord.status === 'approved') {
-                data.gameState.approvalStatus = 'approved';
-                data.gameState.approverName = approvalRecord.approverName;
-                data.gameState.approvalTimestamp = approvalRecord.timestamp;
+                levelState.checkpointStatus = levelState.checkpointStatus || 'quiz_passed';
+                levelState.approvalStatus = 'approved';
+                levelState.approverName = approvalRecord.approverName;
+                levelState.approvalTimestamp = approvalRecord.timestamp;
+            } else if (approvalRecord.status === 'rejected') {
+                levelState.approvalStatus = 'rejected';
+                levelState.approverName = approvalRecord.approverName;
+                levelState.approvalTimestamp = approvalRecord.timestamp;
             } else if (approvalRecord.status === 'retake_requested') {
-                data.gameState.approvalStatus = null;
-                data.gameState.checkpointStatus = 'quiz_available'; // Reset to allow retake
+                levelState.approvalStatus = null;
+                levelState.approverName = approvalRecord.approverName;
+                levelState.approvalTimestamp = approvalRecord.timestamp;
+                levelState.checkpointStatus = 'quiz_available';
+            }
+
+            progressionStateByLevel[levelKey] = levelState;
+            data.gameState.progressionStateByLevel = progressionStateByLevel;
+
+            if (String(data.gameState.assignedLevel || '') === levelKey) {
+                data.gameState.checkpointStatus = levelState.checkpointStatus;
+                data.gameState.quizAttempts = levelState.quizAttempts;
+                data.gameState.approvalStatus = levelState.approvalStatus;
+                data.gameState.approverName = levelState.approverName;
+                data.gameState.approvalTimestamp = levelState.approvalTimestamp;
+                data.gameState.quizScore = levelState.quizScore;
             }
 
             localStorage.setItem('level2_autosave', JSON.stringify(data));
