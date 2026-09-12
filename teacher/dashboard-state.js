@@ -165,12 +165,14 @@ class TeacherDashboard {
 
         let payload = null;
         let rawBody = '';
+        let responseFormatInvalid = false;
 
         try {
             rawBody = await response.text();
             payload = rawBody ? JSON.parse(rawBody) : null;
         } catch (_) {
             payload = null;
+            responseFormatInvalid = true;
         }
 
         if (!response.ok) {
@@ -182,7 +184,11 @@ class TeacherDashboard {
             );
         }
 
-        if (!payload || payload.ok !== true) {
+        if (responseFormatInvalid || !payload || typeof payload !== 'object') {
+            return this.failureResult('Teacher login returned an unreadable response. Please try again later.');
+        }
+
+        if (payload.ok !== true) {
             const denialMessage = String(
                 payload?.error || payload?.message || ''
             ).trim();
@@ -192,9 +198,9 @@ class TeacherDashboard {
         }
 
         const normalizedClassCodes = this.normalizeClassCodeList(payload.classCodes);
-        const primaryClassCode = String(
+        const primaryClassCode = this.normalizeClassCodeList([
             payload.classCode || normalizedClassCodes[0] || classCode
-        ).trim();
+        ])[0] || '';
 
         const savedSession = this.saveTeacherSession({
             teacherEmail,
