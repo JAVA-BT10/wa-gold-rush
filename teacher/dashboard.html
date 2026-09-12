@@ -44,20 +44,37 @@
 
         /* Status */
         .status-message {
-            display: none;
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            margin: -1px;
+            padding: 0;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+            clip-path: inset(50%);
+            white-space: nowrap;
+            border: 0;
+        }
+        .status-message.is-visible {
+            position: static;
+            width: auto;
+            height: auto;
             margin-top: 12px;
             padding: 10px 12px;
+            overflow: visible;
+            clip: auto;
+            clip-path: none;
+            white-space: normal;
             border-radius: 8px;
             border: 1px solid transparent;
             font-size: 13px;
             line-height: 1.5;
         }
-        .status-message.is-visible { display: block; }
         .status-message.success { background: #edf7ed; border-color: #c8e6c9; color: #1b5e20; }
         .status-message.error { background: #fff4f4; border-color: #f2c0c0; color: #8a1f17; }
         .status-message.info { background: #edf4ff; border-color: #c8d8ff; color: #1d4ed8; }
         .status-message ul { margin: 8px 0 0 18px; padding: 0; }
-        .status-banner { margin-bottom: 16px; }
+        .status-banner.is-visible { margin-bottom: 16px; }
 
         /* Access denied panel */
         #authRequiredMessage {
@@ -101,7 +118,7 @@
     <div id="authRequiredMessage" role="alert"></div>
 
     <div class="container">
-        <div id="dashboardStatus" class="status-message status-banner" role="status" aria-live="polite" aria-hidden="true"></div>
+        <div id="dashboardStatus" class="status-message status-banner" role="status" aria-live="polite"></div>
         <h1>👨‍🏫 Goldfields Goldrush W.A. — Teacher Dashboard</h1>
         <p class="muted">Manage local teacher and student records, import rosters, and monitor classroom progress with clearer feedback on every action.</p>
         <p><a href="../index.html">← Back to Home</a></p>
@@ -408,7 +425,6 @@
             el.className = `status-message${extraClass} ${appliedTone} is-visible`;
             el.setAttribute('role', isError ? 'alert' : 'status');
             el.setAttribute('aria-live', isError ? 'assertive' : 'polite');
-            el.setAttribute('aria-hidden', 'false');
             el.innerHTML = `${escHtml(message)}${detailHtml}`;
         }
 
@@ -421,7 +437,6 @@
                     : 'status-message';
                 el.setAttribute('role', 'status');
                 el.setAttribute('aria-live', 'polite');
-                el.setAttribute('aria-hidden', 'true');
                 el.innerHTML = '';
             });
         }
