@@ -646,7 +646,6 @@ class TeacherDashboard {
             const v = updates.studentCode.trim();
             if (!v) return this.failureResult('Student Code cannot be empty');
             student.studentCode = v;
-            student.displayId = v;
         }
         if (typeof updates.leaderboardName === 'string') {
             const v = updates.leaderboardName.trim();

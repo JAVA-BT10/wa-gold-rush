@@ -190,6 +190,7 @@
             <p class="muted">
                 CSV headers: <code>StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level</code><br>
                 Legacy CSV: <code>name,email,level</code> also accepted.<br>
+                JSON can be a single object or an array of objects.<br>
                 Mixed CSV/JSON can also include class-teacher rows with
                 <code>TeacherEmail,TeacherName,ClassCode,Role</code>. Admin rows should still use
                 the separate Teacher Import box below.
@@ -431,6 +432,11 @@
         function withBusyButton(buttonId, busyLabel, callback) {
             const button = document.getElementById(buttonId);
             const originalLabel = button?.dataset.originalLabel || button?.textContent || '';
+            const restoreButton = () => {
+                if (!button) return;
+                button.disabled = false;
+                button.textContent = button.dataset.originalLabel;
+            };
 
             if (button) {
                 button.dataset.originalLabel = originalLabel;
@@ -439,12 +445,15 @@
             }
 
             try {
-                return callback();
-            } finally {
-                if (button) {
-                    button.disabled = false;
-                    button.textContent = button.dataset.originalLabel;
+                const result = callback();
+                if (result && typeof result.then === 'function') {
+                    return result.finally(restoreButton);
                 }
+                restoreButton();
+                return result;
+            } catch (error) {
+                restoreButton();
+                throw error;
             }
         }
 
