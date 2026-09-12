@@ -557,7 +557,7 @@ class TeacherDashboard {
                     const email = String(teacher.email || '').trim().toLowerCase();
                     const normalizedTeacher = {
                         ...teacher,
-                        id: String(teacher.id || '').trim() || email,
+                        id: email || String(teacher.id || '').trim(),
                         email,
                         name: String(teacher.name || '').trim(),
                         classCode: String(teacher.classCode || '').trim(),
