@@ -282,7 +282,7 @@ class TeacherDashboard {
         ).trim();
         const classCode = String(studentData.classCode || '').trim();
         const parsedLevel = parseInt(studentData.level, 10);
-        const level = (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : 1;
+        const level = (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : 2;
 
         if (!studentCode) {
             return this.failureResult('Student Code is required.');

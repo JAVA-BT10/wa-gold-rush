@@ -402,8 +402,11 @@
             const detailHtml = detailItems.length
                 ? `<ul>${detailItems.map(item => `<li>${escHtml(item)}</li>`).join('')}</ul>`
                 : '';
+            const isError = appliedTone === 'error';
 
             el.className = `status-message${extraClass} ${appliedTone} is-visible`;
+            el.setAttribute('role', isError ? 'alert' : 'status');
+            el.setAttribute('aria-live', isError ? 'assertive' : 'polite');
             el.innerHTML = `${escHtml(message)}${detailHtml}`;
         }
 
@@ -414,6 +417,8 @@
                 el.className = id === 'dashboardStatus'
                     ? 'status-message status-banner'
                     : 'status-message';
+                el.setAttribute('role', 'status');
+                el.setAttribute('aria-live', 'polite');
                 el.innerHTML = '';
             });
         }
