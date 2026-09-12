@@ -659,10 +659,12 @@ class TeacherDashboard {
             nextStudentCode = value;
         }
         if (typeof updates.name === 'string') {
-            nextStudentName = updates.name.trim();
+            const value = updates.name.trim();
+            if (value) nextStudentName = value;
         }
         if (typeof updates.studentName === 'string') {
-            nextStudentName = updates.studentName.trim();
+            const value = updates.studentName.trim();
+            if (value) nextStudentName = value;
         }
         if (typeof updates.email === 'string') {
             nextStudentId = updates.email.trim();
