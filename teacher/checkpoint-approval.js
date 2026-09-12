@@ -139,15 +139,17 @@ const CheckpointApproval = (() => {
                 }
             }
 
-            const autosaveRaw = localStorage.getItem('level2_autosave');
-            if (autosaveRaw) {
+            const autosaveKeys = Array.from(new Set([`level${level}_autosave`, 'level2_autosave']));
+            autosaveKeys.forEach(key => {
+                const autosaveRaw = localStorage.getItem(key);
+                if (!autosaveRaw) return;
                 const autosave = JSON.parse(autosaveRaw);
                 const autosaveCode = autosave?.gameState?.player?.studentCode || autosave?.gameState?.player?.studentId || '';
                 if (matchesStudent(autosaveCode) && applyApprovalToGameStateContainer(autosave.gameState)) {
-                    localStorage.setItem('level2_autosave', JSON.stringify(autosave));
+                    localStorage.setItem(key, JSON.stringify(autosave));
                     updated = true;
                 }
-            }
+            });
 
             return updated;
         } catch (_) {
