@@ -1,30 +1,18 @@
 /**
  * Teacher Dashboard — Student Management & Progress Tracking
  *
- * Auth model: teacher access is controlled via a simple passcode/allowlist in
- * localStorage. Microsoft 365 / MSAL dependencies have been removed.
- * The passcode approach is a lightweight stand-in until a full SharePoint/
- * Power Automate teacher-auth flow is implemented.
+ * Auth model: teacher dashboard access is authenticated against the published
+ * Power Automate teacher-login flow and cached in sessionStorage for the
+ * current browser session.
  */
 
 // ============================================================================
 // Teacher access control
 // ============================================================================
 
-/**
- * Set TEACHER_PASSCODE_MODE = true to require a passcode before the dashboard
- * shows (recommended for classroom use).  Set to false to open the dashboard
- * for anyone with the URL (useful during initial setup / localhost dev).
- */
-const TEACHER_PASSCODE_MODE = false;
-
-/**
- * Passcode required when TEACHER_PASSCODE_MODE = true.
- * Change this to a value known only to teachers before deploying.
- * Alternatively store it in localStorage key "wa_gold_rush_teacher_passcode"
- * so it is set per-device without editing code.
- */
-const TEACHER_PASSCODE_STATIC = '';
+const FLOW_ENDPOINTS = Object.freeze({
+    loginTeacher: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/10/workflows/63479c7d2c794888b481e3d477f60136/triggers/manual/paths/invoke?api-version=1'
+});
 
 class TeacherDashboard {
     constructor() {
@@ -41,42 +29,187 @@ class TeacherDashboard {
         };
 
         this.TEACHER_DASHBOARD_KEY     = 'teacher_dashboard';
-        this.PASSCODE_STORAGE_KEY      = 'wa_gold_rush_teacher_passcode';
-        this.TEACHER_ALLOWLIST_STORAGE_KEY = 'wa_gold_rush_teacher_allowlist';
+        this.TEACHER_SESSION_STORAGE_KEY = 'wa_gold_rush_teacher_session';
     }
 
     // =========================================================================
     // Auth helpers
     // =========================================================================
 
-    /**
-     * Returns true if the passcode provided matches the configured passcode.
-     * When TEACHER_PASSCODE_MODE is false, always returns true.
-     */
-    checkPasscode(entered) {
-        if (!TEACHER_PASSCODE_MODE) return true;
-        const expected = (
-            localStorage.getItem(this.PASSCODE_STORAGE_KEY) || TEACHER_PASSCODE_STATIC
-        ).trim();
-        if (!expected) return false; // passcode mode enabled but no passcode configured
-        return String(entered || '').trim() === expected;
+    getFlowEndpoint(flowName) {
+        return FLOW_ENDPOINTS[flowName] || '';
+    }
+
+    normalizeClassCodeList(value) {
+        if (Array.isArray(value)) {
+            return value
+                .map(entry => String(entry || '').trim())
+                .filter(Boolean);
+        }
+
+        return String(value || '')
+            .split(/[,\n;]+/)
+            .map(entry => entry.trim())
+            .filter(Boolean);
+    }
+
+    getTeacherSession() {
+        try {
+            const raw = sessionStorage.getItem(this.TEACHER_SESSION_STORAGE_KEY);
+            if (!raw) return null;
+
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object') return null;
+
+            const teacherEmail = String(parsed.teacherEmail || '').trim().toLowerCase();
+            const classCode = String(parsed.classCode || '').trim();
+            if (!parsed.ok || !teacherEmail || !classCode) return null;
+
+            return {
+                ok: true,
+                teacherEmail,
+                classCode,
+                teacherName: String(parsed.teacherName || '').trim(),
+                role: String(parsed.role || '').trim(),
+                classCodes: this.normalizeClassCodeList(parsed.classCodes),
+                authenticatedAt: String(parsed.authenticatedAt || '').trim()
+            };
+        } catch (_) {
+            return null;
+        }
     }
 
     hasTeacherSession() {
-        if (!TEACHER_PASSCODE_MODE) return true;
-        // Check if dashboard has been unlocked this session
+        return !!this.getTeacherSession();
+    }
+
+    saveTeacherSession(sessionData = {}) {
+        const teacherEmail = String(sessionData.teacherEmail || '').trim().toLowerCase();
+        const classCode = String(sessionData.classCode || '').trim();
+        if (!teacherEmail || !classCode) {
+            return this.failureResult('Missing teacher session details.');
+        }
+
+        const session = {
+            ok: true,
+            teacherEmail,
+            classCode,
+            teacherName: String(sessionData.teacherName || '').trim(),
+            role: String(sessionData.role || '').trim(),
+            classCodes: this.normalizeClassCodeList(sessionData.classCodes),
+            authenticatedAt: String(sessionData.authenticatedAt || new Date().toISOString()).trim()
+        };
+
         try {
-            return sessionStorage.getItem('wa_gr_teacher_unlocked') === '1';
-        } catch (_) { return false; }
+            sessionStorage.setItem(this.TEACHER_SESSION_STORAGE_KEY, JSON.stringify(session));
+            return this.successResult({ session });
+        } catch (_) {
+            return this.failureResult('Unable to save the teacher session in this browser.');
+        }
     }
 
-    unlockSession() {
-        try { sessionStorage.setItem('wa_gr_teacher_unlocked', '1'); } catch (_) {}
+    clearTeacherSession() {
+        try {
+            sessionStorage.removeItem(this.TEACHER_SESSION_STORAGE_KEY);
+            return true;
+        } catch (_) {
+            return false;
+        }
     }
 
-    isTempAllowlistMode() {
-        // Legacy compatibility — kept so dashboard.html references still work
-        return false;
+    canTeacherAccessClass(classCode) {
+        const session = this.getTeacherSession();
+        if (!session) return false;
+        if (session.role.toLowerCase() === 'admin') return true;
+
+        const requestedClassCode = String(classCode || '').trim();
+        if (!requestedClassCode) return true;
+
+        const allowedClassCodes = session.classCodes.length
+            ? session.classCodes
+            : [session.classCode];
+        return allowedClassCodes.includes(requestedClassCode);
+    }
+
+    async authenticateTeacher(credentials = {}, options = {}) {
+        const teacherEmail = String(credentials.teacherEmail || '').trim().toLowerCase();
+        const classCode = String(credentials.classCode || '').trim();
+        if (!teacherEmail || !classCode) {
+            return this.failureResult('Teacher email and class code are required.');
+        }
+
+        const endpoint = this.getFlowEndpoint('loginTeacher');
+        if (!endpoint) {
+            return this.failureResult('Teacher login is not configured.');
+        }
+
+        const fetchImpl = typeof options.fetch === 'function'
+            ? options.fetch
+            : (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
+
+        if (!fetchImpl) {
+            return this.failureResult('This browser cannot complete teacher sign-in.');
+        }
+
+        let response;
+        try {
+            response = await fetchImpl(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                cache: 'no-store',
+                body: JSON.stringify({ teacherEmail, classCode })
+            });
+        } catch (_) {
+            return this.failureResult('Could not reach teacher login. Check your connection and try again.');
+        }
+
+        let payload = null;
+        let rawBody = '';
+
+        try {
+            rawBody = await response.text();
+            payload = rawBody ? JSON.parse(rawBody) : null;
+        } catch (_) {
+            payload = null;
+        }
+
+        if (!response.ok) {
+            const serverMessage = String(
+                payload?.error || payload?.message || rawBody || ''
+            ).trim();
+            return this.failureResult(
+                serverMessage || `Teacher login request failed (HTTP ${response.status}).`
+            );
+        }
+
+        if (!payload || payload.ok !== true) {
+            const denialMessage = String(
+                payload?.error || payload?.message || ''
+            ).trim();
+            return this.failureResult(
+                denialMessage || 'Teacher access denied. Check your email and class code and try again.'
+            );
+        }
+
+        const savedSession = this.saveTeacherSession({
+            teacherEmail,
+            classCode,
+            teacherName: payload.teacherName,
+            role: payload.role,
+            classCodes: payload.classCodes
+        });
+
+        if (!savedSession.success) {
+            return savedSession;
+        }
+
+        return this.successResult({
+            session: savedSession.session,
+            response: payload
+        });
     }
 
     // =========================================================================

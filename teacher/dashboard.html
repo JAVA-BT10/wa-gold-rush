@@ -78,10 +78,12 @@
 
         /* Access denied panel */
         #authRequiredMessage {
-            display: none; max-width: 640px; margin: 28px auto; padding: 20px 24px;
-            background: #fff3f3; border: 1px solid #f5c2c7; border-radius: 8px;
-            color: #842029; font-family: Arial, sans-serif; line-height: 1.6;
+            max-width: 640px; margin: 28px auto; padding: 20px 24px;
+            background: #fff; border: 1px solid #ece7da; border-radius: 12px;
+            color: #1f2933; font-family: Arial, sans-serif; line-height: 1.6;
+            box-shadow: 0 6px 18px rgba(39, 55, 77, .08);
         }
+        body.authorized #authRequiredMessage { display: none; }
         #authRequiredMessage h2 { margin-top: 0; font-size: 18px; }
         #authRequiredMessage .auth-actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
         #authRequiredMessage .auth-actions a,
@@ -91,6 +93,7 @@
             font-size: 14px; border: 0;
         }
         #authRequiredMessage .btn-home { background: #842029; color: #fff; }
+        #authRequiredMessage .btn-home-secondary { background: #5f6b76; }
 
         /* Checkpoint tabs */
         .tab-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -115,11 +118,33 @@
     </style>
 </head>
 <body>
-    <div id="authRequiredMessage" role="alert"></div>
+    <div id="authRequiredMessage">
+        <h2>🔒 Teacher Dashboard Sign In</h2>
+        <p>Enter your teacher email and class code to open the dashboard.</p>
+        <form id="teacherLoginForm">
+            <div class="grid">
+                <label>Teacher Email
+                    <input id="teacherEmail" type="email" autocomplete="username" placeholder="teacher@education.wa.edu.au" required>
+                </label>
+                <label>Class Code
+                    <input id="teacherClassCode" type="text" autocomplete="off" placeholder="e.g. NB5" required>
+                </label>
+            </div>
+            <div class="auth-actions">
+                <button id="teacherLoginBtn" class="btn-home" type="submit">Open Dashboard</button>
+                <a class="btn-home btn-home-secondary" href="../index.html">← Return to Home Page</a>
+            </div>
+        </form>
+        <div id="authStatusMessage" class="status-message" role="status" aria-live="polite"></div>
+    </div>
 
     <div class="container">
         <div id="dashboardStatus" class="status-message status-banner" role="status" aria-live="polite"></div>
         <h1>👨‍🏫 Goldfields Goldrush W.A. — Teacher Dashboard</h1>
+        <div class="inline-actions" style="margin-bottom: 8px; flex-wrap: wrap;">
+            <span id="teacherSessionSummary" class="muted"></span>
+            <button id="teacherLogoutBtn" class="btn-danger" type="button" style="width:auto;padding:6px 10px;">Sign Out</button>
+        </div>
         <p class="muted">Manage local teacher and student records, import rosters, and monitor classroom progress with clearer feedback on every action.</p>
         <p><a href="../index.html">← Back to Home</a></p>
 
@@ -360,42 +385,47 @@
         const dashboard = new TeacherDashboard();
 
         // =====================================================================
-        // Access control (no M365 / MSAL dependency)
+        // Access control
         // =====================================================================
+        function describeAuthorizedClasses(session) {
+            if (!session) return '';
+            const classCodes = Array.isArray(session.classCodes) && session.classCodes.length
+                ? session.classCodes
+                : [session.classCode].filter(Boolean);
+            return classCodes.join(', ');
+        }
+
+        function renderTeacherSessionSummary() {
+            const session = dashboard.getTeacherSession();
+            const summary = document.getElementById('teacherSessionSummary');
+            if (!summary) return;
+
+            if (!session) {
+                summary.textContent = '';
+                return;
+            }
+
+            const name = session.teacherName || session.teacherEmail;
+            const classCodes = describeAuthorizedClasses(session);
+            const role = session.role ? ` (${session.role})` : '';
+            summary.textContent = classCodes
+                ? `Signed in as ${name}${role} — classes: ${classCodes}`
+                : `Signed in as ${name}${role}`;
+        }
+
+        function showTeacherDashboard() {
+            document.body.classList.add('authorized');
+            renderTeacherSessionSummary();
+        }
+
         function enforceTeacherDashboardAccess() {
-            if (dashboard.hasTeacherSession()) {
-                document.body.classList.add('authorized');
-                return true;
+            if (!dashboard.hasTeacherSession()) {
+                document.body.classList.remove('authorized');
+                return false;
             }
 
-            // Passcode check
-            if (typeof TEACHER_PASSCODE_MODE !== 'undefined' && TEACHER_PASSCODE_MODE) {
-                const entered = prompt(
-                    'Teacher Dashboard\n\nEnter the teacher passcode to continue:'
-                );
-                if (dashboard.checkPasscode(entered)) {
-                    dashboard.unlockSession();
-                    document.body.classList.add('authorized');
-                    return true;
-                }
-            }
-
-            // No passcode configured → open access
-            if (typeof TEACHER_PASSCODE_MODE !== 'undefined' && !TEACHER_PASSCODE_MODE) {
-                document.body.classList.add('authorized');
-                return true;
-            }
-
-            const authMessage = document.getElementById('authRequiredMessage');
-            authMessage.innerHTML = `
-                <h2>🔒 Dashboard Access Denied</h2>
-                <p>The passcode entered was incorrect.</p>
-                <div class="auth-actions">
-                    <a class="btn-home" href="../index.html">← Return to Home Page</a>
-                    <button class="btn-home" onclick="location.reload()">Try Again</button>
-                </div>`;
-            authMessage.style.display = 'block';
-            return false;
+            showTeacherDashboard();
+            return true;
         }
 
         // =====================================================================
@@ -958,13 +988,54 @@
             renderLeaderboardForLevel(_activeLeaderboardLevel);
         }
 
-        function init() {
-            if (!enforceTeacherDashboardAccess()) return;
+        async function submitTeacherLogin() {
+            clearStatusMessage('authStatusMessage');
+
+            const teacherEmail = document.getElementById('teacherEmail').value.trim();
+            const classCode = document.getElementById('teacherClassCode').value.trim();
+
+            if (!teacherEmail || !classCode) {
+                setStatusMessage('authStatusMessage', 'error', 'Teacher email and class code are required.');
+                return;
+            }
+
+            const result = await dashboard.authenticateTeacher({ teacherEmail, classCode });
+            if (!result.success) {
+                const error = getResultError(result, 'Teacher access denied. Check your email and class code and try again.');
+                setStatusMessage('authStatusMessage', 'error', error);
+                return;
+            }
+
+            showTeacherDashboard();
+            initializeDashboard();
+            setStatusMessage('dashboardStatus', 'success', `Welcome ${result.session.teacherName || result.session.teacherEmail}.`);
+        }
+
+        function initializeDashboard() {
             renderPauseStatus();
             renderStrictModeStatus();
             refresh();
             refreshTeachers();
         }
+
+        function init() {
+            if (!enforceTeacherDashboardAccess()) return;
+            initializeDashboard();
+        }
+
+        document.getElementById('teacherLoginForm').addEventListener('submit', (event) => {
+            event.preventDefault();
+            withBusyButton('teacherLoginBtn', 'Signing In…', () => submitTeacherLogin());
+        });
+
+        document.getElementById('teacherLogoutBtn').addEventListener('click', () => {
+            dashboard.clearTeacherSession();
+            document.body.classList.remove('authorized');
+            clearStatusMessage('dashboardStatus', 'authStatusMessage');
+            document.getElementById('teacherLoginForm').reset();
+            document.getElementById('teacherSessionSummary').textContent = '';
+            document.getElementById('teacherEmail').focus();
+        });
 
         document.addEventListener('DOMContentLoaded', init);
     </script>
