@@ -191,12 +191,17 @@ class TeacherDashboard {
             );
         }
 
+        const normalizedClassCodes = this.normalizeClassCodeList(payload.classCodes);
+        const primaryClassCode = String(
+            payload.classCode || normalizedClassCodes[0] || classCode
+        ).trim();
+
         const savedSession = this.saveTeacherSession({
             teacherEmail,
-            classCode: payload.classCode || classCode,
+            classCode: primaryClassCode,
             teacherName: payload.teacherName,
             role: payload.role,
-            classCodes: payload.classCodes
+            classCodes: normalizedClassCodes
         });
 
         if (!savedSession.success) {

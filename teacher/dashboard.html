@@ -1074,7 +1074,10 @@
                 setStatusMessage('authStatusMessage', 'error', error);
                 return;
             }
-            if (!dashboard.canTeacherAccessClass(result.session.classCode)) {
+            const authorizedClassCodes = Array.isArray(result.session.classCodes) && result.session.classCodes.length
+                ? result.session.classCodes
+                : [result.session.classCode].filter(Boolean);
+            if (!authorizedClassCodes.length) {
                 dashboard.clearTeacherSession();
                 setStatusMessage('authStatusMessage', 'error', 'Teacher access denied for the requested class.');
                 return;
