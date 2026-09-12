@@ -186,6 +186,9 @@ class TeacherDashboard {
         if (!teacherName) return { success: false, error: 'Missing TeacherName' };
         if (!role) return { success: false, error: 'Missing Role' };
         if (!ALLOWED_ROLES.has(role)) return { success: false, error: `Unknown role: ${role}` };
+        if (role !== 'admin' && !classCode) {
+            return { success: false, error: 'Missing ClassCode for teacher role' };
+        }
         if (!allowAdmin && role === 'admin') {
             return { success: false, error: 'Admin rows must be imported via Teacher Import' };
         }
@@ -646,7 +649,6 @@ class TeacherDashboard {
             const v = updates.studentCode.trim();
             if (!v) return this.failureResult('Student Code cannot be empty');
             student.studentCode = v;
-            student.displayId = v;
         }
         if (typeof updates.leaderboardName === 'string') {
             const v = updates.leaderboardName.trim();

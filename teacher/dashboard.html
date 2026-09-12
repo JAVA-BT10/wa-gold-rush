@@ -223,7 +223,7 @@
             <p class="muted">
                 CSV headers: <code>TeacherEmail,TeacherName,ClassCode,Role</code><br>
                 TeacherEmail and TeacherName are required. Role: <code>teacher</code> or <code>admin</code>.<br>
-                <code>ClassCode</code> is optional (use it when you want teachers tied to a class).
+                <code>ClassCode</code> is required for <code>teacher</code> rows and optional for <code>admin</code> rows.
             </p>
             <textarea id="teacherImportInput" rows="4"
                 placeholder="TeacherEmail,TeacherName,ClassCode,Role&#10;teacher@education.wa.edu.au,Ms Smith,6B,teacher"></textarea>
@@ -246,7 +246,7 @@
                     <input id="newTeacherEmail" type="email" placeholder="teacher@education.wa.edu.au"></label>
                 <label>Teacher Name <span style="color:#c62828">*</span>
                     <input id="newTeacherName" type="text" placeholder="e.g. Ms Smith"></label>
-                <label>Class Code <span class="muted">(optional)</span>
+                <label>Class Code <span class="muted">(required for teachers)</span>
                     <input id="newTeacherClassCode" type="text" placeholder="e.g. 6B"></label>
                 <label>Role
                     <select id="newTeacherRole">
@@ -813,6 +813,12 @@
 
                 if (!email || !name) {
                     const message = 'Teacher Email and Teacher Name are required.';
+                    setStatusMessage('teacherAddMsg', 'error', message);
+                    setStatusMessage('dashboardStatus', 'error', message);
+                    return;
+                }
+                if (role === 'teacher' && !classCode) {
+                    const message = 'Class Code is required when adding a teacher.';
                     setStatusMessage('teacherAddMsg', 'error', message);
                     setStatusMessage('dashboardStatus', 'error', message);
                     return;
