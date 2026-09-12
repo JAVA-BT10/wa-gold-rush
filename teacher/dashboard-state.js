@@ -659,14 +659,10 @@ class TeacherDashboard {
             nextStudentCode = value;
         }
         if (typeof updates.name === 'string') {
-            const value = updates.name.trim();
-            if (!value) return this.failureResult('Student Name cannot be empty');
-            nextStudentName = value;
+            nextStudentName = updates.name.trim();
         }
         if (typeof updates.studentName === 'string') {
-            const value = updates.studentName.trim();
-            if (!value) return this.failureResult('Student Name cannot be empty');
-            nextStudentName = value;
+            nextStudentName = updates.studentName.trim();
         }
         if (typeof updates.email === 'string') {
             nextStudentId = updates.email.trim();
