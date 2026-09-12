@@ -481,6 +481,9 @@ class TeacherDashboard {
     }
 
     generateTeacherId() {
+        if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+            return globalThis.crypto.randomUUID();
+        }
         return 'TCH' + Date.now() + Math.random().toString(36).slice(2, 11);
     }
 
@@ -524,17 +527,23 @@ class TeacherDashboard {
     }
 
     getTeacher(id) {
-        const teacherId = String(id || '').trim();
-        if (!teacherId) return null;
-        return this._loadTeacherList().find(teacher => teacher.id === teacherId || teacher.email === teacherId) || null;
+        const lookupKey = String(id || '').trim();
+        if (!lookupKey) return null;
+        const emailLookupKey = lookupKey.toLowerCase();
+        return this._loadTeacherList().find(teacher => (
+            teacher.id === lookupKey || teacher.email === emailLookupKey
+        )) || null;
     }
 
     deleteTeacher(id) {
-        const teacherId = String(id || '').trim();
-        if (!teacherId) return { success: false, error: 'Teacher not found' };
+        const lookupKey = String(id || '').trim();
+        if (!lookupKey) return { success: false, error: 'Teacher not found' };
+        const emailLookupKey = lookupKey.toLowerCase();
 
         const teacherList = this._loadTeacherList();
-        const index = teacherList.findIndex(teacher => teacher.id === teacherId || teacher.email === teacherId);
+        const index = teacherList.findIndex(teacher => (
+            teacher.id === lookupKey || teacher.email === emailLookupKey
+        ));
         if (index === -1) return { success: false, error: 'Teacher not found' };
 
         const deletedTeacher = teacherList.splice(index, 1)[0];
