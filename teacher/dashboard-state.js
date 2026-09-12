@@ -10,10 +10,6 @@
 // Teacher access control
 // ============================================================================
 
-const FLOW_ENDPOINTS = Object.freeze({
-    loginTeacher: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/10/workflows/63479c7d2c794888b481e3d477f60136/triggers/manual/paths/invoke?api-version=1'
-});
-
 class TeacherDashboard {
     constructor() {
         this.students = [];
@@ -37,19 +33,20 @@ class TeacherDashboard {
     // =========================================================================
 
     getFlowEndpoint(flowName) {
-        return FLOW_ENDPOINTS[flowName] || '';
+        const endpoints = globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.flowEndpoints;
+        return String(endpoints?.[flowName] || '').trim();
     }
 
     normalizeClassCodeList(value) {
         if (Array.isArray(value)) {
             return value
-                .map(entry => String(entry || '').trim())
+                .map(entry => String(entry || '').trim().toUpperCase())
                 .filter(Boolean);
         }
 
         return String(value || '')
             .split(/[,\n;]+/)
-            .map(entry => entry.trim())
+            .map(entry => entry.trim().toUpperCase())
             .filter(Boolean);
     }
 
@@ -62,7 +59,7 @@ class TeacherDashboard {
             if (!parsed || typeof parsed !== 'object') return null;
 
             const teacherEmail = String(parsed.teacherEmail || '').trim().toLowerCase();
-            const classCode = String(parsed.classCode || '').trim();
+            const classCode = String(parsed.classCode || '').trim().toUpperCase();
             if (!parsed.ok || !teacherEmail || !classCode) return null;
 
             return {
@@ -85,7 +82,7 @@ class TeacherDashboard {
 
     saveTeacherSession(sessionData = {}) {
         const teacherEmail = String(sessionData.teacherEmail || '').trim().toLowerCase();
-        const classCode = String(sessionData.classCode || '').trim();
+        const classCode = String(sessionData.classCode || '').trim().toUpperCase();
         if (!teacherEmail || !classCode) {
             return this.failureResult('Missing teacher session details.');
         }
@@ -122,7 +119,7 @@ class TeacherDashboard {
         if (!session) return false;
         if (session.role.toLowerCase() === 'admin') return true;
 
-        const requestedClassCode = String(classCode || '').trim();
+        const requestedClassCode = String(classCode || '').trim().toUpperCase();
         if (!requestedClassCode) return true;
 
         const allowedClassCodes = session.classCodes.length

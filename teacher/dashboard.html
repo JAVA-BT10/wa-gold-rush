@@ -374,6 +374,7 @@
         </section>
     </div>
 
+    <script src="dashboard-config.js"></script>
     <script src="dashboard-state.js"></script>
     <script src="../shared/investment-profile.js"></script>
     <script src="checkpoint-approval.js"></script>
@@ -416,6 +417,14 @@
         function showTeacherDashboard() {
             document.body.classList.add('authorized');
             renderTeacherSessionSummary();
+        }
+
+        function clearProtectedDashboardContent() {
+            document.getElementById('classStats').textContent = 'No data yet.';
+            document.getElementById('rosterBody').innerHTML = '';
+            document.getElementById('leaderboardContent').innerHTML = '';
+            document.getElementById('teacherListBody').innerHTML = '';
+            document.getElementById('checkpointTableContainer').innerHTML = '';
         }
 
         function enforceTeacherDashboardAccess() {
@@ -1031,6 +1040,7 @@
         document.getElementById('teacherLogoutBtn').addEventListener('click', () => {
             dashboard.clearTeacherSession();
             document.body.classList.remove('authorized');
+            clearProtectedDashboardContent();
             clearStatusMessage('dashboardStatus', 'authStatusMessage');
             document.getElementById('teacherLoginForm').reset();
             document.getElementById('teacherSessionSummary').textContent = '';
