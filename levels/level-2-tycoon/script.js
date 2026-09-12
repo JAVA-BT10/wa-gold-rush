@@ -100,9 +100,9 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     try {
         gameState.loadFromLocalStorage();
+        if (!enforceCurrentLevelAccess()) return;
         gameState.assignedLevel = getAssignedLevelFromUrl();
         gameState.applyLevelConfigAdapter?.();
-        if (!enforceCurrentLevelAccess()) return;
         ensureInvestmentPlansForOwnedMines();
         hydrateIdentityInputs();
         applyCompetitionSessionToIdentity();

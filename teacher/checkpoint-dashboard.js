@@ -131,10 +131,11 @@ const CheckpointDashboard = (() => {
                     ? gs
                     : {});
             const quizAttempt = getLatestQuizAttempt(studentCode, level);
-            const quizScoreValue = progressionState?.quizScore ?? quizAttempt?.score ?? '?';
+            const quizScoreValue = progressionState?.quizScore ?? quizAttempt?.score ?? null;
+            const numericQuizScore = Number(quizScoreValue);
             const quizScore = (typeof quizScoreValue === 'string' && quizScoreValue.includes('/'))
                 ? quizScoreValue
-                : `${quizScoreValue}/5`;
+                : (Number.isFinite(numericQuizScore) ? `${numericQuizScore}/5` : '?/5');
             const approval = getApprovalStatus(studentCode, level);
             const approvalStatus = approval?.status || 'pending';
             const approvalBadge = getApprovalBadgeHTML(approvalStatus);

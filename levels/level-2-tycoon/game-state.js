@@ -15,6 +15,7 @@ class GameState {
         this.round = 1;
         this.cash = 200;
         this.gameConfig = null;
+        this.originalGameConfig = null;
         this.assignedLevel = 2;
         this.player = {
             studentCode: '',
@@ -52,7 +53,8 @@ class GameState {
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
-            this.gameConfig = await response.json();
+            this.originalGameConfig = await response.json();
+            this.gameConfig = this.cloneConfig(this.originalGameConfig);
             this.applyLevelConfigAdapter();
             this.cash = this.getPlayableStartingCash();
             return true;
@@ -69,6 +71,10 @@ class GameState {
 
     getLevelKey(level = this.assignedLevel || 2) {
         return String(this.normalizeLevel(level));
+    }
+
+    cloneConfig(config) {
+        return config ? JSON.parse(JSON.stringify(config)) : null;
     }
 
     getDefaultProgressionState() {
@@ -240,15 +246,22 @@ class GameState {
         if (!this.gameConfig || typeof this.gameConfig !== 'object') return;
 
         const levelKey = this.getLevelKey(this.assignedLevel);
-        const baseConfig = this.gameConfig;
+        const sourceConfig = this.originalGameConfig && typeof this.originalGameConfig === 'object'
+            ? this.originalGameConfig
+            : this.gameConfig;
+        const baseConfig = this.cloneConfig(sourceConfig);
+        if (!baseConfig || typeof baseConfig !== 'object') return;
         const levelConfig = baseConfig?.levels?.[levelKey] || baseConfig?.levels?.['2'];
         if (!levelConfig || typeof levelConfig !== 'object') return;
 
-        this.gameConfig.machinery = this.flattenMachinery(levelConfig, baseConfig);
-        this.gameConfig.mines = this.flattenMines(levelConfig, baseConfig);
-        this.gameConfig.mineUpgrades = this.flattenMineUpgrades(levelConfig, baseConfig);
-        this.gameConfig.digTypes = this.flattenDigTypes(levelConfig, baseConfig);
-        this.gameConfig.randomEvents = this.flattenRandomEvents(levelConfig, baseConfig);
+        this.gameConfig = {
+            ...baseConfig,
+            machinery: this.flattenMachinery(levelConfig, baseConfig),
+            mines: this.flattenMines(levelConfig, baseConfig),
+            mineUpgrades: this.flattenMineUpgrades(levelConfig, baseConfig),
+            digTypes: this.flattenDigTypes(levelConfig, baseConfig),
+            randomEvents: this.flattenRandomEvents(levelConfig, baseConfig)
+        };
         this.applyProgressionStateForAssignedLevel();
     }
 

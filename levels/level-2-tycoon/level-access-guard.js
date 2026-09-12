@@ -99,11 +99,21 @@ function showAccessDeniedModal(message) {
         box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
     `;
 
-    content.innerHTML = `
-        <h2 style="color: #c62828; margin-top: 0;">🔒 Level Locked</h2>
-        <p style="color: #333; font-size: 16px; line-height: 1.6;">${message}</p>
-        <p style="color: #666; font-size: 13px;">Redirecting to home page...</p>
-    `;
+    const heading = document.createElement('h2');
+    heading.style.cssText = 'color: #c62828; margin-top: 0;';
+    heading.textContent = '🔒 Level Locked';
+
+    const body = document.createElement('p');
+    body.style.cssText = 'color: #333; font-size: 16px; line-height: 1.6;';
+    body.textContent = message;
+
+    const redirectNotice = document.createElement('p');
+    redirectNotice.style.cssText = 'color: #666; font-size: 13px;';
+    redirectNotice.textContent = 'Redirecting to home page...';
+
+    content.appendChild(heading);
+    content.appendChild(body);
+    content.appendChild(redirectNotice);
 
     modal.appendChild(content);
     document.body.appendChild(modal);
