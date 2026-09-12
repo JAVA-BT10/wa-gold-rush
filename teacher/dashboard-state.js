@@ -640,42 +640,61 @@ class TeacherDashboard {
         const student = this.students.find(s => s.id === studentId);
         if (!student) return { success: false, error: 'Student not found' };
 
-        // Legacy + new field updates
+        const hasCodeUpdate = typeof updates.displayId === 'string' || typeof updates.studentCode === 'string';
+        const hasNameUpdate = typeof updates.name === 'string' || typeof updates.studentName === 'string';
+        const hasStudentIdUpdate = typeof updates.email === 'string' || typeof updates.studentId === 'string';
+
+        let nextStudentCode = String(student.studentCode || student.displayId || '').trim();
+        let nextStudentName = String(student.studentName || student.name || '').trim();
+        let nextStudentId = String(student.studentId || student.email || '').trim();
+
         if (typeof updates.displayId === 'string') {
-            const v = updates.displayId.trim();
-            if (v) { student.displayId = v; student.studentCode = v; }
+            const value = updates.displayId.trim();
+            if (!value) return this.failureResult('Student Code cannot be empty');
+            nextStudentCode = value;
         }
         if (typeof updates.studentCode === 'string') {
-            const v = updates.studentCode.trim();
-            if (!v) return this.failureResult('Student Code cannot be empty');
-            const shouldMirrorDisplayId = !student.displayId || student.displayId === student.studentCode;
-            student.studentCode = v;
-            if (shouldMirrorDisplayId) {
-                student.displayId = v;
+            const value = updates.studentCode.trim();
+            if (!value) return this.failureResult('Student Code cannot be empty');
+            nextStudentCode = value;
+        }
+        if (typeof updates.name === 'string') {
+            const value = updates.name.trim();
+            if (!value) return this.failureResult('Student Name cannot be empty');
+            nextStudentName = value;
+        }
+        if (typeof updates.studentName === 'string') {
+            const value = updates.studentName.trim();
+            if (!value) return this.failureResult('Student Name cannot be empty');
+            nextStudentName = value;
+        }
+        if (typeof updates.email === 'string') {
+            nextStudentId = updates.email.trim();
+        }
+        if (typeof updates.studentId === 'string') {
+            nextStudentId = updates.studentId.trim();
+        }
+
+        if (hasCodeUpdate) {
+            const previousStudentCode = String(student.studentCode || '').trim();
+            const previousDisplayId = String(student.displayId || '').trim();
+            student.studentCode = nextStudentCode;
+            if (!previousDisplayId || previousDisplayId === previousStudentCode) {
+                student.displayId = nextStudentCode;
             }
         }
         if (typeof updates.leaderboardName === 'string') {
-            const v = updates.leaderboardName.trim();
-            if (!v) return this.failureResult('Leaderboard Name cannot be empty');
-            student.leaderboardName = v;
+            const value = updates.leaderboardName.trim();
+            if (!value) return this.failureResult('Leaderboard Name cannot be empty');
+            student.leaderboardName = value;
         }
-        if (typeof updates.name === 'string') {
-            const v = updates.name.trim();
-            if (!v) return this.failureResult('Name cannot be empty');
-            student.name = v; student.studentName = v;
+        if (hasNameUpdate) {
+            student.studentName = nextStudentName;
+            student.name = nextStudentName;
         }
-        if (typeof updates.studentName === 'string') {
-            const v = updates.studentName.trim();
-            if (!v) return this.failureResult('Student Name cannot be empty');
-            student.studentName = v; student.name = v;
-        }
-        if (typeof updates.email === 'string') {
-            student.email = updates.email.trim();
-            student.studentId = updates.email.trim();
-        }
-        if (typeof updates.studentId === 'string') {
-            student.studentId = updates.studentId.trim();
-            student.email = updates.studentId.trim();
+        if (hasStudentIdUpdate) {
+            student.studentId = nextStudentId;
+            student.email = nextStudentId;
         }
         if (typeof updates.classCode === 'string') {
             student.classCode = updates.classCode.trim();
