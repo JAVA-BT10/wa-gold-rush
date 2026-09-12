@@ -57,27 +57,101 @@ const CheckpointApproval = (() => {
 
     /**
      * Sync approval to student's game state (localStorage)
-     * This updates level2_autosave with approval info
+     * This updates the matching classroom/player records with approval info.
      */
     function syncApprovalToGameState(studentCode, level, approvalRecord) {
-        try {
-            const raw = localStorage.getItem('level2_autosave');
-            if (!raw) return false;
-            const data = JSON.parse(raw);
-            if (!data.gameState) return false;
+        const levelKey = String(level);
 
-            // Update checkpoint approval status
+        function applyApprovalToGameStateContainer(gameState) {
+            if (!gameState || typeof gameState !== 'object') return false;
+
+            const progressionStateByLevel = (gameState.progressionStateByLevel && typeof gameState.progressionStateByLevel === 'object')
+                ? gameState.progressionStateByLevel
+                : {};
+            const levelState = {
+                checkpointStatus: null,
+                quizAttempts: [],
+                approvalStatus: null,
+                approverName: null,
+                approvalTimestamp: null,
+                quizScore: null,
+                quizPassedAt: null,
+                ...(progressionStateByLevel[levelKey] || {})
+            };
+
             if (approvalRecord.status === 'approved') {
-                data.gameState.approvalStatus = 'approved';
-                data.gameState.approverName = approvalRecord.approverName;
-                data.gameState.approvalTimestamp = approvalRecord.timestamp;
+                levelState.checkpointStatus = levelState.checkpointStatus || 'quiz_passed';
+                levelState.approvalStatus = 'approved';
+                levelState.approverName = approvalRecord.approverName;
+                levelState.approvalTimestamp = approvalRecord.timestamp;
+            } else if (approvalRecord.status === 'rejected') {
+                levelState.approvalStatus = 'rejected';
+                levelState.approverName = approvalRecord.approverName;
+                levelState.approvalTimestamp = approvalRecord.timestamp;
             } else if (approvalRecord.status === 'retake_requested') {
-                data.gameState.approvalStatus = null;
-                data.gameState.checkpointStatus = 'quiz_available'; // Reset to allow retake
+                levelState.approvalStatus = null;
+                levelState.approverName = approvalRecord.approverName;
+                levelState.approvalTimestamp = approvalRecord.timestamp;
+                levelState.checkpointStatus = 'quiz_available';
             }
 
-            localStorage.setItem('level2_autosave', JSON.stringify(data));
+            progressionStateByLevel[levelKey] = levelState;
+            gameState.progressionStateByLevel = progressionStateByLevel;
+            gameState.checkpointStatus = levelState.checkpointStatus;
+            gameState.quizAttempts = levelState.quizAttempts;
+            gameState.approvalStatus = levelState.approvalStatus;
+            gameState.approverName = levelState.approverName;
+            gameState.approvalTimestamp = levelState.approvalTimestamp;
+            gameState.quizScore = levelState.quizScore;
             return true;
+        }
+
+        function matchesStudent(candidate) {
+            return String(candidate || '').trim().toLowerCase() === String(studentCode || '').trim().toLowerCase();
+        }
+
+        try {
+            let updated = false;
+
+            const recordsRaw = localStorage.getItem('wa_gold_rush_class_records');
+            if (recordsRaw) {
+                const records = JSON.parse(recordsRaw);
+                if (Array.isArray(records)) {
+                    records.forEach(record => {
+                        if (matchesStudent(record.studentCode) || matchesStudent(record.studentId)) {
+                            updated = applyApprovalToGameStateContainer(record.gameState || (record.gameState = {})) || updated;
+                        }
+                    });
+                    localStorage.setItem('wa_gold_rush_class_records', JSON.stringify(records));
+                }
+            }
+
+            const dashboardRaw = localStorage.getItem('teacher_dashboard');
+            if (dashboardRaw) {
+                const dashboard = JSON.parse(dashboardRaw);
+                if (Array.isArray(dashboard?.students)) {
+                    dashboard.students.forEach(student => {
+                        if (matchesStudent(student.studentCode) || matchesStudent(student.displayId) || matchesStudent(student.id)) {
+                            updated = applyApprovalToGameStateContainer(student.gameState || (student.gameState = {})) || updated;
+                        }
+                    });
+                    localStorage.setItem('teacher_dashboard', JSON.stringify(dashboard));
+                }
+            }
+
+            const autosaveKeys = Array.from(new Set([`level${level}_autosave`, 'level2_autosave']));
+            autosaveKeys.forEach(key => {
+                const autosaveRaw = localStorage.getItem(key);
+                if (!autosaveRaw) return;
+                const autosave = JSON.parse(autosaveRaw);
+                const autosaveCode = autosave?.gameState?.player?.studentCode || autosave?.gameState?.player?.studentId || '';
+                if (matchesStudent(autosaveCode) && applyApprovalToGameStateContainer(autosave.gameState)) {
+                    localStorage.setItem(key, JSON.stringify(autosave));
+                    updated = true;
+                }
+            });
+
+            return updated;
         } catch (_) {
             return false;
         }

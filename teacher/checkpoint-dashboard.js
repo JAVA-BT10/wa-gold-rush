@@ -34,7 +34,6 @@ const CheckpointDashboard = (() => {
      * Get all students who passed checkpoint for a level
      */
     function getStudentsWithPassedCheckpoint(level) {
-        // Get all student records from localStorage
         const CLASS_RECORDS_KEY = 'wa_gold_rush_class_records';
         try {
             const raw = localStorage.getItem(CLASS_RECORDS_KEY);
@@ -42,18 +41,33 @@ const CheckpointDashboard = (() => {
             const records = JSON.parse(raw);
             if (!Array.isArray(records)) return [];
 
-            // Filter: checkpointStatus === 'quiz_passed' for the given level
             return records.filter(r => {
                 const gs = r.gameState || {};
-                // For Level 2 checkpoint (quiz in Level 2)
-                if (level === 2) {
-                    return gs.checkpointStatus === 'quiz_passed';
-                }
-                // For other levels, check if they're in the right game state
-                return false; // TODO: extend for Levels 3+
+                const progressionState = gs.progressionStateByLevel?.[String(level)]
+                    || (Number(gs.assignedLevel || r.level) === Number(level)
+                        ? {
+                            checkpointStatus: gs.checkpointStatus,
+                            approvalStatus: gs.approvalStatus,
+                            quizScore: gs.quizScore
+                        }
+                        : null);
+                return progressionState?.checkpointStatus === 'quiz_passed';
             });
         } catch (_) {
             return [];
+        }
+    }
+
+    function getLatestQuizAttempt(studentCode, level) {
+        try {
+            const raw = localStorage.getItem(`wa_gr_progression_quiz_${studentCode}_level_${level}`);
+            if (!raw) return null;
+            const data = JSON.parse(raw);
+            return Array.isArray(data?.attempts) && data.attempts.length
+                ? data.attempts[data.attempts.length - 1]
+                : null;
+        } catch (_) {
+            return null;
         }
     }
 
@@ -112,7 +126,16 @@ const CheckpointDashboard = (() => {
             const studentCode = student.studentCode || student.id;
             const leaderboardName = student.leaderboardName || student.name || 'Unknown';
             const gs = student.gameState || {};
-            const quizScore = gs.quizScore || '?/5';
+            const progressionState = gs.progressionStateByLevel?.[String(level)]
+                || (Number(gs.assignedLevel || student.level) === Number(level)
+                    ? gs
+                    : {});
+            const quizAttempt = getLatestQuizAttempt(studentCode, level);
+            const quizScoreValue = progressionState?.quizScore ?? quizAttempt?.score ?? null;
+            const numericQuizScore = Number(quizScoreValue);
+            const quizScore = (typeof quizScoreValue === 'string' && quizScoreValue.includes('/'))
+                ? quizScoreValue
+                : (Number.isFinite(numericQuizScore) ? `${numericQuizScore}/5` : '?/5');
             const approval = getApprovalStatus(studentCode, level);
             const approvalStatus = approval?.status || 'pending';
             const approvalBadge = getApprovalBadgeHTML(approvalStatus);

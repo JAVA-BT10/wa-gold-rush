@@ -64,6 +64,16 @@ function shouldRollRandomEvent() {
     return gameState.round % RANDOM_EVENT_ROLL_INTERVAL === 0;
 }
 
+function enforceCurrentLevelAccess() {
+    if (typeof LevelAccessGuard === 'undefined') return true;
+    const guard = new LevelAccessGuard(getAssignedLevelFromUrl());
+    if (!guard.isLevelAccessible()) {
+        guard.enforceAccess();
+        return false;
+    }
+    return true;
+}
+
 function resolveConfigPath() {
     const currentPath = window.location.pathname || '';
     if (currentPath.includes('/blob/') || currentPath.includes('/tree/')) {
@@ -90,6 +100,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     try {
         gameState.loadFromLocalStorage();
+        if (!enforceCurrentLevelAccess()) return;
         gameState.assignedLevel = getAssignedLevelFromUrl();
         gameState.applyLevelConfigAdapter?.();
         ensureInvestmentPlansForOwnedMines();
@@ -108,6 +119,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             gameState.reset();
             gameState.assignedLevel = getAssignedLevelFromUrl();
             gameState.applyLevelConfigAdapter?.();
+            if (!enforceCurrentLevelAccess()) return;
             ensureInvestmentPlansForOwnedMines();
             hydrateIdentityInputs();
             setupEventListeners();
@@ -206,10 +218,16 @@ function renderMineShop() {
     const shop = document.getElementById('mine-shop');
     if (!shop) return;
     const availableMines = gameState.getAvailableMinesForPurchase();
+    const mineLimitReached = gameState.getOwnedMines().length >= gameState.getMaxActiveMines();
     shop.innerHTML = '';
 
     if (availableMines.length === 0) {
         shop.innerHTML = '<p class="empty-state">All currently unlocked mines are owned.</p>';
+        return;
+    }
+
+    if (mineLimitReached) {
+        shop.innerHTML = `<p class="empty-state">You already own the maximum number of mines for Level ${gameState.assignedLevel}. Keep growing with upgrades and other assets until the next level unlocks more capacity.</p>`;
         return;
     }
 
@@ -421,6 +439,10 @@ function getNextAssignedLevel() {
     return currentLevel < 5 ? currentLevel + 1 : null;
 }
 
+function getQuizStudentCode() {
+    return String(gameState?.player?.studentCode || gameState?.player?.studentId || 'anon').trim() || 'anon';
+}
+
 function updateCheckpointQuizCopy(quiz) {
     const currentLevel = Number(gameState?.assignedLevel || 2);
     const nextLevel = getNextAssignedLevel();
@@ -533,7 +555,7 @@ function submitQuiz(quiz) {
     }
 
     const levelKey = String(gameState.assignedLevel || 2);
-    const result = ProgressionQuiz.submitQuiz(levelKey, answers);
+    const result = ProgressionQuiz.submitQuiz(levelKey, answers, getQuizStudentCode());
     if (!result?.success) {
         alert(result?.error || 'Unable to submit quiz right now.');
         return;
@@ -575,19 +597,33 @@ function displayQuizResults(result, quiz) {
         `).join('');
     }
 
+    gameState.recordQuizAttempt?.(result);
+    syncPlayerRecord();
+
     if (passed) {
-        gameState.checkpointStatus = 'quiz_passed';
+        gameState.updateProgressionState?.({
+            checkpointStatus: 'quiz_passed',
+            approvalStatus: 'pending',
+            approverName: null,
+            approvalTimestamp: null
+        });
         gameState.saveToLocalStorage();
         if (retakeBtn) retakeBtn.style.display = 'none';
         if (continueBtn) {
             continueBtn.style.display = 'block';
+            continueBtn.textContent = getNextAssignedLevel() ? 'Continue Playing (await teacher approval)' : 'Continue Playing';
             continueBtn.onclick = () => closeAllModals();
         }
     } else {
         if (retakeBtn) {
             retakeBtn.style.display = 'block';
             retakeBtn.onclick = () => {
-                gameState.checkpointStatus = 'quiz_available';
+                gameState.updateProgressionState?.({
+                    checkpointStatus: 'quiz_available',
+                    approvalStatus: null,
+                    approverName: null,
+                    approvalTimestamp: null
+                });
                 gameState.saveToLocalStorage();
                 showProgressionQuiz();
             };
@@ -1157,12 +1193,36 @@ function syncPlayerRecord() {
         investmentProfile = InvestmentProfile.getBuckets(studentCode, gameState.assignedLevel);
     }
 
+    const progressionState = gameState.getProgressionState?.(gameState.assignedLevel) || {};
+    const progressionStateByLevel = JSON.parse(JSON.stringify(gameState.progressionStateByLevel || {}));
+    const gameStateSnapshot = {
+        assignedLevel: gameState.assignedLevel,
+        round: gameState.round,
+        cash: gameState.cash,
+        netWorth: gameState.getNetWorth(),
+        ownedMines: gameState.getOwnedMines().length,
+        machinery: Array.isArray(gameState.machinery) ? gameState.machinery.length : 0,
+        totalProfitLoss: gameState.totalProfitLoss,
+        averageRoundProfit: gameState.totalProfitLoss / totalRounds,
+        strategyLabel: calculateStrategyLabel(),
+        companyName: gameState.player.companyName || DEFAULT_COMPANY_NAME,
+        investmentProfile,
+        checkpointStatus: progressionState.checkpointStatus || null,
+        approvalStatus: progressionState.approvalStatus || null,
+        approverName: progressionState.approverName || null,
+        approvalTimestamp: progressionState.approvalTimestamp || null,
+        quizScore: progressionState.quizScore ?? null,
+        quizAttempts: Array.isArray(progressionState.quizAttempts) ? progressionState.quizAttempts : [],
+        progressionStateByLevel
+    };
+
     const record = {
         playerKey,
         studentCode,
         leaderboardName,
         studentId,
         studentName,
+        companyName: gameState.player.companyName || DEFAULT_COMPANY_NAME,
         level: gameState.assignedLevel,
         round: gameState.round,
         cash: gameState.cash,
@@ -1173,6 +1233,7 @@ function syncPlayerRecord() {
         averageRoundProfit: gameState.totalProfitLoss / totalRounds,
         strategyLabel: calculateStrategyLabel(),
         investmentProfile,
+        gameState: gameStateSnapshot,
         updatedAt: new Date().toISOString()
     };
 
@@ -1268,6 +1329,7 @@ function loadGame() {
         gameState.assignedLevel = urlLevel;
     }
     gameState.applyLevelConfigAdapter?.();
+    if (!enforceCurrentLevelAccess()) return;
     ensureInvestmentPlansForOwnedMines();
     hydrateIdentityInputs();
     updateAssignedLevelBadge();

@@ -1,88 +1,72 @@
 /**
  * Level Access Guard
- * Enforces authorization gates for progression checkpoints
- * Level 2: Always accessible
- * Levels 3+: Require teacher approval of checkpoint quiz
+ * Enforces authorization gates for progression checkpoints.
  */
 
 class LevelAccessGuard {
     constructor(assignedLevel = 2) {
-        this.assignedLevel = assignedLevel;
+        this.assignedLevel = Number(assignedLevel) || 2;
     }
 
-    /**
-     * Check if level is accessible
-     * Level 2 is always open
-     * Levels 3+ require checkpoint approval
-     */
-    isLevelAccessible() {
-        if (this.assignedLevel <= 2) {
-            return true; // Level 2 and below are always open
-        }
-        return this.hasCheckpointApproval();
+    getRequiredCheckpointLevel() {
+        return this.assignedLevel > 2 ? this.assignedLevel - 1 : null;
     }
 
-    /**
-     * Load saved game state to check approval status
-     */
-    hasCheckpointApproval() {
+    getSavedProgressionState(requiredLevel) {
         try {
             const raw = localStorage.getItem('level2_autosave');
-            if (!raw) return false;
+            if (!raw) return null;
             const data = JSON.parse(raw);
-            const gs = data.gameState;
-            if (!gs) return false;
-            // Must have: quiz passed + teacher approved
-            return gs.checkpointStatus === 'quiz_passed' && gs.approvalStatus === 'approved';
+            const gs = data?.gameState;
+            if (!gs) return null;
+            const levelKey = String(requiredLevel);
+            return gs.progressionStateByLevel?.[levelKey]
+                || (String(gs.assignedLevel || '') === levelKey
+                    ? {
+                        checkpointStatus: gs.checkpointStatus,
+                        approvalStatus: gs.approvalStatus
+                    }
+                    : null);
         } catch (_) {
-            return false;
+            return null;
         }
     }
 
-    /**
-     * Get access denial message
-     */
+    isLevelAccessible() {
+        if (this.assignedLevel <= 2) {
+            return true;
+        }
+        const state = this.getSavedProgressionState(this.getRequiredCheckpointLevel());
+        return state?.checkpointStatus === 'quiz_passed' && state?.approvalStatus === 'approved';
+    }
+
     getAccessDenialReason() {
         if (this.assignedLevel <= 2) {
-            return null; // No denial
+            return null;
         }
 
-        const raw = localStorage.getItem('level2_autosave');
-        let checkpointStatus = null;
-        let approvalStatus = null;
-
-        try {
-            if (raw) {
-                const data = JSON.parse(raw);
-                const gs = data.gameState;
-                checkpointStatus = gs?.checkpointStatus;
-                approvalStatus = gs?.approvalStatus;
-            }
-        } catch (_) {}
+        const requiredLevel = this.getRequiredCheckpointLevel();
+        const state = this.getSavedProgressionState(requiredLevel);
+        const checkpointStatus = state?.checkpointStatus || null;
+        const approvalStatus = state?.approvalStatus || null;
 
         if (!checkpointStatus) {
-            return 'You must complete the progression checkpoint quiz to unlock this level. Go to Level 2 and reach the goal to take the quiz.';
+            return `You must complete the Level ${requiredLevel} progression checkpoint quiz to unlock this level.`;
         }
         if (checkpointStatus !== 'quiz_passed') {
-            return `Quiz status: ${checkpointStatus}. Please contact your teacher.`;
+            return `Level ${requiredLevel} quiz status: ${checkpointStatus}.`;
         }
         if (approvalStatus !== 'approved') {
-            return `Awaiting teacher approval. Your quiz was passed, but your teacher hasn't approved progression yet. Check the teacher dashboard.`;
+            return `Awaiting teacher approval for your Level ${requiredLevel} checkpoint.`;
         }
 
-        return null; // Should not reach here
+        return null;
     }
 
-    /**
-     * Enforce access: redirect if not allowed
-     */
     enforceAccess() {
         if (!this.isLevelAccessible()) {
             const reason = this.getAccessDenialReason();
-            const message = `Access Denied: ${reason}`;
-            // Show modal or alert
-            showAccessDeniedModal(message);
-            // Redirect to home after 3 seconds
+            showAccessDeniedModal(`Access Denied: ${reason}`);
             setTimeout(() => {
                 window.location.href = '../../index.html?error=level_locked';
             }, 3000);
@@ -90,9 +74,6 @@ class LevelAccessGuard {
     }
 }
 
-/**
- * Display access denied modal
- */
 function showAccessDeniedModal(message) {
     const modal = document.createElement('div');
     modal.style.cssText = `
@@ -107,7 +88,7 @@ function showAccessDeniedModal(message) {
         justify-content: center;
         z-index: 9999;
     `;
-    
+
     const content = document.createElement('div');
     content.style.cssText = `
         background: white;
@@ -117,27 +98,38 @@ function showAccessDeniedModal(message) {
         text-align: center;
         box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
     `;
-    
-    content.innerHTML = `
-        <h2 style="color: #c62828; margin-top: 0;">🔒 Level Locked</h2>
-        <p style="color: #333; font-size: 16px; line-height: 1.6;">${message}</p>
-        <p style="color: #666; font-size: 13px;">Redirecting to home page...</p>
-    `;
-    
+
+    const heading = document.createElement('h2');
+    heading.style.cssText = 'color: #c62828; margin-top: 0;';
+    heading.textContent = '🔒 Level Locked';
+
+    const body = document.createElement('p');
+    body.style.cssText = 'color: #333; font-size: 16px; line-height: 1.6;';
+    body.textContent = message;
+
+    const redirectNotice = document.createElement('p');
+    redirectNotice.style.cssText = 'color: #666; font-size: 13px;';
+    redirectNotice.textContent = 'Redirecting to home page...';
+
+    content.appendChild(heading);
+    content.appendChild(body);
+    content.appendChild(redirectNotice);
+
     modal.appendChild(content);
     document.body.appendChild(modal);
 }
 
-// Auto-enforce on page load if in a level
-if (typeof window !== 'undefined') {
-    window.addEventListener('DOMContentLoaded', () => {
-        // Only enforce if this is a level page (not home or dashboard)
-        const url = window.location.pathname;
-        const levelMatch = url.match(/level-(\d+)/);
-        if (levelMatch) {
-            const level = parseInt(levelMatch[1], 10);
-            const guard = new LevelAccessGuard(level);
-            guard.enforceAccess();
+function getAssignedLevelFromPageUrl() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const level = Number(params.get('level'));
+        if ([2, 3, 4, 5].includes(level)) {
+            return level;
         }
-    });
+        const pathMatch = String(window.location.pathname || '').match(/level-(\d+)/);
+        const pathLevel = Number(pathMatch?.[1]);
+        return [2, 3, 4, 5].includes(pathLevel) ? pathLevel : 2;
+    } catch (_) {
+        return 2;
+    }
 }
