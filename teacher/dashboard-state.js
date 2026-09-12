@@ -524,7 +524,9 @@ class TeacherDashboard {
         if (!lookupKey) return null;
         const emailLookupKey = lookupKey.toLowerCase();
         return this._loadTeacherList().find(teacher => (
-            teacher.id === lookupKey || teacher.email === emailLookupKey
+            teacher.id === lookupKey ||
+            teacher.id === emailLookupKey ||
+            teacher.email === emailLookupKey
         )) || null;
     }
 
@@ -535,7 +537,9 @@ class TeacherDashboard {
 
         const teacherList = this._loadTeacherList();
         const index = teacherList.findIndex(teacher => (
-            teacher.id === lookupKey || teacher.email === emailLookupKey
+            teacher.id === lookupKey ||
+            teacher.id === emailLookupKey ||
+            teacher.email === emailLookupKey
         ));
         if (index === -1) return { success: false, error: 'Teacher not found' };
 
@@ -554,10 +558,11 @@ class TeacherDashboard {
             const normalized = arr
                 .filter(item => item && typeof item === 'object')
                 .map((teacher) => {
-                    const email = String(teacher.email || '').trim().toLowerCase();
+                    const legacyId = String(teacher.id || '').trim();
+                    const email = String(teacher.email || legacyId || '').trim().toLowerCase();
                     const normalizedTeacher = {
                         ...teacher,
-                        id: email || String(teacher.id || '').trim(),
+                        id: email || legacyId,
                         email,
                         name: String(teacher.name || '').trim(),
                         classCode: String(teacher.classCode || '').trim(),
