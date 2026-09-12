@@ -123,10 +123,3 @@ function getAssignedLevelFromPageUrl() {
         return 2;
     }
 }
-
-if (typeof window !== 'undefined') {
-    window.addEventListener('DOMContentLoaded', () => {
-        const guard = new LevelAccessGuard(getAssignedLevelFromPageUrl());
-        guard.enforceAccess();
-    });
-}

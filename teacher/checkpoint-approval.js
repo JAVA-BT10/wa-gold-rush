@@ -57,18 +57,16 @@ const CheckpointApproval = (() => {
 
     /**
      * Sync approval to student's game state (localStorage)
-     * This updates level2_autosave with approval info
+     * This updates the matching classroom/player records with approval info.
      */
     function syncApprovalToGameState(studentCode, level, approvalRecord) {
-        try {
-            const raw = localStorage.getItem('level2_autosave');
-            if (!raw) return false;
-            const data = JSON.parse(raw);
-            if (!data.gameState) return false;
+        const levelKey = String(level);
 
-            const levelKey = String(level);
-            const progressionStateByLevel = (data.gameState.progressionStateByLevel && typeof data.gameState.progressionStateByLevel === 'object')
-                ? data.gameState.progressionStateByLevel
+        function applyApprovalToGameStateContainer(gameState) {
+            if (!gameState || typeof gameState !== 'object') return false;
+
+            const progressionStateByLevel = (gameState.progressionStateByLevel && typeof gameState.progressionStateByLevel === 'object')
+                ? gameState.progressionStateByLevel
                 : {};
             const levelState = {
                 checkpointStatus: null,
@@ -98,16 +96,60 @@ const CheckpointApproval = (() => {
             }
 
             progressionStateByLevel[levelKey] = levelState;
-            data.gameState.progressionStateByLevel = progressionStateByLevel;
-            data.gameState.checkpointStatus = levelState.checkpointStatus;
-            data.gameState.quizAttempts = levelState.quizAttempts;
-            data.gameState.approvalStatus = levelState.approvalStatus;
-            data.gameState.approverName = levelState.approverName;
-            data.gameState.approvalTimestamp = levelState.approvalTimestamp;
-            data.gameState.quizScore = levelState.quizScore;
-
-            localStorage.setItem('level2_autosave', JSON.stringify(data));
+            gameState.progressionStateByLevel = progressionStateByLevel;
+            gameState.checkpointStatus = levelState.checkpointStatus;
+            gameState.quizAttempts = levelState.quizAttempts;
+            gameState.approvalStatus = levelState.approvalStatus;
+            gameState.approverName = levelState.approverName;
+            gameState.approvalTimestamp = levelState.approvalTimestamp;
+            gameState.quizScore = levelState.quizScore;
             return true;
+        }
+
+        function matchesStudent(candidate) {
+            return String(candidate || '').trim().toLowerCase() === String(studentCode || '').trim().toLowerCase();
+        }
+
+        try {
+            let updated = false;
+
+            const recordsRaw = localStorage.getItem('wa_gold_rush_class_records');
+            if (recordsRaw) {
+                const records = JSON.parse(recordsRaw);
+                if (Array.isArray(records)) {
+                    records.forEach(record => {
+                        if (matchesStudent(record.studentCode) || matchesStudent(record.studentId)) {
+                            updated = applyApprovalToGameStateContainer(record.gameState || (record.gameState = {})) || updated;
+                        }
+                    });
+                    localStorage.setItem('wa_gold_rush_class_records', JSON.stringify(records));
+                }
+            }
+
+            const dashboardRaw = localStorage.getItem('teacher_dashboard');
+            if (dashboardRaw) {
+                const dashboard = JSON.parse(dashboardRaw);
+                if (Array.isArray(dashboard?.students)) {
+                    dashboard.students.forEach(student => {
+                        if (matchesStudent(student.studentCode) || matchesStudent(student.displayId) || matchesStudent(student.id)) {
+                            updated = applyApprovalToGameStateContainer(student.gameState || (student.gameState = {})) || updated;
+                        }
+                    });
+                    localStorage.setItem('teacher_dashboard', JSON.stringify(dashboard));
+                }
+            }
+
+            const autosaveRaw = localStorage.getItem('level2_autosave');
+            if (autosaveRaw) {
+                const autosave = JSON.parse(autosaveRaw);
+                const autosaveCode = autosave?.gameState?.player?.studentCode || autosave?.gameState?.player?.studentId || '';
+                if (matchesStudent(autosaveCode) && applyApprovalToGameStateContainer(autosave.gameState)) {
+                    localStorage.setItem('level2_autosave', JSON.stringify(autosave));
+                    updated = true;
+                }
+            }
+
+            return updated;
         } catch (_) {
             return false;
         }

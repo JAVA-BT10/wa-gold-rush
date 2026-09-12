@@ -64,6 +64,16 @@ function shouldRollRandomEvent() {
     return gameState.round % RANDOM_EVENT_ROLL_INTERVAL === 0;
 }
 
+function enforceCurrentLevelAccess() {
+    if (typeof LevelAccessGuard === 'undefined') return true;
+    const guard = new LevelAccessGuard(gameState?.assignedLevel || getAssignedLevelFromUrl());
+    if (!guard.isLevelAccessible()) {
+        guard.enforceAccess();
+        return false;
+    }
+    return true;
+}
+
 function resolveConfigPath() {
     const currentPath = window.location.pathname || '';
     if (currentPath.includes('/blob/') || currentPath.includes('/tree/')) {
@@ -92,6 +102,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         gameState.loadFromLocalStorage();
         gameState.assignedLevel = getAssignedLevelFromUrl();
         gameState.applyLevelConfigAdapter?.();
+        if (!enforceCurrentLevelAccess()) return;
         ensureInvestmentPlansForOwnedMines();
         hydrateIdentityInputs();
         applyCompetitionSessionToIdentity();
@@ -108,6 +119,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             gameState.reset();
             gameState.assignedLevel = getAssignedLevelFromUrl();
             gameState.applyLevelConfigAdapter?.();
+            if (!enforceCurrentLevelAccess()) return;
             ensureInvestmentPlansForOwnedMines();
             hydrateIdentityInputs();
             setupEventListeners();
@@ -1317,6 +1329,7 @@ function loadGame() {
         gameState.assignedLevel = urlLevel;
     }
     gameState.applyLevelConfigAdapter?.();
+    if (!enforceCurrentLevelAccess()) return;
     ensureInvestmentPlansForOwnedMines();
     hydrateIdentityInputs();
     updateAssignedLevelBadge();
