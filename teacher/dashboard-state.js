@@ -214,6 +214,7 @@ class TeacherDashboard {
                 updated.push(existing);
             } else {
                 const entry = {
+                    id: teacher.email,
                     email: teacher.email,
                     name: teacher.name,
                     classCode: teacher.classCode,
@@ -479,11 +480,121 @@ class TeacherDashboard {
         return this.importTeacherRows(rawTeachers, { allowAdmin: true, allowPartialUpdates: true });
     }
 
+    addTeacher(email, name, classCode, role = 'teacher') {
+        const teacherList = this._loadTeacherList();
+        const existingTeacher = teacherList.find(teacher => teacher.email === String(email || '').trim().toLowerCase());
+        const normalized = this.normalizeTeacherImportRow(
+            { teacherEmail: email, teacherName: name, classCode, role },
+            { allowAdmin: true, allowPartialUpdates: true, existingTeacher }
+        );
+
+        if (!normalized.success) {
+            return normalized;
+        }
+
+        const teacher = normalized.teacher;
+        if (existingTeacher) {
+            existingTeacher.name = teacher.name;
+            existingTeacher.classCode = teacher.classCode;
+            existingTeacher.role = teacher.role;
+            existingTeacher.updatedAt = new Date().toISOString();
+            this._saveTeacherList(teacherList);
+            return { success: true, teacher: existingTeacher, updated: true };
+        }
+
+        const entry = {
+            id: teacher.email,
+            email: teacher.email,
+            name: teacher.name,
+            classCode: teacher.classCode,
+            role: teacher.role,
+            addedAt: new Date().toISOString()
+        };
+        teacherList.push(entry);
+        this._saveTeacherList(teacherList);
+        return { success: true, teacher: entry, updated: false };
+    }
+
+    getAllTeachers() {
+        return this._loadTeacherList();
+    }
+
+    getTeacher(id) {
+        const lookupKey = String(id || '').trim();
+        if (!lookupKey) return null;
+        const emailLookupKey = lookupKey.toLowerCase();
+        return this._loadTeacherList().find((teacher) => {
+            const teacherId = String(teacher.id || '').trim();
+            return (
+                teacherId === lookupKey ||
+                teacherId.toLowerCase() === emailLookupKey ||
+                teacher.email === emailLookupKey
+            );
+        }) || null;
+    }
+
+    deleteTeacher(id) {
+        const lookupKey = String(id || '').trim();
+        if (!lookupKey) return { success: false, error: 'Teacher not found' };
+        const emailLookupKey = lookupKey.toLowerCase();
+
+        const teacherList = this._loadTeacherList();
+        const index = teacherList.findIndex((teacher) => {
+            const teacherId = String(teacher.id || '').trim();
+            return (
+                teacherId === lookupKey ||
+                teacherId.toLowerCase() === emailLookupKey ||
+                teacher.email === emailLookupKey
+            );
+        });
+        if (index === -1) return { success: false, error: 'Teacher not found' };
+
+        const deletedTeacher = teacherList.splice(index, 1)[0];
+        this._saveTeacherList(teacherList);
+        return { success: true, teacher: deletedTeacher };
+    }
+
     _loadTeacherList() {
         try {
             const raw = localStorage.getItem('wa_gold_rush_teacher_list');
             const arr = JSON.parse(raw);
-            return Array.isArray(arr) ? arr : [];
+            if (!Array.isArray(arr)) return [];
+
+            let changed = false;
+            const normalized = arr
+                .filter(item => item && typeof item === 'object')
+                .map((teacher) => {
+                    const legacyId = String(teacher.id || '').trim();
+                    const email = String(teacher.email || legacyId || '').trim().toLowerCase();
+                    const normalizedTeacher = {
+                        ...teacher,
+                        id: legacyId || email,
+                        email,
+                        name: String(teacher.name || '').trim(),
+                        classCode: String(teacher.classCode || '').trim(),
+                        role: String(teacher.role || 'teacher').trim().toLowerCase() || 'teacher'
+                    };
+
+                    if (
+                        normalizedTeacher.id !== teacher.id ||
+                        normalizedTeacher.email !== teacher.email ||
+                        normalizedTeacher.name !== teacher.name ||
+                        normalizedTeacher.classCode !== teacher.classCode ||
+                        normalizedTeacher.role !== teacher.role
+                    ) {
+                        changed = true;
+                    }
+
+                    return normalizedTeacher;
+                });
+
+            if (normalized.length !== arr.length) {
+                changed = true;
+            }
+            if (changed) {
+                this._saveTeacherList(normalized);
+            }
+            return normalized;
         } catch (_) { return []; }
     }
 
