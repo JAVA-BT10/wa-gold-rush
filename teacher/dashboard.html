@@ -101,7 +101,7 @@
     <div id="authRequiredMessage" role="alert"></div>
 
     <div class="container">
-        <div id="dashboardStatus" class="status-message status-banner" role="status" aria-live="polite"></div>
+        <div id="dashboardStatus" class="status-message status-banner" role="status" aria-live="polite" aria-hidden="true"></div>
         <h1>👨‍🏫 Goldfields Goldrush W.A. — Teacher Dashboard</h1>
         <p class="muted">Manage local teacher and student records, import rosters, and monitor classroom progress with clearer feedback on every action.</p>
         <p><a href="../index.html">← Back to Home</a></p>
@@ -408,6 +408,7 @@
             el.className = `status-message${extraClass} ${appliedTone} is-visible`;
             el.setAttribute('role', isError ? 'alert' : 'status');
             el.setAttribute('aria-live', isError ? 'assertive' : 'polite');
+            el.setAttribute('aria-hidden', 'false');
             el.innerHTML = `${escHtml(message)}${detailHtml}`;
         }
 
@@ -420,6 +421,7 @@
                     : 'status-message';
                 el.setAttribute('role', 'status');
                 el.setAttribute('aria-live', 'polite');
+                el.setAttribute('aria-hidden', 'true');
                 el.innerHTML = '';
             });
         }
@@ -857,9 +859,10 @@
         document.getElementById('teacherListBody').addEventListener('click', (e) => {
             const target = e.target;
             if (!(target instanceof HTMLElement)) return;
-            if (target.getAttribute('data-action') !== 'delete-teacher') return;
+            const actionButton = target.closest('[data-action="delete-teacher"]');
+            if (!(actionButton instanceof HTMLElement)) return;
 
-            const teacherId = target.getAttribute('data-id');
+            const teacherId = actionButton.getAttribute('data-id');
             const teacher = dashboard.getTeacher(teacherId);
             if (!confirm(`Delete ${describeTeacher(teacher)}? Cannot be undone.`)) return;
 
