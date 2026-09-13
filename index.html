@@ -263,6 +263,7 @@
             <h2>👨‍🏫 Teachers & Administrators</h2>
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
             <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard">📊 Teacher Dashboard</button>
+            <p id="teacherDashboardAccessHelp" class="level-description" style="display: none; margin: 12px 0 0;" role="status" aria-live="polite"></p>
         </div>
     </div>
 
@@ -514,9 +515,19 @@
             return true;
         }
 
+        function showTeacherDashboardSigninPrompt() {
+            const help = document.getElementById('teacherDashboardAccessHelp');
+            if (!help) return;
+            help.innerHTML = 'No saved teacher/admin session was found in this browser. <a href="teacher/dashboard.html">Open teacher sign-in</a>.';
+            help.style.display = 'block';
+        }
+
         function openTeacherDashboard() {
-            setTeacherDashboardAccess();
-            window.location.href = 'teacher/dashboard.html';
+            if (setTeacherDashboardAccess()) {
+                window.location.href = 'teacher/dashboard.html';
+                return;
+            }
+            showTeacherDashboardSigninPrompt();
         }
 
         // Initialize on page load
