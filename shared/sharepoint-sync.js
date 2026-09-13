@@ -19,7 +19,7 @@ const SharePointSync = (() => {
         // URL for the "upsert level progress/result" Power Automate HTTP flow
         progressEndpoint: '',  // e.g. 'https://prod-XX.australiasoutheast.logic.azure.com/...'
         // Shared secret sent as X-GGR-Key header — set after creating flows
-        apiKey: '',
+        apiKey: 'MySuperSecretKey2026',
         // Maximum number of queued retries kept in localStorage
         maxQueueSize: 50,
         // Retry interval in milliseconds
@@ -53,13 +53,16 @@ const SharePointSync = (() => {
 
     async function _post(url, payload) {
         const buildHeaders = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.buildHeaders;
+        const apiKey = String(CONFIG.apiKey || '').trim();
         const headers = typeof buildHeaders === 'function'
-            ? buildHeaders(CONFIG.apiKey ? { 'X-GGR-Key': CONFIG.apiKey } : {})
+            ? buildHeaders(apiKey ? { 'X-GGR-Key': apiKey } : {})
             : {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json',
-                'X-GGR-Key': String(CONFIG.apiKey || 'MySuperSecretKey2026').trim()
+                'Accept': 'application/json'
             };
+        if (!buildHeaders && apiKey) {
+            headers['X-GGR-Key'] = apiKey;
+        }
         const response = await fetch(url, {
             method: 'POST',
             headers,
