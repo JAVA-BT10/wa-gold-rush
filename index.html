@@ -465,7 +465,7 @@
             try {
                 const session = JSON.parse(raw);
                 if (!session || typeof session !== 'object') return null;
-                const role = String(session.role || 'teacher').trim().toLowerCase() || 'teacher';
+                const role = String(session.role || '').trim().toLowerCase();
                 if (!TEACHER_DASHBOARD_ALLOWED_ROLES.has(role)) return null;
                 const classCode = String(session.classCode || '').trim().toUpperCase();
                 if (!session.ok || !session.teacherEmail || !session.authenticatedAt) return null;
@@ -570,13 +570,21 @@
                 return false;
             }
             hideTeacherDashboardSigninPrompt();
-            const writtenKeys = [];
+            const previousValues = new Map();
             for (const [key, value] of getTeacherDashboardBootstrapEntries(teacherSession)) {
+                if (!previousValues.has(key)) {
+                    previousValues.set(key, getStorageValue(sessionStorage, key));
+                }
                 if (!setStorageValue(sessionStorage, key, value)) {
-                    writtenKeys.forEach(writtenKey => removeStorageValue(sessionStorage, writtenKey));
+                    previousValues.forEach((previousValue, previousKey) => {
+                        if (previousValue == null) {
+                            removeStorageValue(sessionStorage, previousKey);
+                            return;
+                        }
+                        setStorageValue(sessionStorage, previousKey, previousValue);
+                    });
                     return false;
                 }
-                writtenKeys.push(key);
             }
             return true;
         }
