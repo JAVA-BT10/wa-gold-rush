@@ -176,7 +176,7 @@ Edit `shared/sharepoint-sync.js` and set the `CONFIG` object at the top of the f
 const CONFIG = {
     profileEndpoint:  'https://prod-XX.australiasoutheast.logic.azure.com/...',  // student upsert flow
     progressEndpoint: 'https://prod-XX.australiasoutheast.logic.azure.com/...',  // level result flow
-    gameKey: 'your-shared-secret',  // sent as X-Game-Key header
+    apiKey: 'your-shared-secret',  // sent as X-GGR-Key header
 };
 ```
 

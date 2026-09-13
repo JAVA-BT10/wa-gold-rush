@@ -150,12 +150,16 @@ class TeacherDashboard {
 
         let response;
         try {
+            const buildHeaders = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.buildHeaders;
             response = await fetchImpl(endpoint, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                },
+                headers: typeof buildHeaders === 'function'
+                    ? buildHeaders()
+                    : {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-GGR-Key': String(globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey || 'MySuperSecretKey2026').trim()
+                    },
                 cache: 'no-store',
                 body: JSON.stringify({ teacherEmail, classCode })
             });
