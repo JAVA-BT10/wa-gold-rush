@@ -263,7 +263,7 @@
             <h2>👨‍🏫 Teachers & Administrators</h2>
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
             <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-describedby="teacherDashboardBtnHint" aria-controls="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
-            <span id="teacherDashboardBtnHint" style="position: absolute; left: -9999px;">Requires an active teacher or admin session. If none is active, sign-in help will appear.</span>
+            <span id="teacherDashboardBtnHint" style="position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;">Requires an active teacher or admin session. If none is active, sign-in help will appear.</span>
             <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" aria-live="polite" aria-atomic="true" hidden></div>
         </div>
     </div>
@@ -517,7 +517,6 @@
             const sessionValue = JSON.stringify(teacherSession);
             const isAdmin = teacherSession.role === 'admin';
             const isTeacher = teacherSession.role === 'teacher';
-            const hasDashboardAccess = isTeacher || isAdmin;
             return [
                 ['teacher_dashboard_role', teacherSession.role],
                 ['teacherDashboardRole', teacherSession.role],
@@ -525,10 +524,10 @@
                 ['teacherRole', teacherSession.role],
                 ['userRole', teacherSession.role],
                 ['role', teacherSession.role],
-                ['isTeacherAuthenticated', String(hasDashboardAccess)],
-                ['teacherAuthenticated', String(hasDashboardAccess)],
-                ['isTeacherAuth', String(hasDashboardAccess)],
-                ['isTeacher', String(hasDashboardAccess)],
+                ['isTeacherAuthenticated', String(isTeacher)],
+                ['teacherAuthenticated', String(isTeacher)],
+                ['isTeacherAuth', String(isTeacher)],
+                ['isTeacher', String(isTeacher)],
                 ['teacherAccess', teacherSession.role],
                 ['isAdmin', String(isAdmin)],
                 ['adminAuthenticated', String(isAdmin)],
