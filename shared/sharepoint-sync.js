@@ -19,7 +19,7 @@ const SharePointSync = (() => {
         // URL for the "upsert level progress/result" Power Automate HTTP flow
         progressEndpoint: '',  // e.g. 'https://prod-XX.australiasoutheast.logic.azure.com/...'
         // Shared secret sent as X-GGR-Key header — set after creating flows
-        apiKey: 'MySuperSecretKey2026',
+        apiKey: '',
         // Maximum number of queued retries kept in localStorage
         maxQueueSize: 50,
         // Retry interval in milliseconds
