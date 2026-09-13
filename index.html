@@ -570,7 +570,7 @@
             }
         }
 
-        function restoreStorageSnapshot(storage, previousValues) {
+        function restoreStorageSnapshot(storage, previousValues, createdKeys = new Set()) {
             let restoredAll = true;
             previousValues.forEach((previousValue, previousKey) => {
                 if (previousValue == null) {
@@ -585,11 +585,9 @@
             });
 
             if (!restoredAll) {
-                previousValues.forEach((previousValue, previousKey) => {
-                    if (previousValue == null) {
-                        if (!removeStorageValue(storage, previousKey)) {
-                            restoredAll = false;
-                        }
+                createdKeys.forEach((createdKey) => {
+                    if (!removeStorageValue(storage, createdKey)) {
+                        restoredAll = false;
                     }
                 });
             }
@@ -616,20 +614,28 @@
         function setTeacherDashboardAccess() {
             const teacherSession = buildTeacherDashboardSession();
             if (!teacherSession) {
-                return false;
+                return { success: false, reason: 'missing_session' };
             }
             const previousValues = new Map();
+            const createdKeys = new Set();
             for (const [key, value] of getTeacherDashboardBootstrapEntries(teacherSession)) {
                 if (!previousValues.has(key)) {
-                    previousValues.set(key, getStorageValue(sessionStorage, key));
+                    const previousValue = getStorageValue(sessionStorage, key);
+                    previousValues.set(key, previousValue);
+                    if (previousValue == null) {
+                        createdKeys.add(key);
+                    }
                 }
                 if (!setStorageValue(sessionStorage, key, value)) {
-                    restoreStorageSnapshot(sessionStorage, previousValues);
-                    return false;
+                    const restored = restoreStorageSnapshot(sessionStorage, previousValues, createdKeys);
+                    return {
+                        success: false,
+                        reason: restored ? 'storage_failed' : 'storage_restore_failed'
+                    };
                 }
             }
             hideTeacherDashboardSigninPrompt();
-            return true;
+            return { success: true };
         }
 
         function showTeacherDashboardSigninPrompt() {
@@ -658,12 +664,43 @@
             }
         }
 
+        function showTeacherDashboardStoragePrompt() {
+            const help = document.getElementById('teacherDashboardAccessHelp');
+            const status = document.getElementById('teacherDashboardAccessStatus');
+            const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
+            if (!help) return;
+            clearTeacherDashboardSigninPromptContent(help);
+            if (status) {
+                status.textContent = 'Teacher dashboard access could not be prepared in this browser session. Please sign in again.';
+            }
+            help.appendChild(document.createTextNode('Teacher dashboard access could not be prepared in this browser session. '));
+            const signInLink = document.createElement('a');
+            signInLink.href = getTeacherDashboardUrl(true);
+            signInLink.textContent = 'Open teacher dashboard sign-in';
+            signInLink.setAttribute('aria-label', 'Open teacher dashboard sign-in page');
+            help.appendChild(signInLink);
+            help.appendChild(document.createTextNode('.'));
+            help.hidden = false;
+            if (teacherDashboardBtn) {
+                teacherDashboardBtn.setAttribute('aria-expanded', 'true');
+                teacherDashboardBtn.setAttribute('aria-describedby', 'teacherDashboardBtnHint teacherDashboardAccessHelp');
+            }
+            if (typeof signInLink.focus === 'function') {
+                signInLink.focus();
+            }
+        }
+
         function openTeacherDashboard() {
-            if (setTeacherDashboardAccess()) {
+            const result = setTeacherDashboardAccess();
+            if (result.success) {
                 window.location.href = getTeacherDashboardUrl();
                 return;
             }
-            showTeacherDashboardSigninPrompt();
+            if (result.reason === 'missing_session') {
+                showTeacherDashboardSigninPrompt();
+                return;
+            }
+            showTeacherDashboardStoragePrompt();
         }
 
         // Initialize on page load
