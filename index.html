@@ -276,7 +276,8 @@
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
             <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-describedby="teacherDashboardBtnHint" aria-controls="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
             <span id="teacherDashboardBtnHint" class="sr-only">Requires an active teacher or admin session. If none is active, sign-in help will appear.</span>
-            <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+            <div id="teacherDashboardAccessStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+            <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" hidden></div>
         </div>
     </div>
 
@@ -597,10 +598,14 @@
 
         function hideTeacherDashboardSigninPrompt() {
             const help = document.getElementById('teacherDashboardAccessHelp');
+            const status = document.getElementById('teacherDashboardAccessStatus');
             const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
             if (help) {
                 clearTeacherDashboardSigninPromptContent(help);
                 help.hidden = true;
+            }
+            if (status) {
+                status.textContent = '';
             }
             if (teacherDashboardBtn) {
                 teacherDashboardBtn.setAttribute('aria-expanded', 'false');
@@ -629,9 +634,13 @@
 
         function showTeacherDashboardSigninPrompt() {
             const help = document.getElementById('teacherDashboardAccessHelp');
+            const status = document.getElementById('teacherDashboardAccessStatus');
             const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
             if (!help) return;
             clearTeacherDashboardSigninPromptContent(help);
+            if (status) {
+                status.textContent = 'No saved teacher/admin session was found in this browser. Teacher dashboard sign-in help is now available.';
+            }
             help.appendChild(document.createTextNode('No saved teacher/admin session was found in this browser. '));
             const signInLink = document.createElement('a');
             signInLink.href = getTeacherDashboardUrl(true);
