@@ -580,7 +580,11 @@
             });
 
             if (!restoredAll) {
-                previousValues.forEach((_, previousKey) => removeStorageValue(storage, previousKey));
+                previousValues.forEach((previousValue, previousKey) => {
+                    if (previousValue == null) {
+                        removeStorageValue(storage, previousKey);
+                    }
+                });
             }
             return restoredAll;
         }
