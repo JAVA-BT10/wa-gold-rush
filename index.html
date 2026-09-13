@@ -475,7 +475,7 @@
                     classCode: normalizedClassCode,
                     classCodes: normalizedClassCodes.length ? normalizedClassCodes : [normalizedClassCode],
                     role,
-                    authenticatedAt: String(session.authenticatedAt || new Date().toISOString()).trim()
+                    authenticatedAt: String(session.authenticatedAt).trim()
                 };
             } catch (_) {
                 return null;
@@ -508,7 +508,7 @@
                 ['teacherAuthenticated', String(hasDashboardAccess)],
                 ['isTeacherAuth', String(hasDashboardAccess)],
                 ['isTeacher', String(hasDashboardAccess)],
-                ['teacherAccess', 'granted'],
+                ['teacherAccess', teacherSession.role],
                 ['isAdmin', String(isAdmin)],
                 ['adminAuthenticated', String(isAdmin)],
                 ['teacherEmail', teacherSession.teacherEmail],
@@ -564,7 +564,8 @@
             help.textContent = 'No saved teacher/admin session was found in this browser. ';
             const signInLink = document.createElement('a');
             signInLink.href = TEACHER_DASHBOARD_SIGNIN_URL;
-            signInLink.textContent = 'Open teacher sign-in';
+            signInLink.textContent = 'Open teacher dashboard sign-in';
+            signInLink.setAttribute('aria-label', 'Open teacher dashboard sign-in page');
             help.appendChild(signInLink);
             help.appendChild(document.createTextNode('.'));
             help.hidden = false;
