@@ -263,7 +263,7 @@
             <h2>👨‍🏫 Teachers & Administrators</h2>
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
             <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-controls="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
-            <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" hidden></div>
+            <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" aria-live="polite" aria-atomic="true" hidden></div>
         </div>
     </div>
 
@@ -473,18 +473,18 @@
                 if (!session || typeof session !== 'object') return null;
                 const role = String(session.role || '').trim().toLowerCase();
                 if (!TEACHER_DASHBOARD_ALLOWED_ROLES.has(role)) return null;
-                const classCode = String(session.classCode || '').trim().toUpperCase();
+                const storedClassCode = String(session.classCode || '').trim().toUpperCase();
                 if (!session.ok || !session.teacherEmail || !session.authenticatedAt) return null;
-                if (!classCode && role !== 'admin') return null;
-                const normalizedClassCode = classCode || 'ADMIN';
                 const classCodes = Array.isArray(session.classCodes)
                     ? session.classCodes
-                    : [normalizedClassCode];
+                    : [storedClassCode];
                 const normalizedClassCodes = classCodes
                     .map(code => String(code || '').trim().toUpperCase())
                     .filter(Boolean);
+                const normalizedClassCode = storedClassCode || normalizedClassCodes[0] || (role === 'admin' ? 'ADMIN' : '');
+                if (!normalizedClassCode) return null;
                 const resolvedClassCodes = normalizedClassCodes.length ? normalizedClassCodes : [normalizedClassCode];
-                if (role === 'admin' && !resolvedClassCodes.includes(normalizedClassCode)) {
+                if (!resolvedClassCodes.includes(normalizedClassCode)) {
                     resolvedClassCodes.unshift(normalizedClassCode);
                 }
                 return {
@@ -600,12 +600,7 @@
             const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
             if (!help) return;
             clearTeacherDashboardSigninPromptContent(help);
-            const statusMessage = document.createElement('span');
-            statusMessage.setAttribute('role', 'status');
-            statusMessage.setAttribute('aria-live', 'polite');
-            statusMessage.setAttribute('aria-atomic', 'true');
-            statusMessage.textContent = 'No saved teacher/admin session was found in this browser. ';
-            help.appendChild(statusMessage);
+            help.appendChild(document.createTextNode('No saved teacher/admin session was found in this browser. '));
             const signInLink = document.createElement('a');
             signInLink.href = getTeacherDashboardUrl(true);
             signInLink.textContent = 'Open teacher dashboard sign-in';
