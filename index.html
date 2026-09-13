@@ -276,7 +276,7 @@
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
             <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-describedby="teacherDashboardBtnHint" aria-controls="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
             <span id="teacherDashboardBtnHint" class="sr-only">Requires an active teacher or admin session. If none is active, sign-in help will appear.</span>
-            <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" aria-live="polite" aria-atomic="true" hidden></div>
+            <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" role="status" aria-live="polite" aria-atomic="true" hidden></div>
         </div>
     </div>
 
@@ -476,7 +476,9 @@
         function removeStorageValue(storage, key) {
             try {
                 storage.removeItem(key);
+                return true;
             } catch (_) {}
+            return false;
         }
 
         function parseStoredSession(raw) {
@@ -571,7 +573,9 @@
             let restoredAll = true;
             previousValues.forEach((previousValue, previousKey) => {
                 if (previousValue == null) {
-                    removeStorageValue(storage, previousKey);
+                    if (!removeStorageValue(storage, previousKey)) {
+                        restoredAll = false;
+                    }
                     return;
                 }
                 if (!setStorageValue(storage, previousKey, previousValue)) {
@@ -582,7 +586,9 @@
             if (!restoredAll) {
                 previousValues.forEach((previousValue, previousKey) => {
                     if (previousValue == null) {
-                        removeStorageValue(storage, previousKey);
+                        if (!removeStorageValue(storage, previousKey)) {
+                            restoredAll = false;
+                        }
                     }
                 });
             }
