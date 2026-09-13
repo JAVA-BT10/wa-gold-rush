@@ -263,7 +263,7 @@
             <h2>👨‍🏫 Teachers & Administrators</h2>
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
             <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-controls="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
-            <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" aria-live="polite" aria-atomic="true" hidden></div>
+            <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" hidden></div>
         </div>
     </div>
 
@@ -600,7 +600,12 @@
             const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
             if (!help) return;
             clearTeacherDashboardSigninPromptContent(help);
-            help.textContent = 'No saved teacher/admin session was found in this browser. ';
+            const statusMessage = document.createElement('span');
+            statusMessage.setAttribute('role', 'status');
+            statusMessage.setAttribute('aria-live', 'polite');
+            statusMessage.setAttribute('aria-atomic', 'true');
+            statusMessage.textContent = 'No saved teacher/admin session was found in this browser. ';
+            help.appendChild(statusMessage);
             const signInLink = document.createElement('a');
             signInLink.href = getTeacherDashboardUrl(true);
             signInLink.textContent = 'Open teacher dashboard sign-in';
