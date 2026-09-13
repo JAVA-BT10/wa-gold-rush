@@ -262,7 +262,8 @@
         <div class="admin-section">
             <h2>👨‍🏫 Teachers & Administrators</h2>
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
-            <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-controls="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
+            <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-describedby="teacherDashboardBtnHint" aria-controls="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
+            <span id="teacherDashboardBtnHint" style="position: absolute; left: -9999px;">Requires an active teacher or admin session. If none is active, sign-in help will appear.</span>
             <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" aria-live="polite" aria-atomic="true" hidden></div>
         </div>
     </div>
@@ -564,9 +565,7 @@
             }
             if (teacherDashboardBtn) {
                 teacherDashboardBtn.setAttribute('aria-expanded', 'false');
-                if (typeof teacherDashboardBtn.removeAttribute === 'function') {
-                    teacherDashboardBtn.removeAttribute('aria-describedby');
-                }
+                teacherDashboardBtn.setAttribute('aria-describedby', 'teacherDashboardBtnHint');
             }
         }
 
@@ -610,7 +609,7 @@
             help.hidden = false;
             if (teacherDashboardBtn) {
                 teacherDashboardBtn.setAttribute('aria-expanded', 'true');
-                teacherDashboardBtn.setAttribute('aria-describedby', 'teacherDashboardAccessHelp');
+                teacherDashboardBtn.setAttribute('aria-describedby', 'teacherDashboardBtnHint teacherDashboardAccessHelp');
             }
             if (typeof signInLink.focus === 'function') {
                 signInLink.focus();
