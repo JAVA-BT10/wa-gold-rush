@@ -386,9 +386,6 @@
         const STRICT_MODE_KEY   = 'wa_gold_rush_strict_mode';
         const dashboard = new TeacherDashboard();
 
-        // =====================================================================
-        // Access control
-        // =====================================================================
         function describeAuthorizedClasses(session) {
             if (!session) return '';
             const classCodes = Array.isArray(session.classCodes) && session.classCodes.length
@@ -476,9 +473,6 @@
             return true;
         }
 
-        // =====================================================================
-        // Utilities
-        // =====================================================================
         function escHtml(str) {
             return String(str)
                 .replace(/&/g, '&amp;')
@@ -584,9 +578,6 @@
             dashboard.saveToLocalStorage();
         }
 
-        // =====================================================================
-        // Status panels
-        // =====================================================================
         function renderPauseStatus() {
             let paused = false;
             try { paused = !!JSON.parse(localStorage.getItem(PAUSE_STATE_KEY))?.paused; } catch (_) {}
@@ -607,9 +598,6 @@
                 : 'Competition lock is OFF. Competition features remain open.';
         }
 
-        // =====================================================================
-        // Stats
-        // =====================================================================
         function renderStats() {
             syncFromRecords();
             const stats = withAuthorizedStudents(() => dashboard.calculateClassStats());
@@ -632,9 +620,6 @@
             `;
         }
 
-        // =====================================================================
-        // Per-Level Leaderboard
-        // =====================================================================
         let _activeLeaderboardLevel = 2;
 
         function renderLeaderboardForLevel(level) {
@@ -680,21 +665,11 @@
 
             content.innerHTML = html;
 
-            // Update tab highlight
             document.querySelectorAll('.tab-btn').forEach(btn => {
                 btn.classList.toggle('active', Number(btn.dataset.level) === _activeLeaderboardLevel);
             });
         }
 
-        document.getElementById('leaderboardTabs').addEventListener('click', e => {
-            if (e.target.classList.contains('tab-btn')) {
-                renderLeaderboardForLevel(Number(e.target.dataset.level));
-            }
-        });
-
-        // =====================================================================
-        // Roster
-        // =====================================================================
         function renderRoster() {
             const body = document.getElementById('rosterBody');
             const students = getAuthorizedStudents();
@@ -790,9 +765,6 @@
             if (action === 'delete') deleteRosterRow(sid);
         });
 
-        // =====================================================================
-        // Add student
-        // =====================================================================
         document.getElementById('addStudentBtn').addEventListener('click', () => {
             withBusyButton('addStudentBtn', 'Adding…', () => {
                 const studentCode     = document.getElementById('studentCode').value.trim();
@@ -840,9 +812,6 @@
             });
         });
 
-        // =====================================================================
-        // Bulk Import
-        // =====================================================================
         document.getElementById('importBtn').addEventListener('click', () => {
             withBusyButton('importBtn', 'Importing…', () => {
                 const format = document.getElementById('importFormat').value;
@@ -892,9 +861,6 @@
             });
         });
 
-        // =====================================================================
-        // Teacher Import
-        // =====================================================================
         document.getElementById('teacherImportBtn').addEventListener('click', () => {
             withBusyButton('teacherImportBtn', 'Importing…', () => {
                 const input = document.getElementById('teacherImportInput').value.trim();
@@ -917,9 +883,6 @@
             });
         });
 
-        // =====================================================================
-        // Add Teacher
-        // =====================================================================
         document.getElementById('addTeacherBtn').addEventListener('click', () => {
             withBusyButton('addTeacherBtn', 'Saving…', () => {
                 const email = document.getElementById('newTeacherEmail').value.trim();
@@ -1001,44 +964,21 @@
             refreshTeachers();
         });
 
-        // =====================================================================
-        // Class Control Buttons
-        // =====================================================================
         document.getElementById('pauseClassBtn').addEventListener('click', () => {
-            localStorage.setItem(PAUSE_STATE_KEY, JSON.stringify({ paused: true, at: new Date().toISOString() }));
+            localStorage.setItem(PAUSE_STATE_KEY, JSON.stringify({ paused: true }));
             renderPauseStatus();
-            setStatusMessage('dashboardStatus', 'info', 'Gameplay paused for all students.');
         });
-
         document.getElementById('resumeClassBtn').addEventListener('click', () => {
-            localStorage.removeItem(PAUSE_STATE_KEY);
+            localStorage.setItem(PAUSE_STATE_KEY, JSON.stringify({ paused: false }));
             renderPauseStatus();
-            setStatusMessage('dashboardStatus', 'success', 'Gameplay resumed for all students.');
         });
-
         document.getElementById('strictModeToggle').addEventListener('change', (e) => {
-            if (e.target.checked) {
-                localStorage.setItem(STRICT_MODE_KEY, JSON.stringify({ enabled: true }));
-            } else {
-                localStorage.removeItem(STRICT_MODE_KEY);
-            }
+            localStorage.setItem(STRICT_MODE_KEY, JSON.stringify({ enabled: e.target.checked }));
             renderStrictModeStatus();
         });
-
-        document.getElementById('refreshBtn').addEventListener('click', () => {
-            refresh();
-            setStatusMessage('dashboardStatus', 'success', 'Dashboard stats and rosters refreshed.');
-        });
-
-        // =====================================================================
-        // Export CSV
-        // =====================================================================
+        document.getElementById('refreshBtn').addEventListener('click', () => refresh());
         document.getElementById('exportCsvBtn').addEventListener('click', () => {
-            const students = getAuthorizedStudents();
-            let csv = 'StudentCode,LeaderboardName,StudentName,StudentID,ClassCode,Level,NetWorth,Round,LastPlayed\n';
-            students.forEach(s => {
-                csv += `"${(s.studentCode || '').replace(/"/g, '""')}","${(s.leaderboardName || '').replace(/"/g, '""')}","${(s.studentName || '').replace(/"/g, '""')}","${(s.studentId || '').replace(/"/g, '""')}","${(s.classCode || '').replace(/"/g, '""')}",${s.level || 1},$${(s.gameState?.netWorth || 0).toFixed(2)},${s.gameState?.round || 1},"${(s.gameState?.lastPlayed || '').replace(/"/g, '""')}"\n`;
-            });
+            const csv = dashboard.exportAsCSV();
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1048,9 +988,6 @@
             URL.revokeObjectURL(url);
         });
 
-        // =====================================================================
-        // Initialize
-        // =====================================================================
         function refresh() {
             renderStats();
             renderRoster();
