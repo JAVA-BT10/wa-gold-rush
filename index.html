@@ -262,7 +262,7 @@
         <div class="admin-section">
             <h2>👨‍🏫 Teachers & Administrators</h2>
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
-            <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard">📊 Teacher Dashboard</button>
+            <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-describedby="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
             <p id="teacherDashboardAccessHelp" class="level-description" style="display: none; margin: 12px 0 0;" role="status" aria-live="polite"></p>
         </div>
     </div>
@@ -449,7 +449,7 @@
             try {
                 const session = JSON.parse(raw);
                 if (!session || typeof session !== 'object') return null;
-                if (!session.teacherEmail || !session.classCode) return null;
+                if (!session.ok || !session.teacherEmail || !session.classCode || !session.authenticatedAt) return null;
                 const classCodes = Array.isArray(session.classCodes)
                     ? session.classCodes
                     : [session.classCode];
@@ -475,9 +475,6 @@
                 getStorageValue(sessionStorage, 'wa_gold_rush_teacher_session')
                 || getStorageValue(sessionStorage, 'teacherSession')
                 || getStorageValue(sessionStorage, 'teacher_session')
-                || getStorageValue(localStorage, 'wa_gold_rush_teacher_session')
-                || getStorageValue(localStorage, 'teacherSession')
-                || getStorageValue(localStorage, 'teacher_session')
             );
             return existingSession || null;
         }
@@ -519,6 +516,7 @@
 
         function showTeacherDashboardSigninPrompt() {
             const help = document.getElementById('teacherDashboardAccessHelp');
+            const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
             if (!help) return;
             if (typeof help.replaceChildren === 'function') {
                 help.replaceChildren();
@@ -532,6 +530,9 @@
             help.appendChild(signInLink);
             help.appendChild(document.createTextNode('.'));
             help.style.display = 'block';
+            if (teacherDashboardBtn) {
+                teacherDashboardBtn.setAttribute('aria-expanded', 'true');
+            }
             if (typeof signInLink.focus === 'function') {
                 signInLink.focus();
             }
