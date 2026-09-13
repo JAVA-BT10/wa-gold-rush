@@ -454,6 +454,12 @@
             }
         }
 
+        function removeStorageValue(storage, key) {
+            try {
+                storage.removeItem(key);
+            } catch (_) {}
+        }
+
         function parseStoredSession(raw) {
             if (!raw) return null;
             try {
@@ -471,13 +477,17 @@
                 const normalizedClassCodes = classCodes
                     .map(code => String(code || '').trim().toUpperCase())
                     .filter(Boolean);
+                const resolvedClassCodes = normalizedClassCodes.length ? normalizedClassCodes : [normalizedClassCode];
+                if (role === 'admin' && !resolvedClassCodes.includes(normalizedClassCode)) {
+                    resolvedClassCodes.unshift(normalizedClassCode);
+                }
                 return {
                     ...session,
                     ok: true,
                     teacherEmail: String(session.teacherEmail).trim().toLowerCase(),
                     teacherName: String(session.teacherName || '').trim(),
                     classCode: normalizedClassCode,
-                    classCodes: normalizedClassCodes.length ? normalizedClassCodes : [normalizedClassCode],
+                    classCodes: resolvedClassCodes,
                     role,
                     authenticatedAt: String(session.authenticatedAt).trim()
                 };
@@ -560,8 +570,15 @@
                 return false;
             }
             hideTeacherDashboardSigninPrompt();
-            return getTeacherDashboardBootstrapEntries(teacherSession)
-                .every(([key, value]) => setStorageValue(sessionStorage, key, value));
+            const writtenKeys = [];
+            for (const [key, value] of getTeacherDashboardBootstrapEntries(teacherSession)) {
+                if (!setStorageValue(sessionStorage, key, value)) {
+                    writtenKeys.forEach(writtenKey => removeStorageValue(sessionStorage, writtenKey));
+                    return false;
+                }
+                writtenKeys.push(key);
+            }
+            return true;
         }
 
         function showTeacherDashboardSigninPrompt() {
