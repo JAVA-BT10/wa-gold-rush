@@ -263,7 +263,7 @@
             <h2>👨‍🏫 Teachers & Administrators</h2>
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
             <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-describedby="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
-            <p id="teacherDashboardAccessHelp" class="level-description" style="display: none; margin: 12px 0 0;" role="status" aria-live="polite"></p>
+            <p id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" role="status" aria-live="polite" hidden></p>
         </div>
     </div>
 
@@ -485,6 +485,8 @@
                 return false;
             }
             const sessionValue = JSON.stringify(teacherSession);
+            const isAdmin = teacherSession.role === 'admin';
+            const isTeacher = teacherSession.role === 'teacher';
 
             [
                 ['teacher_dashboard_role', teacherSession.role],
@@ -493,13 +495,13 @@
                 ['teacherRole', teacherSession.role],
                 ['userRole', teacherSession.role],
                 ['role', teacherSession.role],
-                ['isTeacherAuthenticated', 'true'],
-                ['teacherAuthenticated', 'true'],
-                ['isTeacherAuth', 'true'],
-                ['isTeacher', 'true'],
+                ['isTeacherAuthenticated', String(isTeacher)],
+                ['teacherAuthenticated', String(isTeacher)],
+                ['isTeacherAuth', String(isTeacher)],
+                ['isTeacher', String(isTeacher)],
                 ['teacherAccess', 'granted'],
-                ['isAdmin', String(teacherSession.role === 'admin')],
-                ['adminAuthenticated', String(teacherSession.role === 'admin')],
+                ['isAdmin', String(isAdmin)],
+                ['adminAuthenticated', String(isAdmin)],
                 ['teacherEmail', teacherSession.teacherEmail],
                 ['teacherName', teacherSession.teacherName],
                 ['teacherClassCode', teacherSession.classCode],
@@ -529,7 +531,7 @@
             signInLink.textContent = 'Open teacher sign-in';
             help.appendChild(signInLink);
             help.appendChild(document.createTextNode('.'));
-            help.style.display = 'block';
+            help.hidden = false;
             if (teacherDashboardBtn) {
                 teacherDashboardBtn.setAttribute('aria-expanded', 'true');
             }
