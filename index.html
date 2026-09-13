@@ -333,6 +333,7 @@
             'teacherSession',
             'teacher_session'
         ];
+        const TEACHER_DASHBOARD_ALLOWED_ROLES = new Set(['teacher', 'admin']);
 
         /**
          * Check if a checkpoint is approved
@@ -459,6 +460,7 @@
                 const session = JSON.parse(raw);
                 if (!session || typeof session !== 'object') return null;
                 const role = String(session.role || 'teacher').trim().toLowerCase() || 'teacher';
+                if (!TEACHER_DASHBOARD_ALLOWED_ROLES.has(role)) return null;
                 const classCode = String(session.classCode || '').trim().toUpperCase();
                 if (!session.ok || !session.teacherEmail || !session.authenticatedAt) return null;
                 if (!classCode && role !== 'admin') return null;
