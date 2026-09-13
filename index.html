@@ -519,11 +519,28 @@
             ];
         }
 
+        function hideTeacherDashboardSigninPrompt() {
+            const help = document.getElementById('teacherDashboardAccessHelp');
+            const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
+            if (help) {
+                if (typeof help.replaceChildren === 'function') {
+                    help.replaceChildren();
+                } else {
+                    help.textContent = '';
+                }
+                help.hidden = true;
+            }
+            if (teacherDashboardBtn) {
+                teacherDashboardBtn.setAttribute('aria-expanded', 'false');
+            }
+        }
+
         function setTeacherDashboardAccess() {
             const teacherSession = buildTeacherDashboardSession();
             if (!teacherSession) {
                 return false;
             }
+            hideTeacherDashboardSigninPrompt();
             getTeacherDashboardBootstrapEntries(teacherSession)
                 .forEach(([key, value]) => setStorageValue(sessionStorage, key, value));
             return true;
