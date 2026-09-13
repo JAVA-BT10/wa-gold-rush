@@ -262,7 +262,7 @@
         <div class="admin-section">
             <h2>👨‍🏫 Teachers & Administrators</h2>
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
-            <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-describedby="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
+            <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-describedby="teacherDashboardAccessHelp" aria-controls="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
             <p id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" role="status" aria-live="polite" hidden></p>
         </div>
     </div>
@@ -464,15 +464,16 @@
                 const classCodes = Array.isArray(session.classCodes)
                     ? session.classCodes
                     : [normalizedClassCode];
+                const normalizedClassCodes = classCodes
+                    .map(code => String(code || '').trim().toUpperCase())
+                    .filter(Boolean);
                 return {
                     ...session,
                     ok: true,
                     teacherEmail: String(session.teacherEmail).trim().toLowerCase(),
                     teacherName: String(session.teacherName || '').trim(),
                     classCode: normalizedClassCode,
-                    classCodes: classCodes
-                        .map(code => String(code || '').trim().toUpperCase())
-                        .filter(Boolean),
+                    classCodes: normalizedClassCodes.length ? normalizedClassCodes : [normalizedClassCode],
                     role,
                     authenticatedAt: String(session.authenticatedAt || new Date().toISOString()).trim()
                 };
