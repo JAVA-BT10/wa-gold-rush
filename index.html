@@ -518,7 +518,12 @@
         function showTeacherDashboardSigninPrompt() {
             const help = document.getElementById('teacherDashboardAccessHelp');
             if (!help) return;
-            help.innerHTML = 'No saved teacher/admin session was found in this browser. <a href="teacher/dashboard.html">Open teacher sign-in</a>.';
+            help.textContent = 'No saved teacher/admin session was found in this browser. ';
+            const signInLink = document.createElement('a');
+            signInLink.href = 'teacher/dashboard.html';
+            signInLink.textContent = 'Open teacher sign-in';
+            help.appendChild(signInLink);
+            help.appendChild(document.createTextNode('.'));
             help.style.display = 'block';
         }
 
