@@ -262,7 +262,7 @@
         <div class="admin-section">
             <h2>👨‍🏫 Teachers & Administrators</h2>
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
-            <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-describedby="teacherDashboardAccessHelp" aria-controls="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
+            <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-controls="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
             <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" aria-live="polite" aria-atomic="true" hidden></div>
         </div>
     </div>
@@ -440,7 +440,9 @@
         function setStorageValue(storage, key, value) {
             try {
                 storage.setItem(key, value);
+                return true;
             } catch (_) {}
+            return false;
         }
 
         function getStorageValue(storage, key) {
@@ -517,6 +519,8 @@
                 ['teacher_name', teacherSession.teacherName],
                 ['teacherClassCode', teacherSession.classCode],
                 ['teacher_class_code', teacherSession.classCode],
+                ['teacherClassCodes', JSON.stringify(teacherSession.classCodes)],
+                ['teacher_class_codes', JSON.stringify(teacherSession.classCodes)],
                 ['teacherAuthenticatedAt', teacherSession.authenticatedAt],
                 ['teacher_authenticated_at', teacherSession.authenticatedAt],
                 ['adminAuthenticatedAt', teacherSession.authenticatedAt],
@@ -542,6 +546,9 @@
             }
             if (teacherDashboardBtn) {
                 teacherDashboardBtn.setAttribute('aria-expanded', 'false');
+                if (typeof teacherDashboardBtn.removeAttribute === 'function') {
+                    teacherDashboardBtn.removeAttribute('aria-describedby');
+                }
             }
         }
 
@@ -551,9 +558,8 @@
                 return false;
             }
             hideTeacherDashboardSigninPrompt();
-            getTeacherDashboardBootstrapEntries(teacherSession)
-                .forEach(([key, value]) => setStorageValue(sessionStorage, key, value));
-            return true;
+            return getTeacherDashboardBootstrapEntries(teacherSession)
+                .every(([key, value]) => setStorageValue(sessionStorage, key, value));
         }
 
         function showTeacherDashboardSigninPrompt() {
@@ -571,6 +577,7 @@
             help.hidden = false;
             if (teacherDashboardBtn) {
                 teacherDashboardBtn.setAttribute('aria-expanded', 'true');
+                teacherDashboardBtn.setAttribute('aria-describedby', 'teacherDashboardAccessHelp');
             }
             if (typeof signInLink.focus === 'function') {
                 signInLink.focus();
