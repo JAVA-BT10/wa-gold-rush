@@ -613,7 +613,6 @@
             if (!teacherSession) {
                 return false;
             }
-            hideTeacherDashboardSigninPrompt();
             const previousValues = new Map();
             for (const [key, value] of getTeacherDashboardBootstrapEntries(teacherSession)) {
                 if (!previousValues.has(key)) {
@@ -624,6 +623,7 @@
                     return false;
                 }
             }
+            hideTeacherDashboardSigninPrompt();
             return true;
         }
 
