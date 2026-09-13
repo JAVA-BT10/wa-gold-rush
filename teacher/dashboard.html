@@ -227,7 +227,7 @@
             <div class="card-header">
                 <div class="card-copy">
                     <h2>Bulk Import — Students / Class Teachers</h2>
-                    <p class="muted">Paste CSV or JSON to add many roster entries at once. Student rows are added locally, and compatible teacher rows are routed through the restored teacher import flow.</p>
+                    <p class="muted">Paste CSV or JSON to add many roster entries at once. Student rows are added locally, and compatible teacher rows are routed through the restored teacher import path.</p>
                 </div>
             </div>
             <p class="muted">
@@ -482,6 +482,30 @@
                 .replace(/'/g, '&#39;');
         }
 
+        function serializeErrorMessage(value, fallback = 'Unable to complete this action.') {
+            if (value == null) return fallback;
+            if (typeof value === 'string') {
+                const trimmed = value.trim();
+                return trimmed || fallback;
+            }
+            if (value instanceof Error) {
+                return value.message || fallback;
+            }
+            if (typeof value === 'object') {
+                const candidates = [value.error, value.message, value.details, value.title];
+                for (const candidate of candidates) {
+                    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+                    if (candidate instanceof Error && candidate.message) return candidate.message;
+                }
+                try {
+                    return JSON.stringify(value);
+                } catch (_) {
+                    return fallback;
+                }
+            }
+            return String(value).trim() || fallback;
+        }
+
         function setStatusMessage(id, tone, message, details = []) {
             const el = document.getElementById(id);
             if (!el) return;
@@ -490,14 +514,15 @@
             const extraClass = id === 'dashboardStatus' ? ' status-banner' : '';
             const detailItems = Array.isArray(details) ? details.filter(Boolean) : [];
             const detailHtml = detailItems.length
-                ? `<ul>${detailItems.map(item => `<li>${escHtml(item)}</li>`).join('')}</ul>`
+                ? `<ul>${detailItems.map(item => `<li>${escHtml(serializeErrorMessage(item))}</li>`).join('')}</ul>`
                 : '';
+            const safeMessage = serializeErrorMessage(message);
             const isError = appliedTone === 'error';
 
             el.className = `status-message${extraClass} ${appliedTone} is-visible`;
             el.setAttribute('role', isError ? 'alert' : 'status');
             el.setAttribute('aria-live', isError ? 'assertive' : 'polite');
-            el.innerHTML = `${escHtml(message)}${detailHtml}`;
+            el.innerHTML = `${escHtml(safeMessage)}${detailHtml}`;
         }
 
         function clearStatusMessage(...ids) {
@@ -514,8 +539,7 @@
         }
 
         function getResultError(result, fallback) {
-            const message = String(result?.error || '').trim();
-            return message || fallback;
+            return serializeErrorMessage(result?.error ?? result?.message ?? result, fallback);
         }
 
         function withBusyButton(buttonId, busyLabel, callback) {
@@ -555,7 +579,7 @@
         }
 
         function formatSkipDetails(skipped = []) {
-            return skipped.slice(0, 5).map(item => `Row ${item.row}: ${item.reason}`);
+            return skipped.slice(0, 5).map(item => `Row ${item.row}: ${serializeErrorMessage(item.reason)}`);
         }
 
         function getRecords() {
@@ -854,7 +878,7 @@
                     refresh();
                     refreshTeachers();
                 } catch (error) {
-                    const message = `Could not import roster data. ${error?.message || 'Check the format and try again.'}`;
+                    const message = `Could not import roster data. ${serializeErrorMessage(error?.message || error, 'Check the format and try again.')}`;
                     setStatusMessage('importResult', 'error', message);
                     setStatusMessage('dashboardStatus', 'error', message);
                 }
