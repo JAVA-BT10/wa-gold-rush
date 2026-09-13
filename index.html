@@ -326,14 +326,20 @@
                 status: 'available'
             }
         ];
-        const TEACHER_DASHBOARD_URL = '/teacher/dashboard.html';
-        const TEACHER_DASHBOARD_SIGNIN_URL = `${TEACHER_DASHBOARD_URL}?signin=1`;
+        const TEACHER_DASHBOARD_PATH = 'teacher/dashboard.html';
         const TEACHER_DASHBOARD_SESSION_KEYS = [
             'wa_gold_rush_teacher_session',
             'teacherSession',
             'teacher_session'
         ];
         const TEACHER_DASHBOARD_ALLOWED_ROLES = new Set(['teacher', 'admin']);
+
+        function getTeacherDashboardUrl(isSignIn = false) {
+            const path = isSignIn
+                ? `${TEACHER_DASHBOARD_PATH}?signin=1`
+                : TEACHER_DASHBOARD_PATH;
+            return new URL(path, document.baseURI || window.location.href).toString();
+        }
 
         /**
          * Check if a checkpoint is approved
@@ -596,7 +602,7 @@
             clearTeacherDashboardSigninPromptContent(help);
             help.textContent = 'No saved teacher/admin session was found in this browser. ';
             const signInLink = document.createElement('a');
-            signInLink.href = TEACHER_DASHBOARD_SIGNIN_URL;
+            signInLink.href = getTeacherDashboardUrl(true);
             signInLink.textContent = 'Open teacher dashboard sign-in';
             signInLink.setAttribute('aria-label', 'Open teacher dashboard sign-in page');
             help.appendChild(signInLink);
@@ -613,7 +619,7 @@
 
         function openTeacherDashboard() {
             if (setTeacherDashboardAccess()) {
-                window.location.href = TEACHER_DASHBOARD_URL;
+                window.location.href = getTeacherDashboardUrl();
                 return;
             }
             showTeacherDashboardSigninPrompt();
