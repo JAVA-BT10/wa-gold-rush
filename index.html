@@ -509,7 +509,7 @@
                 ['wa_gold_rush_teacher_session', sessionValue],
                 ['teacherSession', sessionValue],
                 ['teacher_session', sessionValue]
-            ].forEach(([key, value]) => setStorageValue(localStorage, key, value));
+            ].forEach(([key, value]) => setStorageValue(sessionStorage, key, value));
 
             setStorageValue(sessionStorage, 'wa_gold_rush_teacher_session', sessionValue);
             return true;
@@ -525,6 +525,9 @@
             help.appendChild(signInLink);
             help.appendChild(document.createTextNode('.'));
             help.style.display = 'block';
+            if (typeof signInLink.focus === 'function') {
+                signInLink.focus();
+            }
         }
 
         function openTeacherDashboard() {
