@@ -55,12 +55,12 @@ const SharePointSync = (() => {
         const buildHeaders = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.buildHeaders;
         const apiKey = String(CONFIG.apiKey || '').trim();
         const headers = typeof buildHeaders === 'function'
-            ? buildHeaders()
+            ? buildHeaders({ 'X-GGR-Key': apiKey })
             : {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
             };
-        if (apiKey) {
+        if (!buildHeaders && apiKey) {
             headers['X-GGR-Key'] = apiKey;
         }
         const response = await fetch(url, {
