@@ -10,14 +10,16 @@
         return normalizedKey;
     }
 
-    function buildPowerAutomateHeaders(extraHeaders = {}) {
+    function buildPowerAutomateHeaders(extraHeaders = {}, options = {}) {
         const headers = {
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         };
 
-        const apiKey = readConfiguredApiKey();
-        if (apiKey) headers['X-GGR-Key'] = apiKey;
+        if (options.includeApiKey !== false) {
+            const apiKey = readConfiguredApiKey();
+            if (apiKey) headers['X-GGR-Key'] = apiKey;
+        }
 
         return { ...headers, ...extraHeaders };
     }
