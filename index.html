@@ -263,7 +263,7 @@
             <h2>👨‍🏫 Teachers & Administrators</h2>
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
             <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-describedby="teacherDashboardAccessHelp" aria-controls="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
-            <p id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" role="status" aria-live="polite" hidden></p>
+            <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" hidden></div>
         </div>
     </div>
 
@@ -496,6 +496,7 @@
             const sessionValue = JSON.stringify(teacherSession);
             const isAdmin = teacherSession.role === 'admin';
             const isTeacher = teacherSession.role === 'teacher';
+            const hasDashboardAccess = isTeacher || isAdmin;
             return [
                 ['teacher_dashboard_role', teacherSession.role],
                 ['teacherDashboardRole', teacherSession.role],
@@ -503,31 +504,40 @@
                 ['teacherRole', teacherSession.role],
                 ['userRole', teacherSession.role],
                 ['role', teacherSession.role],
-                ['isTeacherAuthenticated', String(isTeacher)],
-                ['teacherAuthenticated', String(isTeacher)],
-                ['isTeacherAuth', String(isTeacher)],
-                ['isTeacher', String(isTeacher)],
+                ['isTeacherAuthenticated', String(hasDashboardAccess)],
+                ['teacherAuthenticated', String(hasDashboardAccess)],
+                ['isTeacherAuth', String(hasDashboardAccess)],
+                ['isTeacher', String(hasDashboardAccess)],
                 ['teacherAccess', 'granted'],
                 ['isAdmin', String(isAdmin)],
                 ['adminAuthenticated', String(isAdmin)],
                 ['teacherEmail', teacherSession.teacherEmail],
+                ['teacher_email', teacherSession.teacherEmail],
                 ['teacherName', teacherSession.teacherName],
+                ['teacher_name', teacherSession.teacherName],
                 ['teacherClassCode', teacherSession.classCode],
+                ['teacher_class_code', teacherSession.classCode],
                 ['teacherAuthenticatedAt', teacherSession.authenticatedAt],
+                ['teacher_authenticated_at', teacherSession.authenticatedAt],
                 ['adminAuthenticatedAt', teacherSession.authenticatedAt],
                 ...TEACHER_DASHBOARD_SESSION_KEYS.map(key => [key, sessionValue])
             ];
+        }
+
+        function clearTeacherDashboardSigninPromptContent(help) {
+            if (!help) return;
+            if (typeof help.replaceChildren === 'function') {
+                help.replaceChildren();
+            } else {
+                help.textContent = '';
+            }
         }
 
         function hideTeacherDashboardSigninPrompt() {
             const help = document.getElementById('teacherDashboardAccessHelp');
             const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
             if (help) {
-                if (typeof help.replaceChildren === 'function') {
-                    help.replaceChildren();
-                } else {
-                    help.textContent = '';
-                }
+                clearTeacherDashboardSigninPromptContent(help);
                 help.hidden = true;
             }
             if (teacherDashboardBtn) {
@@ -550,11 +560,7 @@
             const help = document.getElementById('teacherDashboardAccessHelp');
             const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
             if (!help) return;
-            if (typeof help.replaceChildren === 'function') {
-                help.replaceChildren();
-            } else {
-                help.textContent = '';
-            }
+            clearTeacherDashboardSigninPromptContent(help);
             help.textContent = 'No saved teacher/admin session was found in this browser. ';
             const signInLink = document.createElement('a');
             signInLink.href = TEACHER_DASHBOARD_SIGNIN_URL;
