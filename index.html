@@ -499,10 +499,7 @@
                     .filter(Boolean);
                 const normalizedClassCode = storedClassCode || normalizedClassCodes[0] || (role === 'admin' ? 'ADMIN' : '');
                 if (!normalizedClassCode) return null;
-                const resolvedClassCodes = normalizedClassCodes.length ? normalizedClassCodes : [normalizedClassCode];
-                if (!resolvedClassCodes.includes(normalizedClassCode)) {
-                    resolvedClassCodes.unshift(normalizedClassCode);
-                }
+                const resolvedClassCodes = Array.from(new Set([normalizedClassCode, ...normalizedClassCodes].filter(Boolean)));
                 return {
                     ...session,
                     ok: true,
@@ -584,13 +581,11 @@
                 }
             });
 
-            if (!restoredAll) {
-                createdKeys.forEach((createdKey) => {
-                    if (!removeStorageValue(storage, createdKey)) {
-                        restoredAll = false;
-                    }
-                });
-            }
+            createdKeys.forEach((createdKey) => {
+                if (!removeStorageValue(storage, createdKey)) {
+                    restoredAll = false;
+                }
+            });
             return restoredAll;
         }
 
