@@ -473,6 +473,8 @@
         function buildTeacherDashboardSession() {
             const existingSession = parseStoredSession(
                 getStorageValue(sessionStorage, 'wa_gold_rush_teacher_session')
+                || getStorageValue(sessionStorage, 'teacherSession')
+                || getStorageValue(sessionStorage, 'teacher_session')
                 || getStorageValue(localStorage, 'wa_gold_rush_teacher_session')
                 || getStorageValue(localStorage, 'teacherSession')
                 || getStorageValue(localStorage, 'teacher_session')
@@ -518,6 +520,11 @@
         function showTeacherDashboardSigninPrompt() {
             const help = document.getElementById('teacherDashboardAccessHelp');
             if (!help) return;
+            if (typeof help.replaceChildren === 'function') {
+                help.replaceChildren();
+            } else {
+                help.textContent = '';
+            }
             help.textContent = 'No saved teacher/admin session was found in this browser. ';
             const signInLink = document.createElement('a');
             signInLink.href = 'teacher/dashboard.html';
