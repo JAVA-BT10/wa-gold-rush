@@ -491,9 +491,9 @@
                 if (!TEACHER_DASHBOARD_ALLOWED_ROLES.has(role)) return null;
                 const storedClassCode = String(session.classCode || '').trim().toUpperCase();
                 if (!session.ok || !session.teacherEmail || !session.authenticatedAt) return null;
-                const classCodes = Array.isArray(session.classCodes)
+const classCodes = Array.isArray(session.classCodes)
                     ? session.classCodes
-                    : [storedClassCode];
+                    : String(session.classCodes || storedClassCode).split(/[,\n;]+/);
                 const normalizedClassCodes = classCodes
                     .map(code => String(code || '').trim().toUpperCase())
                     .filter(Boolean);
