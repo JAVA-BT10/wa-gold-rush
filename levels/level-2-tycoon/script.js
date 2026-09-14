@@ -9,6 +9,7 @@ const PLAYER_KEY_STORAGE = 'wa_gold_rush_player_key';
 const STRICT_MODE_KEY = 'wa_gold_rush_strict_mode';
 const TEACHER_DASHBOARD_KEY = 'teacher_dashboard';
 const STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
+const STUDENT_LOGIN_PATH = '../../index.html';
 const DEFAULT_COMPANY_NAME = 'Untitled Mining Co.';
 const RANDOM_EVENT_MIN_LEVEL = 4;
 const RANDOM_EVENT_ROLL_INTERVAL = 10;
@@ -171,7 +172,7 @@ function setupEventListeners() {
         if (event.key === PAUSE_STATE_KEY) {
             updatePauseStateFromStorage();
         }
-        if ((event.key === STRICT_MODE_KEY) || (event.key === TEACHER_DASHBOARD_KEY) || (event.key === CLASS_RECORDS_KEY)) {
+        if ((event.key === STRICT_MODE_KEY) || (event.key === TEACHER_DASHBOARD_KEY) || (event.key === CLASS_RECORDS_KEY) || (event.key === STUDENT_SESSION_KEY)) {
             applyCompetitionSessionToIdentity(false);
             updateCompetitionStatus();
             renderLeaderboard();
@@ -1082,6 +1083,7 @@ function applyCompetitionSessionToIdentity(updateInputs = true) {
 function updateCompetitionStatus() {
     const competition = applyCompetitionSessionToIdentity(false);
     const statusEl = document.getElementById('competition-status');
+    updateStudentLoginCta(competition);
     if (!statusEl) return;
     if (competition.isLoggedIn) {
         const lbName = competition.session.leaderboardName || competition.session.studentCode;
@@ -1092,6 +1094,31 @@ function updateCompetitionStatus() {
     statusEl.textContent = competition.strictModeEnabled
         ? 'Competition Status: Free-play mode (login required for competition features)'
         : 'Competition Status: Free-play mode';
+}
+
+function buildStudentLoginUrl() {
+    const url = new URL(STUDENT_LOGIN_PATH, window.location.href);
+    url.searchParams.set('studentLogin', '1');
+    url.searchParams.set('returnTo', window.location.href);
+    return url.toString();
+}
+
+function updateStudentLoginCta(competition = getCompetitionContext()) {
+    const loginCta = document.getElementById('studentLoginCta');
+    const loginHint = document.getElementById('studentLoginHint');
+    if (!loginCta) return;
+    loginCta.href = buildStudentLoginUrl();
+    if (competition.isLoggedIn) {
+        loginCta.hidden = true;
+        if (loginHint) {
+            loginHint.textContent = 'Competition login active. Identity and saved progress will continue to sync in this level.';
+        }
+        return;
+    }
+    loginCta.hidden = false;
+    if (loginHint) {
+        loginHint.textContent = 'Log in for competition from the Home page. You will return here and your local save will still load.';
+    }
 }
 
 function logoutCompetitionSession() {
@@ -1332,6 +1359,7 @@ function loadGame() {
     if (!enforceCurrentLevelAccess()) return;
     ensureInvestmentPlansForOwnedMines();
     hydrateIdentityInputs();
+    applyCompetitionSessionToIdentity();
     updateAssignedLevelBadge();
     updateAllUI();
     closeAllModals();
@@ -1354,6 +1382,7 @@ function resetGame() {
     localStorage.removeItem('level2_autosave');
     removePlayerRecord(playerKey);
     hydrateIdentityInputs();
+    applyCompetitionSessionToIdentity();
     updateAssignedLevelBadge();
     updateAllUI();
     closeAllModals();

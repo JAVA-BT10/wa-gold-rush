@@ -226,6 +226,63 @@
             text-align: center;
         }
 
+        .student-section {
+            background: #f6f9ff;
+            border: 2px solid #d0ddff;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .student-login-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 10px;
+            margin: 12px 0;
+        }
+
+        .student-login-grid label {
+            display: flex;
+            flex-direction: column;
+            text-align: left;
+            gap: 6px;
+            font-size: 13px;
+            color: #333;
+        }
+
+        .student-login-grid input {
+            border: 1px solid #bbb;
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-size: 14px;
+        }
+
+        .student-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .btn-student {
+            display: inline-block;
+            background: #1a73e8;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+        }
+
+        .btn-student:hover {
+            background: #0d47a1;
+            transform: scale(1.03);
+        }
+
         .btn-teacher {
             display: inline-block;
             background: #2e7d32;
@@ -269,6 +326,39 @@
         </section>
 
         <hr class="divider">
+
+        <section class="student-section" aria-labelledby="studentLoginHeading">
+            <h2 id="studentLoginHeading">🎓 Students</h2>
+            <p>Sign in with your student code to use competition features and carry your identity into levels.</p>
+            <form id="studentLoginForm">
+                <div class="student-login-grid">
+                    <label for="studentCodeInput">Student Code
+                        <input id="studentCodeInput" type="text" maxlength="40" placeholder="e.g. SC-Y6-1042" required>
+                    </label>
+                    <label for="leaderboardNameInput">Leaderboard Name
+                        <input id="leaderboardNameInput" type="text" maxlength="30" placeholder="Public nickname" required>
+                    </label>
+                    <label for="studentIdInput">Student ID (optional)
+                        <input id="studentIdInput" type="text" maxlength="30" placeholder="e.g. 123456">
+                    </label>
+                    <label for="studentNameInput">Student Name (optional)
+                        <input id="studentNameInput" type="text" maxlength="50" placeholder="e.g. Alex">
+                    </label>
+                    <label for="studentClassCodeInput">Class Code (optional)
+                        <input id="studentClassCodeInput" type="text" maxlength="20" placeholder="e.g. 6B">
+                    </label>
+                </div>
+                <div class="student-actions">
+                    <button id="studentLoginBtn" class="btn-student" type="submit">🔐 Student Login</button>
+                    <span id="studentLoginHint" class="level-description" style="margin: 0;"></span>
+                </div>
+            </form>
+            <div id="studentActiveSession" class="student-actions" hidden>
+                <button id="studentContinueBtn" class="btn-student" type="button">▶ Continue</button>
+                <button id="studentLogoutBtn" class="btn-play" type="button">Log Out</button>
+                <span id="studentSessionSummary" class="level-description" style="margin: 0;"></span>
+            </div>
+        </section>
 
         <!-- Admin Section -->
         <div class="admin-section">
@@ -347,6 +437,9 @@
             'teacher_session'
         ];
         const TEACHER_DASHBOARD_ALLOWED_ROLES = new Set(['teacher', 'admin']);
+        const STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
+        const STUDENT_LOGIN_QUERY_PARAM = 'studentLogin';
+        const RETURN_TO_QUERY_PARAM = 'returnTo';
 
         function getTeacherDashboardUrl(isSignIn = false) {
             const path = isSignIn
@@ -698,6 +791,158 @@ const classCodes = Array.isArray(session.classCodes)
             showTeacherDashboardStoragePrompt();
         }
 
+        function parseStoredStudentSession(raw) {
+            if (!raw) return null;
+            try {
+                const session = JSON.parse(raw);
+                if (!session || typeof session !== 'object') return null;
+                const studentCode = String(session.studentCode || session.studentId || '').trim();
+                if (!studentCode) return null;
+                return {
+                    ok: true,
+                    studentCode,
+                    leaderboardName: String(session.leaderboardName || studentCode).trim(),
+                    studentId: String(session.studentId || '').trim(),
+                    studentName: String(session.studentName || '').trim(),
+                    classCode: String(session.classCode || '').trim().toUpperCase(),
+                    authenticatedAt: String(session.authenticatedAt || '').trim()
+                };
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function getStudentSession() {
+            return parseStoredStudentSession(getStorageValue(localStorage, STUDENT_SESSION_KEY));
+        }
+
+        function getSafeReturnToUrl() {
+            const params = new URLSearchParams(window.location.search);
+            const raw = params.get(RETURN_TO_QUERY_PARAM);
+            if (!raw) return null;
+            try {
+                const target = new URL(raw, window.location.href);
+                if (target.origin !== window.location.origin) return null;
+                return target.toString();
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function getStudentLoginTargetUrl() {
+            const returnTo = getSafeReturnToUrl();
+            if (returnTo) return returnTo;
+            return null;
+        }
+
+        function hydrateStudentForm(session) {
+            const set = (id, value) => {
+                const el = document.getElementById(id);
+                if (el) el.value = value || '';
+            };
+            set('studentCodeInput', session?.studentCode || '');
+            set('leaderboardNameInput', session?.leaderboardName || '');
+            set('studentIdInput', session?.studentId || '');
+            set('studentNameInput', session?.studentName || '');
+            set('studentClassCodeInput', session?.classCode || '');
+        }
+
+        function toggleStudentAuthUI() {
+            const form = document.getElementById('studentLoginForm');
+            const activeSession = document.getElementById('studentActiveSession');
+            const sessionSummary = document.getElementById('studentSessionSummary');
+            const continueBtn = document.getElementById('studentContinueBtn');
+            const loginHint = document.getElementById('studentLoginHint');
+            const session = getStudentSession();
+            const targetUrl = getStudentLoginTargetUrl();
+
+            if (!form || !activeSession || !sessionSummary || !continueBtn || !loginHint) return;
+
+            if (session) {
+                hydrateStudentForm(session);
+                form.hidden = true;
+                activeSession.hidden = false;
+                continueBtn.textContent = `▶ Continue as ${session.leaderboardName || session.studentCode}`;
+                loginHint.textContent = '';
+                sessionSummary.textContent = `Signed in as ${session.leaderboardName || session.studentCode} (${session.studentCode}).`;
+                return;
+            }
+
+            form.hidden = false;
+            activeSession.hidden = true;
+            sessionSummary.textContent = '';
+            loginHint.textContent = targetUrl
+                ? 'Sign in to continue back to your game.'
+                : 'Sign in, then choose a level below.';
+            const shouldFocusLogin = new URLSearchParams(window.location.search).get(STUDENT_LOGIN_QUERY_PARAM) === '1';
+            if (shouldFocusLogin) {
+                const studentCodeInput = document.getElementById('studentCodeInput');
+                if (studentCodeInput && typeof studentCodeInput.focus === 'function') {
+                    studentCodeInput.focus();
+                }
+            }
+        }
+
+        function buildStudentSessionFromForm() {
+            const studentCode = String(document.getElementById('studentCodeInput')?.value || '').trim();
+            const leaderboardName = String(document.getElementById('leaderboardNameInput')?.value || '').trim();
+            const studentId = String(document.getElementById('studentIdInput')?.value || '').trim();
+            const studentName = String(document.getElementById('studentNameInput')?.value || '').trim();
+            const classCode = String(document.getElementById('studentClassCodeInput')?.value || '').trim().toUpperCase();
+            if (!studentCode || !leaderboardName) return null;
+            return {
+                ok: true,
+                studentCode,
+                leaderboardName,
+                studentId,
+                studentName,
+                classCode,
+                authenticatedAt: new Date().toISOString()
+            };
+        }
+
+        function handleStudentLogin(event) {
+            event.preventDefault();
+            const nextSession = buildStudentSessionFromForm();
+            if (!nextSession) {
+                alert('Student Code and Leaderboard Name are required.');
+                return;
+            }
+            const saved = setStorageValue(localStorage, STUDENT_SESSION_KEY, JSON.stringify(nextSession));
+            if (!saved) {
+                alert('Could not save student login in this browser.');
+                return;
+            }
+            toggleStudentAuthUI();
+            const returnTo = getStudentLoginTargetUrl();
+            if (returnTo) {
+                window.location.href = returnTo;
+            }
+        }
+
+        function handleStudentContinue() {
+            const session = getStudentSession();
+            if (!session) {
+                toggleStudentAuthUI();
+                return;
+            }
+            const returnTo = getStudentLoginTargetUrl();
+            if (returnTo) {
+                window.location.href = returnTo;
+                return;
+            }
+            const target = document.getElementById('main-content');
+            if (target && typeof target.scrollIntoView === 'function') {
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        function handleStudentLogout() {
+            removeStorageValue(localStorage, STUDENT_SESSION_KEY);
+            hydrateStudentForm(null);
+            toggleStudentAuthUI();
+        }
+
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', () => {
             checkAccessError();
@@ -707,6 +952,20 @@ const classCodes = Array.isArray(session.classCodes)
             if (teacherDashboardBtn) {
                 teacherDashboardBtn.addEventListener('click', openTeacherDashboard);
             }
+
+            const studentLoginForm = document.getElementById('studentLoginForm');
+            const studentContinueBtn = document.getElementById('studentContinueBtn');
+            const studentLogoutBtn = document.getElementById('studentLogoutBtn');
+            if (studentLoginForm) {
+                studentLoginForm.addEventListener('submit', handleStudentLogin);
+            }
+            if (studentContinueBtn) {
+                studentContinueBtn.addEventListener('click', handleStudentContinue);
+            }
+            if (studentLogoutBtn) {
+                studentLogoutBtn.addEventListener('click', handleStudentLogout);
+            }
+            toggleStudentAuthUI();
         });
     </script>
 </body>
