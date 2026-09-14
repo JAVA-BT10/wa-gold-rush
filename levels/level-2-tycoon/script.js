@@ -936,12 +936,14 @@ function displayResults(results, totalProfit, eventMessage) {
     if (!container) return;
     let html = eventMessage ? `<div class="result-card">${eventMessage}</div>` : '';
     results.forEach(result => {
-        const statusClass = result.success ? '' : 'loss';
-        const status = result.success ? '✅ SUCCESS' : '❌ FAILED';
+        const safePrincipalReturned = result.digKey === 'safe' && !result.success;
+        const statusClass = result.success ? '' : (safePrincipalReturned ? '' : 'loss');
+        const status = result.success ? '✅ SUCCESS' : (safePrincipalReturned ? '➖ RETURNED' : '❌ FAILED');
         html += `
             <div class="result-card ${statusClass}">
                 <strong>${result.mineName}</strong> • ${result.icon} ${result.digType} ${status}<br>
                 Investment: $${result.amount.toFixed(2)}<br>
+                ${safePrincipalReturned ? `Principal Returned: $${result.amount.toFixed(2)}<br>` : ''}
                 Profit: ${result.profit >= 0 ? '+' : ''}$${result.profit.toFixed(2)}
             </div>
         `;

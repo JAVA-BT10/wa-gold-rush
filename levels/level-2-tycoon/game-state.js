@@ -692,6 +692,9 @@ class GameState {
 
     calculateOutcome(investment, digType, mineId, isSuccess, roundEffects = {}) {
         if (!isSuccess) {
+            if (digType === 'safe') {
+                return 0;
+            }
             return -investment;
         }
 

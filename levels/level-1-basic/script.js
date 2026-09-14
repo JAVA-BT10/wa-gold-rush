@@ -130,7 +130,10 @@ function calculateOutcome(digType, total, investment) {
     }
 
     const success = total >= dig.minTotal && total <= dig.maxTotal;
-    const profit = success ? investment * dig.multiplier : -investment;
+    let profit = success ? investment * dig.multiplier : -investment;
+    if (!success && digType === 'safe') {
+        profit = 0;
+    }
 
     return { profit, success };
 }
@@ -142,6 +145,11 @@ function generateResultMessage(digType, investment, profit, success) {
     if (success) {
         return `${icon} ${dig.name} Successful<br>
                 Investment: $${investment.toFixed(2)}<br>
+                Profit: +$${profit.toFixed(2)}`;
+    } else if (digType === 'safe') {
+        return `➖ ${dig.name} Returned<br>
+                Investment: $${investment.toFixed(2)}<br>
+                Principal Returned: $${investment.toFixed(2)}<br>
                 Profit: +$${profit.toFixed(2)}`;
     } else {
         return `${icon} ${dig.name} Failed<br>
