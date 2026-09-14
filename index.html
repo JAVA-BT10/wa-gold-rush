@@ -29,6 +29,18 @@
             top: 10px;
         }
 
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
         .container {
             max-width: 900px;
             margin: auto;
@@ -262,7 +274,10 @@
         <div class="admin-section">
             <h2>👨‍🏫 Teachers & Administrators</h2>
             <p>Manage students, review progression checkpoints, and monitor class performance</p>
-            <a href="teacher/dashboard.html" class="btn-teacher">📊 Teacher Dashboard</a>
+            <button id="teacherDashboardBtn" class="btn-teacher" type="button" aria-label="Open the teacher dashboard" aria-describedby="teacherDashboardBtnHint" aria-controls="teacherDashboardAccessHelp" aria-expanded="false">📊 Teacher Dashboard</button>
+            <span id="teacherDashboardBtnHint" class="sr-only">Requires an active teacher or admin session. If none is active, sign-in help will appear.</span>
+            <div id="teacherDashboardAccessStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+            <div id="teacherDashboardAccessHelp" class="level-description" style="margin: 12px 0 0;" hidden></div>
         </div>
     </div>
 
@@ -325,6 +340,20 @@
                 status: 'available'
             }
         ];
+        const TEACHER_DASHBOARD_PATH = 'teacher/dashboard.html';
+        const TEACHER_DASHBOARD_SESSION_KEYS = [
+            'wa_gold_rush_teacher_session',
+            'teacherSession',
+            'teacher_session'
+        ];
+        const TEACHER_DASHBOARD_ALLOWED_ROLES = new Set(['teacher', 'admin']);
+
+        function getTeacherDashboardUrl(isSignIn = false) {
+            const path = isSignIn
+                ? `${TEACHER_DASHBOARD_PATH}?signin=1`
+                : TEACHER_DASHBOARD_PATH;
+            return new URL(path, document.baseURI || window.location.href).toString();
+        }
 
         /**
          * Check if a checkpoint is approved
@@ -429,10 +458,255 @@
             }
         }
 
+        function setStorageValue(storage, key, value) {
+            try {
+                storage.setItem(key, value);
+                return true;
+            } catch (_) {}
+            return false;
+        }
+
+        function getStorageValue(storage, key) {
+            try {
+                return storage.getItem(key);
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function removeStorageValue(storage, key) {
+            try {
+                storage.removeItem(key);
+                return true;
+            } catch (_) {}
+            return false;
+        }
+
+        function parseStoredSession(raw) {
+            if (!raw) return null;
+            try {
+                const session = JSON.parse(raw);
+                if (!session || typeof session !== 'object') return null;
+                const role = String(session.role || '').trim().toLowerCase();
+                if (!TEACHER_DASHBOARD_ALLOWED_ROLES.has(role)) return null;
+                const storedClassCode = String(session.classCode || '').trim().toUpperCase();
+                if (!session.ok || !session.teacherEmail || !session.authenticatedAt) return null;
+const classCodes = Array.isArray(session.classCodes)
+                    ? session.classCodes
+                    : String(session.classCodes || storedClassCode).split(/[,\n;]+/);
+                const normalizedClassCodes = classCodes
+                    .map(code => String(code || '').trim().toUpperCase())
+                    .filter(Boolean);
+                const normalizedClassCode = storedClassCode || normalizedClassCodes[0] || (role === 'admin' ? 'ADMIN' : '');
+                if (!normalizedClassCode) return null;
+                const resolvedClassCodes = Array.from(new Set([normalizedClassCode, ...normalizedClassCodes].filter(Boolean)));
+                return {
+                    ...session,
+                    ok: true,
+                    teacherEmail: String(session.teacherEmail).trim().toLowerCase(),
+                    teacherName: String(session.teacherName || '').trim(),
+                    classCode: normalizedClassCode,
+                    classCodes: resolvedClassCodes,
+                    role,
+                    authenticatedAt: String(session.authenticatedAt).trim()
+                };
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function buildTeacherDashboardSession() {
+            for (const key of TEACHER_DASHBOARD_SESSION_KEYS) {
+                const existingSession = parseStoredSession(getStorageValue(sessionStorage, key));
+                if (existingSession) {
+                    return existingSession;
+                }
+            }
+            return null;
+        }
+
+        function getTeacherDashboardBootstrapEntries(teacherSession) {
+            const sessionValue = JSON.stringify(teacherSession);
+            const isAdmin = teacherSession.role === 'admin';
+            const isTeacher = teacherSession.role === 'teacher';
+            return [
+                ['teacher_dashboard_role', teacherSession.role],
+                ['teacherDashboardRole', teacherSession.role],
+                ['teacher_role', teacherSession.role],
+                ['teacherRole', teacherSession.role],
+                ['userRole', teacherSession.role],
+                ['role', teacherSession.role],
+                ['isTeacherAuthenticated', String(isTeacher)],
+                ['teacherAuthenticated', String(isTeacher)],
+                ['isTeacherAuth', String(isTeacher)],
+                ['isTeacher', String(isTeacher)],
+                ['teacherAccess', teacherSession.role],
+                ['isAdmin', String(isAdmin)],
+                ['adminAuthenticated', String(isAdmin)],
+                ['teacherEmail', teacherSession.teacherEmail],
+                ['teacher_email', teacherSession.teacherEmail],
+                ['teacherName', teacherSession.teacherName],
+                ['teacher_name', teacherSession.teacherName],
+                ['teacherClassCode', teacherSession.classCode],
+                ['teacher_class_code', teacherSession.classCode],
+                ['teacherClassCodes', JSON.stringify(teacherSession.classCodes)],
+                ['teacher_class_codes', JSON.stringify(teacherSession.classCodes)],
+                ['teacherAuthenticatedAt', teacherSession.authenticatedAt],
+                ['teacher_authenticated_at', teacherSession.authenticatedAt],
+                ['adminAuthenticatedAt', teacherSession.authenticatedAt],
+                ...TEACHER_DASHBOARD_SESSION_KEYS.map(key => [key, sessionValue])
+            ];
+        }
+
+        function clearTeacherDashboardSigninPromptContent(help) {
+            if (!help) return;
+            if (typeof help.replaceChildren === 'function') {
+                help.replaceChildren();
+            } else {
+                help.textContent = '';
+            }
+        }
+
+        function restoreStorageSnapshot(storage, previousValues, createdKeys = new Set()) {
+            let restoredAll = true;
+            previousValues.forEach((previousValue, previousKey) => {
+                if (previousValue == null) {
+                    if (!removeStorageValue(storage, previousKey)) {
+                        restoredAll = false;
+                    }
+                    return;
+                }
+                if (!setStorageValue(storage, previousKey, previousValue)) {
+                    restoredAll = false;
+                }
+            });
+
+            createdKeys.forEach((createdKey) => {
+                if (!removeStorageValue(storage, createdKey)) {
+                    restoredAll = false;
+                }
+            });
+            return restoredAll;
+        }
+
+        function hideTeacherDashboardSigninPrompt() {
+            const help = document.getElementById('teacherDashboardAccessHelp');
+            const status = document.getElementById('teacherDashboardAccessStatus');
+            const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
+            if (help) {
+                clearTeacherDashboardSigninPromptContent(help);
+                help.hidden = true;
+            }
+            if (status) {
+                status.textContent = '';
+            }
+            if (teacherDashboardBtn) {
+                teacherDashboardBtn.setAttribute('aria-expanded', 'false');
+                teacherDashboardBtn.setAttribute('aria-describedby', 'teacherDashboardBtnHint');
+            }
+        }
+
+        function setTeacherDashboardAccess() {
+            const teacherSession = buildTeacherDashboardSession();
+            if (!teacherSession) {
+                return { success: false, reason: 'missing_session' };
+            }
+            const previousValues = new Map();
+            const createdKeys = new Set();
+            for (const [key, value] of getTeacherDashboardBootstrapEntries(teacherSession)) {
+                if (!previousValues.has(key)) {
+                    const previousValue = getStorageValue(sessionStorage, key);
+                    previousValues.set(key, previousValue);
+                    if (previousValue == null) {
+                        createdKeys.add(key);
+                    }
+                }
+                if (!setStorageValue(sessionStorage, key, value)) {
+                    const restored = restoreStorageSnapshot(sessionStorage, previousValues, createdKeys);
+                    return {
+                        success: false,
+                        reason: restored ? 'storage_failed' : 'storage_restore_failed'
+                    };
+                }
+            }
+            hideTeacherDashboardSigninPrompt();
+            return { success: true };
+        }
+
+        function showTeacherDashboardSigninPrompt() {
+            const help = document.getElementById('teacherDashboardAccessHelp');
+            const status = document.getElementById('teacherDashboardAccessStatus');
+            const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
+            if (!help) return;
+            clearTeacherDashboardSigninPromptContent(help);
+            if (status) {
+                status.textContent = 'No saved teacher/admin session was found in this browser. Teacher dashboard sign-in help is now available.';
+            }
+            help.appendChild(document.createTextNode('No saved teacher/admin session was found in this browser. '));
+            const signInLink = document.createElement('a');
+            signInLink.href = getTeacherDashboardUrl(true);
+            signInLink.textContent = 'Open teacher dashboard sign-in';
+            signInLink.setAttribute('aria-label', 'Open teacher dashboard sign-in page');
+            help.appendChild(signInLink);
+            help.appendChild(document.createTextNode('.'));
+            help.hidden = false;
+            if (teacherDashboardBtn) {
+                teacherDashboardBtn.setAttribute('aria-expanded', 'true');
+                teacherDashboardBtn.setAttribute('aria-describedby', 'teacherDashboardBtnHint teacherDashboardAccessHelp');
+            }
+            if (typeof signInLink.focus === 'function') {
+                signInLink.focus();
+            }
+        }
+
+        function showTeacherDashboardStoragePrompt() {
+            const help = document.getElementById('teacherDashboardAccessHelp');
+            const status = document.getElementById('teacherDashboardAccessStatus');
+            const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
+            if (!help) return;
+            clearTeacherDashboardSigninPromptContent(help);
+            if (status) {
+                status.textContent = 'Teacher dashboard access could not be prepared in this browser session. Please sign in again.';
+            }
+            help.appendChild(document.createTextNode('Teacher dashboard access could not be prepared in this browser session. '));
+            const signInLink = document.createElement('a');
+            signInLink.href = getTeacherDashboardUrl(true);
+            signInLink.textContent = 'Open teacher dashboard sign-in';
+            signInLink.setAttribute('aria-label', 'Open teacher dashboard sign-in page');
+            help.appendChild(signInLink);
+            help.appendChild(document.createTextNode('.'));
+            help.hidden = false;
+            if (teacherDashboardBtn) {
+                teacherDashboardBtn.setAttribute('aria-expanded', 'true');
+                teacherDashboardBtn.setAttribute('aria-describedby', 'teacherDashboardBtnHint teacherDashboardAccessHelp');
+            }
+            if (typeof signInLink.focus === 'function') {
+                signInLink.focus();
+            }
+        }
+
+        function openTeacherDashboard() {
+            const result = setTeacherDashboardAccess();
+            if (result.success) {
+                window.location.href = getTeacherDashboardUrl();
+                return;
+            }
+            if (result.reason === 'missing_session') {
+                showTeacherDashboardSigninPrompt();
+                return;
+            }
+            showTeacherDashboardStoragePrompt();
+        }
+
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', () => {
             checkAccessError();
             renderLevels();
+
+            const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
+            if (teacherDashboardBtn) {
+                teacherDashboardBtn.addEventListener('click', openTeacherDashboard);
+            }
         });
     </script>
 </body>
