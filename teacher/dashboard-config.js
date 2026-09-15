@@ -1,8 +1,16 @@
 window.WA_GOLD_RUSH_DASHBOARD_CONFIG = window.WA_GOLD_RUSH_DASHBOARD_CONFIG || {};
 
 const existingFlowEndpoints = window.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints || {};
-const existingApiKey = String(window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey || '').trim();
-const runtimeConfiguredApiKey = String(window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey || '').trim();
+
+function normalizeApiKey(value) {
+    return String(value || '').trim();
+}
+
+let configuredDashboardApiKey = normalizeApiKey(window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey);
+
+function readRuntimeConfiguredApiKey() {
+    return normalizeApiKey(window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey);
+}
 
 /**
  * Dashboard API Key Configuration
@@ -10,7 +18,7 @@ const runtimeConfiguredApiKey = String(window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG
  * The apiKey is used to build the X-GGR-Key header for all Power Automate flow requests.
  * Priority (in order):
  * 1. Pre-existing window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey (set before this script loads)
- * 2. window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey (set at runtime)
+ * 2. window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey (resolved at runtime)
  *
  * Configuration Methods:
  *
@@ -30,7 +38,16 @@ const runtimeConfiguredApiKey = String(window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG
  * because the required X-GGR-Key header cannot be attached. Set one of the above
  * before dashboard loads.
  */
-window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey = existingApiKey || runtimeConfiguredApiKey;
+Object.defineProperty(window.WA_GOLD_RUSH_DASHBOARD_CONFIG, 'apiKey', {
+    configurable: true,
+    enumerable: true,
+    get() {
+        return configuredDashboardApiKey || readRuntimeConfiguredApiKey();
+    },
+    set(value) {
+        configuredDashboardApiKey = normalizeApiKey(value);
+    }
+});
 
 // Diagnostic logging (remove in production if sensitive)
 if (!window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey) {
