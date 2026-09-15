@@ -760,6 +760,7 @@
                 setStatusMessage('dashboardStatus', 'error', `Could not save student changes. ${error}`);
                 return;
             }
+            dashboard.syncStudentToBackend(result.student);
             setStatusMessage('rosterActionMsg', 'success', `Saved changes for ${describeStudent(result.student)}.`);
             setStatusMessage('dashboardStatus', 'success', `Saved changes for ${describeStudent(result.student)}.`);
             refresh();
@@ -824,6 +825,8 @@
                     return;
                 }
 
+                dashboard.syncStudentToBackend(result.student);
+
                 document.getElementById('studentCode').value = '';
                 document.getElementById('studentLeaderboardName').value = '';
                 document.getElementById('studentName').value = '';
@@ -874,6 +877,12 @@
                         ...formatSkipDetails(result.teachers.skipped)
                     ];
 
+                    dashboard.syncStudentsToBackend(result.added);
+                    dashboard.syncTeachersToBackend([
+                        ...result.teachers.added,
+                        ...result.teachers.updated
+                    ]);
+
                     setStatusMessage('importResult', tone, `Roster import finished: ${summaryParts.join(', ')}.`, details);
                     setStatusMessage('dashboardStatus', tone, `Roster import finished: ${summaryParts.join(', ')}.`);
                     refresh();
@@ -901,6 +910,11 @@
                 const skippedCount = result.skipped.length;
                 const tone = changedCount ? 'success' : 'info';
                 const summary = `Teacher import finished: ${result.added.length} added, ${result.updated.length} updated${skippedCount ? `, ${skippedCount} skipped` : ''}.`;
+
+                dashboard.syncTeachersToBackend([
+                    ...result.added,
+                    ...result.updated
+                ]);
 
                 setStatusMessage('teacherImportResult', tone, summary, formatSkipDetails(result.skipped));
                 setStatusMessage('dashboardStatus', tone, summary);
@@ -935,6 +949,8 @@
                     setStatusMessage('dashboardStatus', 'error', error);
                     return;
                 }
+
+                dashboard.syncTeacherToBackend(result.teacher);
 
                 document.getElementById('newTeacherEmail').value = '';
                 document.getElementById('newTeacherName').value = '';
