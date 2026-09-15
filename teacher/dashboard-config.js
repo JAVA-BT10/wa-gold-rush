@@ -6,8 +6,10 @@ function normalizeApiKey(value) {
     return String(value || '').trim();
 }
 
-let configuredDashboardApiKey = normalizeApiKey(window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey);
-const existingApiKeyDescriptor = Object.getOwnPropertyDescriptor(window.WA_GOLD_RUSH_DASHBOARD_CONFIG, 'apiKey');
+const hasOwnDashboardApiKey = Object.prototype.hasOwnProperty.call(window.WA_GOLD_RUSH_DASHBOARD_CONFIG, 'apiKey');
+let configuredDashboardApiKey = hasOwnDashboardApiKey
+    ? normalizeApiKey(window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey)
+    : '';
 
 function readRuntimeConfiguredApiKey() {
     return normalizeApiKey(window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey);
@@ -39,7 +41,7 @@ function readRuntimeConfiguredApiKey() {
  * because the required X-GGR-Key header cannot be attached. Set one of the above
  * before dashboard loads.
  */
-if (!existingApiKeyDescriptor || existingApiKeyDescriptor.configurable !== false) {
+if (!hasOwnDashboardApiKey) {
     Object.defineProperty(window.WA_GOLD_RUSH_DASHBOARD_CONFIG, 'apiKey', {
         configurable: true,
         enumerable: true,
