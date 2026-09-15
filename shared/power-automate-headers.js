@@ -19,6 +19,7 @@
 
     function buildPowerAutomateHeaders(extraHeaders = {}, options = {}) {
         const headers = {
+            ...normalizeExtraHeaders(extraHeaders),
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         };
@@ -28,7 +29,7 @@
             if (apiKey) headers['X-GGR-Key'] = apiKey;
         }
 
-        return { ...headers, ...extraHeaders };
+        return headers;
     }
 
     function normalizeExtraHeaders(headers) {
