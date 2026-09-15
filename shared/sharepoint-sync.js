@@ -58,6 +58,7 @@ const SharePointSync = (() => {
         }
         const response = await postToFlow(url, payload, {
             apiKey: CONFIG.apiKey,
+            requireApiKey: true,
             cache: 'no-store'
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);

@@ -47,14 +47,18 @@
             throw new Error('Fetch is unavailable.');
         }
 
-        const apiKey = options.includeApiKey === false ? '' : resolveApiKey(options.apiKey);
-        if (options.includeApiKey !== false && !apiKey) {
+        const shouldIncludeApiKey = options.includeApiKey !== false;
+        const apiKey = shouldIncludeApiKey ? resolveApiKey(options.apiKey) : '';
+        if (options.requireApiKey === true && !apiKey) {
             throw new Error('Power Automate API key is required.');
         }
 
         return fetchImpl(endpoint, {
             method: 'POST',
-            headers: buildPowerAutomateHeaders(options.extraHeaders, { ...options, apiKey }),
+            headers: buildPowerAutomateHeaders(
+                options.extraHeaders,
+                shouldIncludeApiKey ? { ...options, apiKey } : { ...options, includeApiKey: false }
+            ),
             cache: typeof options.cache === 'undefined' ? 'no-store' : options.cache,
             body: JSON.stringify(payload)
         });

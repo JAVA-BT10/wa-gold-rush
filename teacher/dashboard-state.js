@@ -83,6 +83,7 @@ class TeacherDashboard {
             const response = await postToFlow(endpoint, payload, {
                 fetch: fetchImpl,
                 apiKey: globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey,
+                requireApiKey: true,
                 cache: 'no-store'
             });
 
