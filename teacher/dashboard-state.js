@@ -39,6 +39,145 @@ class TeacherDashboard {
         return String(endpoints?.[flowName] || '').trim();
     }
 
+    hasConfiguredFlowEndpoint(flowName) {
+        const endpoint = this.getFlowEndpoint(flowName);
+        return !!endpoint && !/REPLACE-WITH/i.test(endpoint);
+    }
+
+    buildFlowHeaders() {
+        const buildHeaders = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.buildHeaders;
+        if (typeof buildHeaders === 'function') {
+            return buildHeaders();
+        }
+
+        const headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        };
+        const apiKey = String(globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey || '').trim();
+        if (apiKey) headers['X-GGR-Key'] = apiKey;
+        return headers;
+    }
+
+    async postFlowPayload(flowName, payload, options = {}) {
+        if (!this.hasConfiguredFlowEndpoint(flowName)) {
+            console.warn(`Dashboard flow endpoint "${flowName}" is not configured.`);
+            return { success: false, skipped: true, error: `${flowName} is not configured.` };
+        }
+
+        const fetchImpl = typeof options.fetch === 'function'
+            ? options.fetch
+            : (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
+        if (!fetchImpl) {
+            console.warn(`Dashboard flow "${flowName}" could not run because fetch is unavailable.`);
+            return { success: false, skipped: true, error: 'Fetch is unavailable.' };
+        }
+
+        try {
+            const response = await fetchImpl(this.getFlowEndpoint(flowName), {
+                method: 'POST',
+                headers: this.buildFlowHeaders(),
+                cache: 'no-store',
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                let responseText = '';
+                try {
+                    responseText = await response.text();
+                } catch (_) {}
+                console.warn(
+                    `Dashboard flow "${flowName}" failed (HTTP ${response.status}).`,
+                    responseText || ''
+                );
+                return { success: false, status: response.status, error: responseText || `HTTP ${response.status}` };
+            }
+
+            return { success: true, status: response.status };
+        } catch (error) {
+            console.error(`Dashboard flow "${flowName}" request failed.`, error);
+            return { success: false, error };
+        }
+    }
+
+    buildStudentFlowPayload(student = {}) {
+        const parsedLevel = parseInt(student.level ?? student.assignedLevel, 10);
+        return {
+            studentCode: String(student.studentCode || student.displayId || '').trim(),
+            leaderboardName: String(student.leaderboardName || student.name || '').trim(),
+            studentId: String(student.studentId || student.email || '').trim(),
+            studentName: String(student.studentName || student.name || '').trim(),
+            classCode: String(student.classCode || '').trim(),
+            level: (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : 1
+        };
+    }
+
+    buildTeacherFlowPayload(teacher = {}) {
+        const teacherEmail = String(teacher.email || teacher.teacherEmail || '').trim().toLowerCase();
+        const teacherName = String(teacher.name || teacher.teacherName || '').trim();
+        const role = String(teacher.role || 'teacher').trim().toLowerCase() || 'teacher';
+        return {
+            teacherEmail,
+            teacherName,
+            email: teacherEmail,
+            name: teacherName,
+            classCode: String(teacher.classCode || '').trim(),
+            role
+        };
+    }
+
+    async syncStudentToBackend(student, options = {}) {
+        const payload = this.buildStudentFlowPayload(student);
+        if (!payload.studentCode || !payload.leaderboardName) {
+            return { success: false, skipped: true, error: 'Student payload is incomplete.' };
+        }
+        return this.postFlowPayload('upsertStudentProfile', payload, options);
+    }
+
+    async syncTeacherToBackend(teacher, options = {}) {
+        const payload = this.buildTeacherFlowPayload(teacher);
+        if (!payload.teacherEmail || !payload.teacherName) {
+            return { success: false, skipped: true, error: 'Teacher payload is incomplete.' };
+        }
+        return this.postFlowPayload('upsertTeacher', payload, options);
+    }
+
+    async syncStudentsToBackend(students = [], options = {}) {
+        const payload = (Array.isArray(students) ? students : [])
+            .map(student => this.buildStudentFlowPayload(student))
+            .filter(student => student.studentCode && student.leaderboardName);
+        if (!payload.length) {
+            return { success: true, skipped: true, count: 0 };
+        }
+
+        if (this.hasConfiguredFlowEndpoint('bulkImportStudents')) {
+            return this.postFlowPayload('bulkImportStudents', { students: payload }, options);
+        }
+
+        await Promise.all(payload.map(student => this.postFlowPayload('upsertStudentProfile', student, options)));
+        return { success: true, count: payload.length, fallback: 'upsertStudentProfile' };
+    }
+
+    async syncTeachersToBackend(teachers = [], options = {}) {
+        const payload = (Array.isArray(teachers) ? teachers : [])
+            .map(teacher => this.buildTeacherFlowPayload(teacher))
+            .filter(teacher => teacher.teacherEmail && teacher.teacherName);
+        if (!payload.length) {
+            return { success: true, skipped: true, count: 0 };
+        }
+
+        if (this.hasConfiguredFlowEndpoint('bulkImportTeachers')) {
+            return this.postFlowPayload('bulkImportTeachers', { teachers: payload }, options);
+        }
+        if (!this.hasConfiguredFlowEndpoint('upsertTeacher')) {
+            console.warn('Dashboard teacher sync endpoints are not configured.');
+            return { success: false, skipped: true, error: 'Teacher sync endpoints are not configured.' };
+        }
+
+        await Promise.all(payload.map(teacher => this.postFlowPayload('upsertTeacher', teacher, options)));
+        return { success: true, count: payload.length, fallback: 'upsertTeacher' };
+    }
+
     normalizeClassCodeList(value) {
         if (Array.isArray(value)) {
             return value
