@@ -180,6 +180,10 @@ const CONFIG = {
 };
 ```
 
+Frontend flow calls now use a shared JSON POST helper. Authenticated flow callers can opt
+into `requireApiKey: true`, which blocks the request when the flow URL or `X-GGR-Key`
+value is missing.
+
 If both endpoints are left blank, the game runs fully offline with no sync (all progress in localStorage).
 
 #### Power Automate: student/profile upsert flow

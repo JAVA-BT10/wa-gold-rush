@@ -52,21 +52,14 @@ const SharePointSync = (() => {
     }
 
     async function _post(url, payload) {
-        const buildHeaders = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.buildHeaders;
-        const apiKey = String(CONFIG.apiKey || '').trim();
-        const headers = typeof buildHeaders === 'function'
-            ? buildHeaders({}, { includeApiKey: false })
-            : {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            };
-        if (apiKey) {
-            headers['X-GGR-Key'] = apiKey;
+        const postToFlow = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.postToFlow;
+        if (typeof postToFlow !== 'function') {
+            throw new Error('Power Automate POST helper is unavailable.');
         }
-        const response = await fetch(url, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(payload)
+        const response = await postToFlow(url, payload, {
+            apiKey: CONFIG.apiKey,
+            requireApiKey: true,
+            cache: 'no-store'
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response;

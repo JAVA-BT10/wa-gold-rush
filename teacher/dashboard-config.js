@@ -26,15 +26,16 @@ const runtimeConfiguredApiKey = String(window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG
  * Option C: Environment variable at build time
  *   Set WA_GGR_API_KEY during build, then inject into this config.
  *
- * If no apiKey is configured, Power Automate flows will NOT include the X-GGR-Key
- * header, causing authentication failures. Set one of the above before dashboard loads.
+ * If no apiKey is configured, Power Automate flow POSTs are blocked before sending
+ * because the required X-GGR-Key header cannot be attached. Set one of the above
+ * before dashboard loads.
  */
 window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey = existingApiKey || runtimeConfiguredApiKey;
 
 // Diagnostic logging (remove in production if sensitive)
 if (!window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey) {
     console.warn(
-        '[Dashboard] ⚠️  No apiKey configured. Power Automate flows will not include X-GGR-Key header. ' +
+        '[Dashboard] ⚠️  No apiKey configured. Power Automate flow POSTs are blocked because X-GGR-Key is required. ' +
         'Set window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey or window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey ' +
         'before loading the dashboard.'
     );
