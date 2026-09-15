@@ -33,13 +33,20 @@ const runtimeConfiguredApiKey = String(window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG
 window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey = existingApiKey || runtimeConfiguredApiKey;
 
 // Diagnostic logging (remove in production if sensitive)
-if (!window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey) {
-    console.warn(
-        '[Dashboard] ⚠️  No apiKey configured. Power Automate flow POSTs are blocked because X-GGR-Key is required. ' +
-        'Set window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey or window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey ' +
-        'before loading the dashboard.'
-    );
-}
+setTimeout(() => {
+    const apiKey = String(
+        window.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey
+        || window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey
+        || ''
+    ).trim();
+    if (!apiKey) {
+        console.warn(
+            '[Dashboard] ⚠️  No apiKey configured. Power Automate flow POSTs are blocked because X-GGR-Key is required. ' +
+            'Set window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey or window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey ' +
+            'before sending authenticated dashboard flow requests.'
+        );
+    }
+}, 0);
 
 /**
  * Power Automate Flow Endpoints

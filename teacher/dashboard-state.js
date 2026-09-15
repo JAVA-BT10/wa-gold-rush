@@ -67,6 +67,20 @@ class TeacherDashboard {
             return { success: false, skipped: true, error };
         }
 
+        const readApiKey = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.getApiKey;
+        const apiKey = typeof readApiKey === 'function'
+            ? String(readApiKey() || '').trim()
+            : String(
+                globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey
+                || globalThis.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey
+                || ''
+            ).trim();
+        if (!apiKey) {
+            const error = 'Power Automate API key is required before authenticated dashboard flows can be sent.';
+            console.warn(`[Dashboard] ${error}`);
+            return { success: false, skipped: true, error };
+        }
+
         const fetchImpl = typeof options.fetch === 'function'
             ? options.fetch
             : (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
@@ -82,7 +96,7 @@ class TeacherDashboard {
             }
             const response = await postToFlow(endpoint, payload, {
                 fetch: fetchImpl,
-                apiKey: globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey,
+                apiKey,
                 requireApiKey: true,
                 cache: 'no-store'
             });
