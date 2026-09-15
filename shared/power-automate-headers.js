@@ -31,6 +31,17 @@
         return { ...headers, ...extraHeaders };
     }
 
+    function normalizeExtraHeaders(headers) {
+        if (!headers) return {};
+        if (typeof headers.entries === 'function') {
+            return Object.fromEntries(headers.entries());
+        }
+        if (Array.isArray(headers)) {
+            return Object.fromEntries(headers);
+        }
+        return { ...headers };
+    }
+
     async function postToFlow(url, payload, options = {}) {
         const endpoint = String(url || '').trim();
         if (!endpoint) {
@@ -40,26 +51,40 @@
             throw new Error('Power Automate flow payload is required.');
         }
 
-        const fetchImpl = typeof options.fetch === 'function'
-            ? options.fetch
+        const {
+            fetch: customFetch,
+            extraHeaders,
+            headers,
+            apiKey: apiKeyOverride,
+            includeApiKey,
+            requireApiKey,
+            ...requestInit
+        } = options;
+
+        const fetchImpl = typeof customFetch === 'function'
+            ? customFetch
             : (typeof globalObj.fetch === 'function' ? globalObj.fetch.bind(globalObj) : null);
         if (!fetchImpl) {
             throw new Error('Fetch is unavailable.');
         }
 
-        const shouldIncludeApiKey = options.includeApiKey !== false;
-        const apiKey = shouldIncludeApiKey ? resolveApiKey(options.apiKey) : '';
-        if (options.requireApiKey === true && !apiKey) {
+        const shouldIncludeApiKey = includeApiKey !== false;
+        const apiKey = shouldIncludeApiKey ? resolveApiKey(apiKeyOverride) : '';
+        if (requireApiKey === true && !apiKey) {
             throw new Error('Power Automate API key is required.');
         }
 
         return fetchImpl(endpoint, {
+            ...requestInit,
             method: 'POST',
             headers: buildPowerAutomateHeaders(
-                options.extraHeaders,
-                shouldIncludeApiKey ? { ...options, apiKey } : { ...options, includeApiKey: false }
+                {
+                    ...normalizeExtraHeaders(headers),
+                    ...normalizeExtraHeaders(extraHeaders)
+                },
+                shouldIncludeApiKey ? { includeApiKey: true, apiKey } : { includeApiKey: false }
             ),
-            cache: typeof options.cache === 'undefined' ? 'no-store' : options.cache,
+            cache: typeof requestInit.cache === 'undefined' ? 'no-store' : requestInit.cache,
             body: JSON.stringify(payload)
         });
     }
