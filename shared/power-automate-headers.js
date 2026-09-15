@@ -55,7 +55,7 @@
         return fetchImpl(endpoint, {
             method: 'POST',
             headers: buildPowerAutomateHeaders(options.extraHeaders, { ...options, apiKey }),
-            cache: options.cache || 'no-store',
+            cache: typeof options.cache === 'undefined' ? 'no-store' : options.cache,
             body: JSON.stringify(payload)
         });
     }
