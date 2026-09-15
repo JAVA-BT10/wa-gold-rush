@@ -42,6 +42,18 @@
         return { ...headers };
     }
 
+    function isNonJsonPayload(payload) {
+        if (typeof globalObj.FormData !== 'undefined' && payload instanceof globalObj.FormData) return true;
+        if (typeof globalObj.Blob !== 'undefined' && payload instanceof globalObj.Blob) return true;
+        if (typeof globalObj.ArrayBuffer !== 'undefined' && payload instanceof globalObj.ArrayBuffer) return true;
+        if (typeof globalObj.URLSearchParams !== 'undefined' && payload instanceof globalObj.URLSearchParams) return true;
+        return false;
+    }
+
+    /**
+     * Send a JSON payload to a Power Automate HTTP trigger.
+     * This helper is intentionally for JSON request bodies only.
+     */
     async function postToFlow(url, payload, options = {}) {
         const endpoint = String(url || '').trim();
         if (!endpoint) {
@@ -49,6 +61,9 @@
         }
         if (typeof payload === 'undefined') {
             throw new Error('Power Automate flow payload is required.');
+        }
+        if (isNonJsonPayload(payload)) {
+            throw new Error('Power Automate flow payload must be JSON data.');
         }
 
         const {
