@@ -2,12 +2,19 @@
  * Shared Power Automate request header helper.
  */
 (function initPowerAutomateHeaders(globalObj) {
+    function normalizeApiKey(value) {
+        return String(value || '').trim();
+    }
+
     function readConfiguredApiKey() {
         const configuredKey = globalObj.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey
             || globalObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey
             || '';
-        const normalizedKey = String(configuredKey || '').trim();
-        return normalizedKey;
+        return normalizeApiKey(configuredKey);
+    }
+
+    function resolveApiKey(apiKeyOverride) {
+        return normalizeApiKey(apiKeyOverride) || readConfiguredApiKey();
     }
 
     function buildPowerAutomateHeaders(extraHeaders = {}, options = {}) {
@@ -17,18 +24,53 @@
         };
 
         if (options.includeApiKey !== false) {
-            const apiKey = readConfiguredApiKey();
+            const apiKey = resolveApiKey(options.apiKey);
             if (apiKey) headers['X-GGR-Key'] = apiKey;
         }
 
         return { ...headers, ...extraHeaders };
     }
 
+    async function postToFlow(url, payload, options = {}) {
+        const endpoint = String(url || '').trim();
+        if (!endpoint) {
+            throw new Error('Power Automate flow URL is required.');
+        }
+        if (typeof payload === 'undefined') {
+            throw new Error('Power Automate flow payload is required.');
+        }
+
+        const fetchImpl = typeof options.fetch === 'function'
+            ? options.fetch
+            : (typeof globalObj.fetch === 'function' ? globalObj.fetch.bind(globalObj) : null);
+        if (!fetchImpl) {
+            throw new Error('Fetch is unavailable.');
+        }
+
+        const apiKey = options.includeApiKey === false ? '' : resolveApiKey(options.apiKey);
+        if (options.includeApiKey !== false && !apiKey) {
+            throw new Error('Power Automate API key is required.');
+        }
+
+        return fetchImpl(endpoint, {
+            method: 'POST',
+            headers: buildPowerAutomateHeaders(options.extraHeaders, { ...options, apiKey }),
+            cache: options.cache || 'no-store',
+            body: JSON.stringify(payload)
+        });
+    }
+
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE = globalObj.WA_GOLD_RUSH_POWER_AUTOMATE || {};
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.buildHeaders = buildPowerAutomateHeaders;
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.getApiKey = readConfiguredApiKey;
+    globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.postToFlow = postToFlow;
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = { buildPowerAutomateHeaders, readConfiguredApiKey };
+        module.exports = {
+            buildPowerAutomateHeaders,
+            readConfiguredApiKey,
+            resolveApiKey,
+            postToFlow
+        };
     }
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -60,9 +60,11 @@ class TeacherDashboard {
     }
 
     async postFlowPayload(flowName, payload, options = {}) {
-        if (!this.hasConfiguredFlowEndpoint(flowName)) {
-            console.warn(`Dashboard flow endpoint "${flowName}" is not configured.`);
-            return { success: false, skipped: true, error: `${flowName} is not configured.` };
+        const endpoint = this.getFlowEndpoint(flowName);
+        if (!endpoint || /REPLACE-WITH/i.test(endpoint)) {
+            const error = `Dashboard flow endpoint "${flowName}" is missing or not configured.`;
+            console.warn(error);
+            return { success: false, skipped: true, error };
         }
 
         const fetchImpl = typeof options.fetch === 'function'
@@ -74,11 +76,14 @@ class TeacherDashboard {
         }
 
         try {
-            const response = await fetchImpl(this.getFlowEndpoint(flowName), {
-                method: 'POST',
-                headers: this.buildFlowHeaders(),
-                cache: 'no-store',
-                body: JSON.stringify(payload)
+            const postToFlow = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.postToFlow;
+            if (typeof postToFlow !== 'function') {
+                throw new Error('Power Automate POST helper is unavailable.');
+            }
+            const response = await postToFlow(endpoint, payload, {
+                fetch: fetchImpl,
+                apiKey: globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey,
+                cache: 'no-store'
             });
 
             if (!response.ok) {
@@ -95,8 +100,9 @@ class TeacherDashboard {
 
             return { success: true, status: response.status };
         } catch (error) {
+            const message = String(error?.message || error || 'Unknown error');
             console.error(`Dashboard flow "${flowName}" request failed.`, error);
-            return { success: false, error };
+            return { success: false, error: message };
         }
     }
 
