@@ -4,7 +4,7 @@ const existingFlowEndpoints = window.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints
 const existingApiKey = String(window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey || '').trim();
 const runtimeConfiguredApiKey = String(window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey || '').trim();
 
-window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey = existingApiKey || runtimeConfiguredApiKey;
+window.WA_GOLD_RUSH_DASHBOARD_CONFIG.apiKey = existingApiKey || runtimeConfiguredApiKey || 'MySuperSecretKey2026';
 
 window.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints = {
     ...existingFlowEndpoints,
