@@ -15,9 +15,9 @@ const SharePointSync = (() => {
     // -------------------------------------------------------------------------
     const CONFIG = {
         // URL for the "upsert student/profile" Power Automate HTTP flow
-        profileEndpoint: '',   // e.g. 'https://prod-XX.australiasoutheast.logic.azure.com/...'
+        profileEndpoint: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/06/workflows/441ec597942642278c09e29b5c7195cf/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=3VrGGK2ZaELVnG_rtkpS8RT7TGttvKNeb1YeuocZxjI',
         // URL for the "upsert level progress/result" Power Automate HTTP flow
-        progressEndpoint: '',  // e.g. 'https://prod-XX.australiasoutheast.logic.azure.com/...'
+        progressEndpoint: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/11/workflows/de843a7b9cd74079ae14dc3b96e2128a/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=UrSe8pJ17rOw8j3vf-TfOQMVowucgt1-FIdZzUa2vCA',
         // Shared secret sent as X-GGR-Key header — set after creating flows
         apiKey: '',
         // Maximum number of queued retries kept in localStorage
