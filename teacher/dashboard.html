@@ -375,6 +375,19 @@
         </section>
     </div>
 
+    <script>
+        window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG || {};
+        if (!window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey) {
+            const runtimeApiKey = document.querySelector('meta[name="wa-ggr-api-key"]')?.content
+                || document.documentElement.dataset.ggrApiKey
+                || window.WA_GOLD_RUSH_RUNTIME_CONFIG?.apiKey
+                || window.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey
+                || '';
+            if (String(runtimeApiKey).trim()) {
+                window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey = String(runtimeApiKey).trim();
+            }
+        }
+    </script>
     <script src="dashboard-config.js"></script>
     <script src="../shared/power-automate-headers.js"></script>
     <script src="dashboard-state.js"></script>
