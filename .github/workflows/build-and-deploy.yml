@@ -1,4 +1,4 @@
-name: Deploy static site to Pages
+name: Build and Deploy to GitHub Pages
 
 on:
   push:
@@ -20,6 +20,28 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Generate runtime config
+        env:
+          WA_GGR_API_KEY: ${{ secrets.WA_GGR_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          api_key = os.environ.get("WA_GGR_API_KEY", "").strip()
+          if not api_key:
+              raise SystemExit("WA_GGR_API_KEY secret is required to deploy teacher/runtime-config.js")
+
+          runtime_config_path = Path("teacher/runtime-config.js")
+          runtime_config_path.write_text(
+              "window.WA_GOLD_RUSH_RUNTIME_CONFIG = {\n"
+              f"  apiKey: {json.dumps(api_key)}\n"
+              "};\n",
+              encoding="utf-8",
+          )
+          PY
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
