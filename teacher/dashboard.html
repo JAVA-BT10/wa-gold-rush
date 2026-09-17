@@ -1073,7 +1073,9 @@
             localStorage.setItem(STRICT_MODE_KEY, JSON.stringify({ enabled: e.target.checked }));
             renderStrictModeStatus();
         });
-        document.getElementById('refreshBtn').addEventListener('click', () => refresh());
+        document.getElementById('refreshBtn').addEventListener('click', () => {
+            withBusyButton('refreshBtn', 'Refreshing…', () => refreshDashboardFromBestSource({ showStatus: true }));
+        });
         document.getElementById('exportCsvBtn').addEventListener('click', () => {
             const csv = dashboard.exportAsCSV();
             const blob = new Blob([csv], { type: 'text/csv' });
@@ -1089,6 +1091,21 @@
             renderStats();
             renderRoster();
             renderLeaderboardForLevel(_activeLeaderboardLevel);
+        }
+
+        async function refreshDashboardFromBestSource(options = {}) {
+            const hydration = await dashboard.hydrateDashboardFromFlowWithFallback();
+            refresh();
+            refreshTeachers();
+
+            if (options.showStatus) {
+                setStatusMessage(
+                    'dashboardStatus',
+                    hydration.statusTone || 'info',
+                    hydration.statusMessage || 'Dashboard refreshed.'
+                );
+            }
+            return hydration;
         }
 
         async function submitTeacherLogin() {
@@ -1118,22 +1135,21 @@
             }
 
             showTeacherDashboard();
-            initializeDashboard();
+            await initializeDashboard({ showHydrationStatus: false });
             setStatusMessage('dashboardStatus', 'success', `Welcome ${result.session.teacherName || result.session.teacherEmail}.`);
         }
 
-        function initializeDashboard() {
+        async function initializeDashboard(options = {}) {
             clearProtectedDashboardContent();
             document.getElementById('studentClassCode').value = getPrimaryAuthorizedClassCode();
             renderPauseStatus();
             renderStrictModeStatus();
-            refresh();
-            refreshTeachers();
+            return refreshDashboardFromBestSource({ showStatus: options.showHydrationStatus === true });
         }
 
         function init() {
             if (!enforceTeacherDashboardAccess()) return;
-            initializeDashboard();
+            initializeDashboard({ showHydrationStatus: true });
         }
 
         document.getElementById('teacherLoginForm').addEventListener('submit', (event) => {

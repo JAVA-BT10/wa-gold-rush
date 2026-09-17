@@ -18,9 +18,31 @@ function createStorage(initial = {}) {
 
 test('flow endpoint registry includes wired unlock and change-pin endpoints', () => {
     global.WA_GOLD_RUSH_FLOW_ENDPOINTS = {};
+    delete require.cache[require.resolve('../shared/flow-endpoints.js')];
     require('../shared/flow-endpoints.js');
     assert.match(global.WA_GOLD_RUSH_FLOW_ENDPOINTS.teacherUnlockStudent, /a7d0d76c24304f6bbfae4cb50df223f8/);
     assert.match(global.WA_GOLD_RUSH_FLOW_ENDPOINTS.changeStudentPin, /RpwToQQqWyJTJzTkGxQ3pGwD6r8C3kL_wWNJwChHx20/);
+    assert.match(global.WA_GOLD_RUSH_FLOW_ENDPOINTS.getDashboardData, /a633ad56ceaf4cb487d3aeae05543bc9/);
+});
+
+test('dashboard config resolves getDashboardData from shared endpoint registry', () => {
+    global.window = global;
+    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey: 'key' };
+    global.WA_GOLD_RUSH_FLOW_ENDPOINTS = {
+        getDashboardData: 'https://example.com/get-dashboard-data'
+    };
+    global.WA_GOLD_RUSH_DASHBOARD_CONFIG = {
+        apiKey: 'key',
+        flowEndpoints: {
+            getDashboardData: 'https://REPLACE-WITH-GGR_GetDashboardData-URL'
+        }
+    };
+    delete require.cache[require.resolve('../teacher/dashboard-config.js')];
+    require('../teacher/dashboard-config.js');
+    assert.equal(
+        global.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints.getDashboardData,
+        'https://example.com/get-dashboard-data'
+    );
 });
 
 test('callFlow detects placeholders and parses successful JSON', async () => {
@@ -131,6 +153,8 @@ test('sharepoint sync builds lower-case save payload and migrates legacy queue i
 });
 
 test('dashboard hydration adapter normalizes expected shape while disabled', () => {
+    global.localStorage = createStorage();
+    global.sessionStorage = createStorage();
     const TeacherDashboard = require('../teacher/dashboard-state.js');
     const dashboard = new TeacherDashboard();
     const result = dashboard.hydrateDashboardFromNormalizedData({
@@ -144,6 +168,147 @@ test('dashboard hydration adapter normalizes expected shape while disabled', () 
     assert.equal(result.data.students[0].studentCode, 's-1');
     assert.equal(result.data.students[0].classCode, '6B');
     assert.equal(result.data.teachers[0].email, 't@example.com');
+});
+
+test('dashboard hydration loads students/teachers/progress from flow response', async () => {
+    global.localStorage = createStorage({
+        teacher_dashboard: JSON.stringify({
+            students: [{
+                id: 'seed-1',
+                studentCode: 'SC-1',
+                classCode: '6B',
+                gameState: { lastPlayed: '2026-01-01T00:00:00.000Z' }
+            }]
+        }),
+        wa_gold_rush_teacher_list: JSON.stringify([{
+            id: 'local.teacher@example.com',
+            email: 'local.teacher@example.com',
+            name: 'Local Teacher',
+            classCode: '6C',
+            role: 'teacher'
+        }])
+    });
+    global.sessionStorage = createStorage({
+        wa_gold_rush_teacher_session: JSON.stringify({
+            ok: true,
+            teacherEmail: 'teacher@example.com',
+            classCode: '6B',
+            classCodes: ['6B']
+        })
+    });
+    global.WA_GOLD_RUSH_DASHBOARD_CONFIG = {
+        apiKey: 'key',
+        flowEndpoints: {
+            getDashboardData: 'https://example.com/get-dashboard-data'
+        }
+    };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey: 'key' };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        getApiKey: () => 'key',
+        callFlow: async (_flowName, payload) => {
+            assert.equal(payload.teacherEmail, 'teacher@example.com');
+            return {
+                success: true,
+                status: 200,
+                data: {
+                    ok: true,
+                    Students: [{
+                        StudentCode: 'SC-1',
+                        LeaderboardName: 'Gold One',
+                        StudentName: 'Student One',
+                        StudentID: '1001',
+                        ClassCode: '6b',
+                        Level: 2
+                    }],
+                    Teachers: [{
+                        teacherEmail: 'teacher@example.com',
+                        teacherName: 'Teacher One',
+                        classCode: '6b',
+                        role: 'teacher'
+                    }],
+                    Progress: [{
+                        StudentCode: 'SC-1',
+                        ClassCode: '6b',
+                        CurrentRound: 4,
+                        CurrentCash: 456.75,
+                        NetWorth: 1234.5
+                    }]
+                }
+            };
+        }
+    };
+
+    const TeacherDashboard = require('../teacher/dashboard-state.js');
+    const dashboard = new TeacherDashboard();
+    const result = await dashboard.hydrateDashboardFromFlowWithFallback();
+
+    assert.equal(result.success, true);
+    assert.equal(result.source, 'flow');
+    assert.equal(dashboard.students.length, 1);
+    assert.equal(dashboard.students[0].studentCode, 'SC-1');
+    assert.equal(dashboard.students[0].classCode, '6B');
+    assert.equal(dashboard.students[0].gameState.round, 4);
+    assert.equal(dashboard.students[0].gameState.cash, 456.75);
+    assert.equal(dashboard.students[0].gameState.netWorth, 1234.5);
+    assert.equal(dashboard.students[0].gameState.lastPlayed, '2026-01-01T00:00:00.000Z');
+    assert.equal(dashboard.getTeacher('teacher@example.com')?.email, 'teacher@example.com');
+    assert.equal(dashboard.getTeacher('local.teacher@example.com')?.email, 'local.teacher@example.com');
+    const persistedProgress = JSON.parse(global.localStorage.getItem('wa_gold_rush_class_records'));
+    assert.equal(persistedProgress[0].round, 4);
+    assert.equal(persistedProgress[0].cash, 456.75);
+});
+
+test('dashboard hydration falls back to local cache when flow fails or payload is invalid', async () => {
+    const localStudents = [{
+        id: 'local-1',
+        studentCode: 'LOCAL-1',
+        classCode: '6B',
+        gameState: { round: 2, netWorth: 800 }
+    }];
+    global.localStorage = createStorage({
+        teacher_dashboard: JSON.stringify({ students: localStudents }),
+        wa_gold_rush_teacher_list: JSON.stringify([{ id: 'local.teacher@example.com', email: 'local.teacher@example.com', classCode: '6B', role: 'teacher' }])
+    });
+    global.sessionStorage = createStorage({
+        wa_gold_rush_teacher_session: JSON.stringify({
+            ok: true,
+            teacherEmail: 'teacher@example.com',
+            classCode: '6B',
+            classCodes: ['6B']
+        })
+    });
+    global.WA_GOLD_RUSH_DASHBOARD_CONFIG = {
+        apiKey: 'key',
+        flowEndpoints: {
+            getDashboardData: 'https://example.com/get-dashboard-data'
+        }
+    };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey: 'key' };
+
+    const TeacherDashboard = require('../teacher/dashboard-state.js');
+    const dashboard = new TeacherDashboard();
+
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        getApiKey: () => 'key',
+        callFlow: async () => ({ success: false, error: 'Network down' })
+    };
+    const failedResult = await dashboard.hydrateDashboardFromFlowWithFallback();
+    assert.equal(failedResult.success, true);
+    assert.equal(failedResult.source, 'local');
+    assert.equal(dashboard.students[0].studentCode, 'LOCAL-1');
+
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        getApiKey: () => 'key',
+        callFlow: async () => ({
+            success: true,
+            status: 200,
+            data: { ok: true, message: 'missing arrays' }
+        })
+    };
+    const invalidResult = await dashboard.hydrateDashboardFromFlowWithFallback();
+    assert.equal(invalidResult.success, true);
+    assert.equal(invalidResult.source, 'local');
+    assert.equal(dashboard.students[0].studentCode, 'LOCAL-1');
 });
 
 test('progression snapshot builder keeps full restoration fields', () => {

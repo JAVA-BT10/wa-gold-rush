@@ -13,6 +13,7 @@
 class TeacherDashboard {
     constructor() {
         this.students = [];
+        this.teachers = [];
         this.gameConfig = null;
         this.classStats = {
             totalStudents: 0,
@@ -194,20 +195,71 @@ class TeacherDashboard {
         return this.successResult({ response: result.data, status: result.status });
     }
 
-    normalizeDashboardHydrationPayload(payload = {}) {
-        const asArray = (value) => Array.isArray(value) ? value : [];
+    extractDashboardHydrationPayload(payload = {}) {
+        const isObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
+        if (!isObject(payload)) return {};
+
+        const dataPayload = isObject(payload.data) ? payload.data : payload;
+        const bodyPayload = isObject(dataPayload.body) ? dataPayload.body : dataPayload;
+        return bodyPayload;
+    }
+
+    normalizeDashboardStudentIdentity(record = {}) {
+        const studentCode = String(record?.studentCode || record?.StudentCode || record?.displayId || '').trim();
+        const studentId = String(record?.studentId || record?.StudentID || record?.email || '').trim();
+        const identity = String(studentCode || studentId || '').trim();
         return {
-            students: asArray(payload.students).map((student) => ({
-                ...student,
-                studentCode: String(student?.studentCode || student?.StudentCode || student?.displayId || '').trim(),
-                classCode: String(student?.classCode || student?.ClassCode || '').trim().toUpperCase()
-            })),
-            teachers: asArray(payload.teachers).map((teacher) => ({
+            studentCode: studentCode || studentId,
+            studentId,
+            identityKey: identity.toLowerCase()
+        };
+    }
+
+    hasDashboardHydrationContract(payload = {}) {
+        const source = this.extractDashboardHydrationPayload(payload);
+        // Expected flow payload contract: arrays for students/teachers/progress.
+        // PascalCase keys are accepted for SharePoint/Flow compatibility.
+        const hasStudents = Array.isArray(source.students) || Array.isArray(source.Students);
+        const hasTeachers = Array.isArray(source.teachers) || Array.isArray(source.Teachers);
+        const hasProgress = Array.isArray(source.progress) || Array.isArray(source.Progress);
+        return hasStudents && hasTeachers && hasProgress;
+    }
+
+    normalizeDashboardHydrationPayload(payload = {}) {
+        const source = this.extractDashboardHydrationPayload(payload);
+        const asArray = (value) => Array.isArray(value) ? value : [];
+        const students = source.students ?? source.Students ?? source.studentRoster ?? source.StudentRoster;
+        const teachers = source.teachers ?? source.Teachers ?? source.teacherRoster ?? source.TeacherRoster;
+        const progress = source.progress ?? source.Progress ?? source.studentProgress ?? source.StudentProgress;
+        return {
+            students: asArray(students).map((student) => {
+                const identity = this.normalizeDashboardStudentIdentity(student);
+                return {
+                    ...student,
+                    studentCode: identity.studentCode,
+                    studentId: identity.studentId || String(student?.studentId || student?.StudentID || student?.email || '').trim(),
+                    classCode: String(student?.classCode || student?.ClassCode || '').trim().toUpperCase()
+                };
+            }),
+            teachers: asArray(teachers).map((teacher) => ({
                 ...teacher,
                 email: String(teacher?.email || teacher?.teacherEmail || '').trim().toLowerCase(),
                 classCode: String(teacher?.classCode || teacher?.ClassCode || '').trim().toUpperCase()
             })),
-            progress: asArray(payload.progress)
+            progress: asArray(progress).map((entry) => {
+                const identity = this.normalizeDashboardStudentIdentity(entry);
+                return {
+                    ...entry,
+                    studentCode: identity.studentCode,
+                    studentId: identity.studentId || String(entry?.studentId || entry?.StudentID || '').trim(),
+                    classCode: String(
+                        entry?.classCode
+                        || entry?.ClassCode
+                        || entry?.gameState?.classCode
+                        || ''
+                    ).trim().toUpperCase()
+                };
+            })
         };
     }
 
@@ -220,7 +272,214 @@ class TeacherDashboard {
             });
         }
         const normalized = this.normalizeDashboardHydrationPayload(payload);
-        return this.successResult({ data: normalized });
+        const hydratedStudents = normalized.students.map((student) => {
+            const identity = this.normalizeDashboardStudentIdentity(student);
+            const studentCode = String(identity.studentCode || student.displayId || '').trim();
+            const existing = this.students.find((entry) =>
+                this.normalizeDashboardStudentIdentity(entry).identityKey === identity.identityKey
+            );
+            const parsedLevel = parseInt(student.level ?? student.Level ?? student.assignedLevel, 10);
+            const level = (parsedLevel >= 1 && parsedLevel <= 6)
+                ? parsedLevel
+                : (existing?.level || 1);
+            const now = new Date().toISOString();
+            return {
+                ...existing,
+                ...student,
+                id: String(existing?.id || student.id || this.generateStudentId()).trim(),
+                displayId: studentCode || String(existing?.displayId || '').trim(),
+                studentCode,
+                leaderboardName: String(
+                    student.leaderboardName || student.LeaderboardName || student.studentName || student.StudentName || existing?.leaderboardName || ''
+                ).trim(),
+                studentName: String(student.studentName || student.StudentName || student.name || existing?.studentName || '').trim(),
+                name: String(student.studentName || student.StudentName || student.name || existing?.name || '').trim(),
+                studentId: String(student.studentId || student.StudentID || student.email || existing?.studentId || '').trim(),
+                email: String(student.studentId || student.StudentID || student.email || existing?.email || '').trim(),
+                classCode: String(student.classCode || student.ClassCode || existing?.classCode || '').trim().toUpperCase(),
+                level,
+                assignedDate: existing?.assignedDate || student.assignedDate || now,
+                createdAt: existing?.createdAt || student.createdAt || now,
+                gameState: {
+                    round: 1,
+                    cash: 200,
+                    netWorth: 300,
+                    ownedMines: 1,
+                    machinery: 0,
+                    totalProfitLoss: 0,
+                    lastPlayed: null,
+                    ...(existing?.gameState || {})
+                }
+            };
+        });
+
+        this.students = hydratedStudents;
+        const mappedProgressRecords = normalized.progress
+            .map((record) => {
+                const toFinite = (value) => {
+                    const numeric = Number(value);
+                    return Number.isFinite(numeric) ? numeric : undefined;
+                };
+                const identity = this.normalizeDashboardStudentIdentity(record);
+                const normalizedStudentCode = String(identity.studentCode || '').trim();
+                const existingStudent = this.students.find((entry) =>
+                    this.normalizeDashboardStudentIdentity(entry).identityKey === identity.identityKey
+                );
+                return {
+                    ...record,
+                    studentCode: normalizedStudentCode,
+                    studentId: String(identity.studentId || record.studentId || record.StudentID || '').trim(),
+                    classCode: String(record.classCode || record.ClassCode || '').trim().toUpperCase(),
+                    level: toFinite(record.level ?? record.Level ?? record.assignedLevel ?? record.AssignedLevel),
+                    round: toFinite(record.round ?? record.Round ?? record.currentRound ?? record.CurrentRound),
+                    cash: toFinite(record.cash ?? record.Cash ?? record.currentCash ?? record.CurrentCash),
+                    netWorth: toFinite(record.netWorth ?? record.NetWorth),
+                    minesOwned: toFinite(record.minesOwned ?? record.MinesOwned ?? record.ownedMines ?? record.OwnedMines),
+                    machineryOwned: toFinite(record.machineryOwned ?? record.MachineryOwned ?? record.machinery ?? record.Machinery),
+                    totalProfitLoss: toFinite(record.totalProfitLoss ?? record.TotalProfitLoss),
+                    averageRoundProfit: toFinite(record.averageRoundProfit ?? record.AverageRoundProfit),
+                    strategyLabel: String(record.strategyLabel || record.StrategyLabel || '').trim() || undefined,
+                    companyName: String(record.companyName || record.CompanyName || '').trim() || undefined,
+                    investmentProfile: String(record.investmentProfile || record.InvestmentProfile || '').trim() || undefined,
+                    updatedAt: (
+                        record.updatedAt
+                        || record.UpdatedAt
+                        || record.lastPlayed
+                        || record.LastPlayed
+                        || existingStudent?.gameState?.lastPlayed
+                        || undefined
+                    )
+                };
+            })
+        mappedProgressRecords.forEach(record => this.syncFromPlayerRecord(record));
+
+        const existingTeachers = this._loadTeacherList();
+        const teachersByEmail = new Map();
+        existingTeachers.forEach((teacher) => {
+            const email = String(teacher?.email || teacher?.id || '').trim().toLowerCase();
+            if (!email) return;
+            teachersByEmail.set(email, {
+                ...teacher,
+                id: String(teacher?.id || email).trim() || email,
+                email
+            });
+        });
+        normalized.teachers.forEach((teacher) => {
+            const email = String(teacher?.email || teacher?.teacherEmail || '').trim().toLowerCase();
+            if (!email) return;
+            const existing = teachersByEmail.get(email) || {};
+            teachersByEmail.set(email, {
+                ...existing,
+                ...teacher,
+                id: String(existing.id || teacher.id || email).trim() || email,
+                email,
+                classCode: String(teacher.classCode || teacher.ClassCode || existing.classCode || '').trim().toUpperCase(),
+                role: String(teacher.role || existing.role || 'teacher').trim().toLowerCase() || 'teacher'
+            });
+        });
+        const mergedTeachers = Array.from(teachersByEmail.values());
+        this.teachers = mergedTeachers;
+
+        if (options.persist !== false) {
+            this.saveToLocalStorage();
+            this._saveTeacherList(mergedTeachers);
+            try {
+                localStorage.setItem('wa_gold_rush_class_records', JSON.stringify(mappedProgressRecords));
+            } catch (_) {}
+        }
+
+        return this.successResult({
+            data: {
+                ...normalized,
+                progress: mappedProgressRecords
+            }
+        });
+    }
+
+    async hydrateDashboardFromFlowWithFallback(options = {}) {
+        this.loadFromLocalStorage();
+        const cachedTeachers = this._loadTeacherList();
+        this.teachers = Array.isArray(cachedTeachers) ? [...cachedTeachers] : [];
+        const cachedStudentsSnapshot = JSON.parse(JSON.stringify(this.students || []));
+        const cachedTeachersSnapshot = JSON.parse(JSON.stringify(this.teachers || []));
+        let cachedRecordsRaw = null;
+        try {
+            cachedRecordsRaw = localStorage.getItem('wa_gold_rush_class_records');
+        } catch (_) {}
+
+        const teacherSession = this.getTeacherSession();
+        const teacherEmail = String(
+            options.teacherEmail
+            || teacherSession?.teacherEmail
+            || ''
+        ).trim().toLowerCase();
+        if (!teacherEmail) {
+            return this.successResult({
+                source: 'local',
+                fallback: true,
+                reason: 'missing_teacher_session',
+                statusTone: 'info',
+                statusMessage: 'Using cached dashboard data.'
+            });
+        }
+
+        const result = await this.postFlowPayload('getDashboardData', { teacherEmail }, options);
+        if (!result.success) {
+            return this.successResult({
+                source: 'local',
+                fallback: true,
+                reason: result.skipped ? 'flow_unavailable' : 'flow_failed',
+                statusTone: 'info',
+                statusMessage: 'Using cached dashboard data.',
+                error: result.error || ''
+            });
+        }
+
+        if (!this.hasDashboardHydrationContract(result.data)) {
+            return this.successResult({
+                source: 'local',
+                fallback: true,
+                reason: 'invalid_flow_payload',
+                statusTone: 'info',
+                statusMessage: 'Using cached dashboard data.'
+            });
+        }
+
+        let hydrated = null;
+        try {
+            hydrated = this.hydrateDashboardFromNormalizedData(result.data, { enabled: true, persist: true });
+        } catch (_) {
+            hydrated = this.failureResult('Hydration failed.');
+        }
+        if (!hydrated.success) {
+            this.students = cachedStudentsSnapshot;
+            this.teachers = cachedTeachersSnapshot;
+            this.saveToLocalStorage();
+            this._saveTeacherList(cachedTeachersSnapshot);
+            try {
+                if (cachedRecordsRaw == null) {
+                    localStorage.removeItem('wa_gold_rush_class_records');
+                } else {
+                    localStorage.setItem('wa_gold_rush_class_records', cachedRecordsRaw);
+                }
+            } catch (_) {}
+            return this.successResult({
+                source: 'local',
+                fallback: true,
+                reason: 'hydrate_failed',
+                statusTone: 'info',
+                statusMessage: 'Using cached dashboard data.'
+            });
+        }
+
+        return this.successResult({
+            source: 'flow',
+            fallback: false,
+            status: result.status,
+            statusTone: 'success',
+            statusMessage: 'Dashboard synced from SharePoint.',
+            data: hydrated.data
+        });
     }
 
     async syncTeacherToBackend(teacher, options = {}) {
@@ -894,6 +1153,9 @@ class TeacherDashboard {
     }
 
     getAllTeachers() {
+        if (Array.isArray(this.teachers) && this.teachers.length) {
+            return [...this.teachers];
+        }
         return this._loadTeacherList();
     }
 
@@ -972,13 +1234,16 @@ class TeacherDashboard {
             if (changed) {
                 this._saveTeacherList(normalized);
             }
+            this.teachers = normalized;
             return normalized;
         } catch (_) { return []; }
     }
 
     _saveTeacherList(list) {
+        const safeList = Array.isArray(list) ? list : [];
+        this.teachers = [...safeList];
         try {
-            localStorage.setItem('wa_gold_rush_teacher_list', JSON.stringify(list));
+            localStorage.setItem('wa_gold_rush_teacher_list', JSON.stringify(safeList));
         } catch (_) {}
     }
 
