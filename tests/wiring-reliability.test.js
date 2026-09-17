@@ -171,7 +171,23 @@ test('dashboard hydration adapter normalizes expected shape while disabled', () 
 });
 
 test('dashboard hydration loads students/teachers/progress from flow response', async () => {
-    global.localStorage = createStorage();
+    global.localStorage = createStorage({
+        teacher_dashboard: JSON.stringify({
+            students: [{
+                id: 'seed-1',
+                studentCode: 'SC-1',
+                classCode: '6B',
+                gameState: { lastPlayed: '2026-01-01T00:00:00.000Z' }
+            }]
+        }),
+        wa_gold_rush_teacher_list: JSON.stringify([{
+            id: 'local.teacher@example.com',
+            email: 'local.teacher@example.com',
+            name: 'Local Teacher',
+            classCode: '6C',
+            role: 'teacher'
+        }])
+    });
     global.sessionStorage = createStorage({
         wa_gold_rush_teacher_session: JSON.stringify({
             ok: true,
@@ -213,8 +229,9 @@ test('dashboard hydration loads students/teachers/progress from flow response', 
                     Progress: [{
                         StudentCode: 'SC-1',
                         ClassCode: '6b',
-                        round: 4,
-                        netWorth: 1234.5
+                        CurrentRound: 4,
+                        CurrentCash: 456.75,
+                        NetWorth: 1234.5
                     }]
                 }
             };
@@ -231,8 +248,14 @@ test('dashboard hydration loads students/teachers/progress from flow response', 
     assert.equal(dashboard.students[0].studentCode, 'SC-1');
     assert.equal(dashboard.students[0].classCode, '6B');
     assert.equal(dashboard.students[0].gameState.round, 4);
+    assert.equal(dashboard.students[0].gameState.cash, 456.75);
     assert.equal(dashboard.students[0].gameState.netWorth, 1234.5);
+    assert.equal(dashboard.students[0].gameState.lastPlayed, '2026-01-01T00:00:00.000Z');
     assert.equal(dashboard.getTeacher('teacher@example.com')?.email, 'teacher@example.com');
+    assert.equal(dashboard.getTeacher('local.teacher@example.com')?.email, 'local.teacher@example.com');
+    const persistedProgress = JSON.parse(global.localStorage.getItem('wa_gold_rush_class_records'));
+    assert.equal(persistedProgress[0].round, 4);
+    assert.equal(persistedProgress[0].cash, 456.75);
 });
 
 test('dashboard hydration falls back to local cache when flow fails or payload is invalid', async () => {
