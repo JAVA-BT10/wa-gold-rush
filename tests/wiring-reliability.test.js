@@ -58,6 +58,25 @@ test('student auth login hashes PIN and sends expected fields', async () => {
     assert.equal(result.response.studentCode, 'SC-1');
 });
 
+test('student auth change pin respects backend ok=false responses', async () => {
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        callFlow: async () => ({
+            success: true,
+            status: 200,
+            data: { ok: false, message: 'Old PIN mismatch' }
+        })
+    };
+    const auth = require('../shared/student-auth-client.js');
+    const result = await auth.changeStudentPin({
+        classCode: '6B',
+        studentId: '123456',
+        oldPin: '1111',
+        newPin: '2222'
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.error, 'Old PIN mismatch');
+});
+
 test('sharepoint sync builds lower-case save payload and migrates legacy queue items', async () => {
     global.localStorage = createStorage({
         wa_gr_sync_queue: JSON.stringify([
@@ -107,6 +126,7 @@ test('sharepoint sync builds lower-case save payload and migrates legacy queue i
     await sync.retryQueue();
     assert.equal(posted.length, 1);
     assert.equal(posted[0].studentCode, 'SC-1');
+    assert.equal(posted[0].currentAssets, 0);
     assert.equal(sync.queueLength(), 0);
 });
 

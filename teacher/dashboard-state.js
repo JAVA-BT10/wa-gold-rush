@@ -61,6 +61,13 @@ class TeacherDashboard {
     }
 
     async postFlowPayload(flowName, payload, options = {}) {
+        const endpoint = this.getFlowEndpoint(flowName);
+        if (!endpoint || /REPLACE-WITH/i.test(endpoint)) {
+            const error = `Dashboard flow endpoint "${flowName}" is missing or not configured.`;
+            console.warn(error);
+            return { success: false, skipped: true, error };
+        }
+
         const readApiKey = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.getApiKey;
         const apiKey = typeof readApiKey === 'function'
             ? String(readApiKey() || '').trim()
@@ -82,12 +89,25 @@ class TeacherDashboard {
 
         const result = await callFlow(flowName, payload, {
             ...options,
+            endpoints: {
+                ...(options.endpoints || {}),
+                [flowName]: endpoint
+            },
             apiKey,
             requireApiKey: true,
             cache: 'no-store'
         });
         if (!result.success) {
             console.warn(`Dashboard flow "${flowName}" failed.`, result.error || '');
+            return result;
+        }
+        if (result.data && Object.prototype.hasOwnProperty.call(result.data, 'ok') && result.data.ok === false) {
+            return {
+                success: false,
+                status: result.status,
+                data: result.data,
+                error: String(result.data.message || result.data.error || 'Flow request was rejected.').trim()
+            };
         }
         return result;
     }
@@ -144,7 +164,7 @@ class TeacherDashboard {
             return this.failureResult('You are not authorized to unlock students in that class.');
         }
         const payload = {
-            teacherEmail: teacherSession.teacherEmail,
+            teacherEmail: String(teacherSession.teacherEmail || '').trim().toLowerCase(),
             studentCode,
             classCode,
             reason: String(options.reason || '').trim()
@@ -161,7 +181,7 @@ class TeacherDashboard {
             ...student,
             active: false
         });
-        if (!payload.studentCode || !payload.classCode) {
+        if (!payload.studentCode || !payload.classCode || !payload.leaderboardName) {
             return this.failureResult('Student payload is incomplete.');
         }
         if (!this.canTeacherAccessClass(payload.classCode)) {

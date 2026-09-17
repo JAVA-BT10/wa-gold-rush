@@ -15,7 +15,11 @@
             throw new Error('Secure PIN hashing is unavailable in this environment.');
         }
 
-        const encoded = new TextEncoder().encode(normalized);
+        const TextEncoderImpl = globalObj.TextEncoder || (typeof TextEncoder !== 'undefined' ? TextEncoder : null);
+        if (!TextEncoderImpl) {
+            throw new Error('TextEncoder is unavailable in this environment.');
+        }
+        const encoded = new TextEncoderImpl().encode(normalized);
         const digest = await subtle.digest('SHA-256', encoded);
         return Array.from(new Uint8Array(digest))
             .map((byte) => byte.toString(16).padStart(2, '0'))
@@ -83,7 +87,8 @@
             requireApiKey: true,
             cache: 'no-store'
         });
-        const responseOk = result.data?.ok === true || result.success === true;
+        const responseHasOkFlag = result.data && Object.prototype.hasOwnProperty.call(result.data, 'ok');
+        const responseOk = responseHasOkFlag ? result.data?.ok === true : result.success === true;
         return {
             success: result.success && responseOk,
             status: result.status,

@@ -70,7 +70,7 @@ const SharePointSync = (() => {
                 level: Number(payload.Level || payload.level) || 0,
                 currentRound: Number(payload.Round || payload.currentRound) || 1,
                 currentCash: Number(payload.currentCash ?? payload.Cash ?? 0),
-                currentAssets: Number(payload.currentAssets ?? payload.NetWorth ?? 0),
+                currentAssets: Number(payload.currentAssets ?? payload.Assets ?? 0),
                 netWorth: Number(payload.NetWorth ?? payload.netWorth ?? 0),
                 score: Number(payload.Score ?? payload.score ?? 0),
                 progressionMarkersJson: String(payload.ProgressJson || payload.progressionMarkersJson || ''),
@@ -210,9 +210,12 @@ const SharePointSync = (() => {
      */
     async function syncProfile(opts) {
         if (!_resolveEndpoint(CONFIG.profileEndpointKey)) return { queued: false, skipped: true };
-        _dispatchCloudSaveStatus('saving');
         const payload = buildProfilePayload(opts);
-        if (!payload.studentCode) return { queued: false, skipped: true };
+        if (!payload.studentCode) {
+            _dispatchCloudSaveStatus('idle');
+            return { queued: false, skipped: true };
+        }
+        _dispatchCloudSaveStatus('saving');
         try {
             await _post(CONFIG.profileEndpointKey, payload);
             _dispatchCloudSaveStatus('saved to cloud');
@@ -231,8 +234,12 @@ const SharePointSync = (() => {
      */
     async function syncProgress(opts) {
         if (!_resolveEndpoint(CONFIG.progressEndpointKey)) return { queued: false, skipped: true };
-        _dispatchCloudSaveStatus('saving');
         const payload = buildProgressPayload(opts);
+        if (!payload.studentCode) {
+            _dispatchCloudSaveStatus('idle');
+            return { queued: false, skipped: true };
+        }
+        _dispatchCloudSaveStatus('saving');
         try {
             await _post(CONFIG.progressEndpointKey, payload);
             _dispatchCloudSaveStatus('saved to cloud');

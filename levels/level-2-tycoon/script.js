@@ -18,6 +18,7 @@ const PROGRESSION_SNAPSHOT_SCHEMA_VERSION = 2;
 let gameState = null;
 let currentMineForInvestment = null;
 let pendingPurchase = null;
+let cloudSaveStatusListenerBound = false;
 
 function getAssignedLevelFromUrl() {
     const params = new URLSearchParams(window.location.search);
@@ -115,9 +116,12 @@ document.addEventListener('DOMContentLoaded', async function() {
         syncPlayerRecord();
         if (typeof SharePointSync !== 'undefined') {
             updateCloudSaveStatusLabel(SharePointSync.getCloudSaveStatus?.() || 'idle');
-            window.addEventListener('wa-gr-cloud-save-status', (event) => {
-                updateCloudSaveStatusLabel(event?.detail?.status || 'idle');
-            });
+            if (!cloudSaveStatusListenerBound) {
+                window.addEventListener('wa-gr-cloud-save-status', (event) => {
+                    updateCloudSaveStatusLabel(event?.detail?.status || 'idle');
+                });
+                cloudSaveStatusListenerBound = true;
+            }
         }
         updateInvestmentProfilePanel();
     } catch (err) {
@@ -1249,7 +1253,8 @@ function syncPlayerRecord() {
         : null;
     const checkpointStatus = progressionState.checkpointStatus || null;
     const quizScore = progressionState.quizScore ?? latestQuizAttempt?.score ?? null;
-    const quizPassedAt = progressionState.quizPassedAt || (checkpointStatus === 'quiz_passed' ? new Date().toISOString() : null);
+    const quizPassedAt = progressionState.quizPassedAt
+        || (checkpointStatus === 'quiz_passed' ? latestQuizAttempt?.timestamp || null : null);
     const buildProgressionSnapshot = globalThis.WA_GOLD_RUSH_PROGRESS_SNAPSHOT?.build;
     const progressionSnapshotInput = {
         schemaVersion: PROGRESSION_SNAPSHOT_SCHEMA_VERSION,
@@ -1317,7 +1322,7 @@ function syncPlayerRecord() {
     if (typeof SharePointSync !== 'undefined') {
         const netWorth = Number(gameState.getNetWorth());
         const currentCash = Number(gameState.cash);
-        const currentAssets = Number((netWorth - currentCash).toFixed(2));
+        const currentAssets = Number((gameState.getMineValue() + gameState.getMachineryValue()).toFixed(2));
         const needsSupport = checkpointStatus === 'quiz_available' && latestQuizAttempt?.passed === false;
         SharePointSync.syncProgress({
             studentCode,

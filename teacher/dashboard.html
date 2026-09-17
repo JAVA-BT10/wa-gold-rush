@@ -806,6 +806,12 @@
 
         async function deleteRosterRow(studentId) {
             const student = dashboard.getStudent(studentId);
+            if (!student) {
+                const message = 'Student not found.';
+                setStatusMessage('rosterActionMsg', 'error', message);
+                setStatusMessage('dashboardStatus', 'error', message);
+                return;
+            }
             if (!confirm(`Delete ${student?.leaderboardName || student?.name || 'this student'}? Cannot be undone.`)) return;
             const deactivated = await dashboard.deactivateStudentInBackend(student);
             if (!deactivated.success) {
@@ -816,7 +822,11 @@
             }
             const result = dashboard.deleteStudent(studentId);
             if (!result.success) {
-                const error = getResultError(result, 'Unable to delete this student.');
+                const rollback = await dashboard.syncStudentToBackend({ ...student, active: true });
+                const rollbackMessage = rollback?.success
+                    ? ''
+                    : ' Backend reactivation rollback also failed; backend state may now be deactivated.';
+                const error = `${getResultError(result, 'Unable to delete this student.')}${rollbackMessage}`.trim();
                 setStatusMessage('rosterActionMsg', 'error', `Could not delete this student. ${error}`);
                 setStatusMessage('dashboardStatus', 'error', `Could not delete this student. ${error}`);
                 return;

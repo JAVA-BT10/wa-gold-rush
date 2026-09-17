@@ -157,7 +157,7 @@
                 }
             } catch (_) {
                 isJson = false;
-                data = null;
+                data = rawBody || null;
             }
 
             if (!response.ok) {
