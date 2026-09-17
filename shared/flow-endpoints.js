@@ -9,7 +9,8 @@
         upsertTeacher: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/11/workflows/51990841b4b34fb28030e2d5c7da22c0/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=8B3B4_eD2_bz33l21IzumYDEvvenaY_7zw5s2IpUlYM',
         changeStudentPin: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/02/workflows/00d7ad1f20974b5d8a0337e9ea4e9958/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=RpwToQQqWyJTJzTkGxQ3pGwD6r8C3kL_wWNJwChHx20',
         saveProgress: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/11/workflows/de843a7b9cd74079ae14dc3b96e2128a/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=UrSe8pJ17rOw8j3vf-TfOQMVowucgt1-FIdZzUa2vCA',
-        teacherUnlockStudent: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/11/workflows/a7d0d76c24304f6bbfae4cb50df223f8/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=3gHMEDXh4lqrOLpCj9SnuEfSsVhqjrHVQ3ilp8IspWc'
+        teacherUnlockStudent: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/11/workflows/a7d0d76c24304f6bbfae4cb50df223f8/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=3gHMEDXh4lqrOLpCj9SnuEfSsVhqjrHVQ3ilp8IspWc',
+        getDashboardData: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/02/workflows/a633ad56ceaf4cb487d3aeae05543bc9/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=BrofrskCKbHCfxyTjVLDWDo4SPX5mEhHVPhUZazhn3Q'
     };
 
     function applyOverrides(target, source) {

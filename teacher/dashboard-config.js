@@ -98,6 +98,7 @@ setTimeout(() => {
  */
 const sharedFlowEndpoints = window.WA_GOLD_RUSH_FLOW_ENDPOINTS || {};
 const configuredUnlockEndpoint = String(existingFlowEndpoints.teacherUnlockStudent || '').trim();
+const configuredGetDashboardDataEndpoint = String(existingFlowEndpoints.getDashboardData || '').trim();
 
 window.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints = {
     ...sharedFlowEndpoints,
@@ -110,8 +111,10 @@ window.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints = {
         || 'https://REPLACE-WITH-GGR_TeacherResetStudentPin-URL',
     
     // TIER 3 - Data Loading / Dashboard Services
-    getDashboardData: existingFlowEndpoints.getDashboardData
-        || 'https://REPLACE-WITH-GGR_GetDashboardData-URL',
+    getDashboardData: configuredGetDashboardDataEndpoint && !/REPLACE-WITH/i.test(configuredGetDashboardDataEndpoint)
+        ? configuredGetDashboardDataEndpoint
+        : (sharedFlowEndpoints.getDashboardData
+            || 'https://REPLACE-WITH-GGR_GetDashboardData-URL'),
     getStudentProgress: existingFlowEndpoints.getStudentProgress
         || 'https://REPLACE-WITH-GGR_GetStudentProgress-URL',
     
