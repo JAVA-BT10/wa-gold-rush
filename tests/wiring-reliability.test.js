@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 
 function createStorage(initial = {}) {
     const store = new Map(Object.entries(initial));
@@ -309,6 +310,79 @@ test('dashboard hydration falls back to local cache when flow fails or payload i
     assert.equal(invalidResult.success, true);
     assert.equal(invalidResult.source, 'local');
     assert.equal(dashboard.students[0].studentCode, 'LOCAL-1');
+});
+
+test('dashboard hydration reuses one in-flight flow request for overlapping calls', async () => {
+    global.localStorage = createStorage({
+        teacher_dashboard: JSON.stringify({ students: [] }),
+        wa_gold_rush_teacher_list: JSON.stringify([])
+    });
+    global.sessionStorage = createStorage({
+        wa_gold_rush_teacher_session: JSON.stringify({
+            ok: true,
+            teacherEmail: 'teacher@example.com',
+            classCode: '6B',
+            classCodes: ['6B']
+        })
+    });
+    global.WA_GOLD_RUSH_DASHBOARD_CONFIG = {
+        apiKey: 'key',
+        flowEndpoints: {
+            getDashboardData: 'https://example.com/get-dashboard-data'
+        }
+    };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey: 'key' };
+
+    let flowCalls = 0;
+    let resolveFlow;
+    const flowResponse = new Promise((resolve) => {
+        resolveFlow = resolve;
+    });
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        getApiKey: () => 'key',
+        callFlow: async () => {
+            flowCalls += 1;
+            return flowResponse;
+        }
+    };
+
+    const TeacherDashboard = require('../teacher/dashboard-state.js');
+    const dashboard = new TeacherDashboard();
+    const firstHydration = dashboard.hydrateDashboardFromFlowWithFallback();
+    const secondHydration = dashboard.hydrateDashboardFromFlowWithFallback();
+
+    assert.equal(flowCalls, 1);
+
+    resolveFlow({
+        success: true,
+        status: 200,
+        data: {
+            ok: true,
+            students: [],
+            teachers: [],
+            progress: []
+        }
+    });
+
+    const [firstResult, secondResult] = await Promise.all([firstHydration, secondHydration]);
+    assert.equal(firstResult.source, 'flow');
+    assert.equal(secondResult.source, 'flow');
+});
+
+test('dashboard html lifecycle invokes hydration for startup, login, and refresh button', () => {
+    const html = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
+    assert.match(
+        html,
+        /document\.getElementById\('refreshBtn'\)\.addEventListener\('click',[\s\S]*refreshDashboardFromBestSource\(\{ showStatus: true \}\)/
+    );
+    assert.match(
+        html,
+        /async function submitTeacherLogin\(\)[\s\S]*await initializeDashboard\(\{ showHydrationStatus: true \}\)/
+    );
+    assert.match(
+        html,
+        /async function refreshDashboardFromBestSource\(options = \{\}\)[\s\S]*await dashboard\.hydrateDashboardFromFlowWithFallback\(\)[\s\S]*refresh\(\)[\s\S]*refreshTeachers\(\)/
+    );
 });
 
 test('progression snapshot builder keeps full restoration fields', () => {
