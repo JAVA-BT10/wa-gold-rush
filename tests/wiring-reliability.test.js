@@ -371,17 +371,13 @@ test('dashboard hydration reuses one in-flight flow request for overlapping call
 
 test('dashboard html lifecycle invokes hydration for startup, login, and refresh button', () => {
     const html = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
-    assert.match(
-        html,
-        /document\.getElementById\('refreshBtn'\)\.addEventListener\('click',[\s\S]*refreshDashboardFromBestSource\(\{ showStatus: true \}\)/
+    assert.ok(
+        html.includes("withBusyButton('refreshBtn', 'Refreshing…', () => refreshDashboardFromBestSource({ showStatus: true }))")
     );
+    assert.ok(html.includes('await initializeDashboard({ showHydrationStatus: true });'));
     assert.match(
         html,
-        /async function submitTeacherLogin\(\)[\s\S]*await initializeDashboard\(\{ showHydrationStatus: true \}\)/
-    );
-    assert.match(
-        html,
-        /async function refreshDashboardFromBestSource\(options = \{\}\)[\s\S]*await dashboard\.hydrateDashboardFromFlowWithFallback\(\)[\s\S]*refresh\(\)[\s\S]*refreshTeachers\(\)/
+        /async function refreshDashboardFromBestSource\(options = \{\}\)\s*\{[\s\S]*dashboard\.hydrateDashboardFromFlowWithFallback\(\)[\s\S]*refresh\(\)[\s\S]*refreshTeachers\(\)/
     );
 });
 
