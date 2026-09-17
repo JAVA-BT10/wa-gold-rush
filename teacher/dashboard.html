@@ -1135,8 +1135,7 @@
             }
 
             showTeacherDashboard();
-            await initializeDashboard({ showHydrationStatus: false });
-            setStatusMessage('dashboardStatus', 'success', `Welcome ${result.session.teacherName || result.session.teacherEmail}.`);
+            await initializeDashboard({ showHydrationStatus: true });
         }
 
         async function initializeDashboard(options = {}) {

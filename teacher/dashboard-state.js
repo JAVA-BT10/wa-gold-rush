@@ -29,6 +29,7 @@ class TeacherDashboard {
         this.TEACHER_SESSION_STORAGE_KEY = 'wa_gold_rush_teacher_session';
         this.PERMANENT_ADMIN_ENABLED = true;
         this.PERMANENT_ADMIN_ALLOWLIST = new Set(['ben.turner@education.wa.edu.au']);
+        this._dashboardHydrationInFlight = null;
     }
 
     // =========================================================================
@@ -397,89 +398,104 @@ class TeacherDashboard {
     }
 
     async hydrateDashboardFromFlowWithFallback(options = {}) {
-        this.loadFromLocalStorage();
-        const cachedTeachers = this._loadTeacherList();
-        this.teachers = Array.isArray(cachedTeachers) ? [...cachedTeachers] : [];
-        const cachedStudentsSnapshot = JSON.parse(JSON.stringify(this.students || []));
-        const cachedTeachersSnapshot = JSON.parse(JSON.stringify(this.teachers || []));
-        let cachedRecordsRaw = null;
-        try {
-            cachedRecordsRaw = localStorage.getItem('wa_gold_rush_class_records');
-        } catch (_) {}
-
-        const teacherSession = this.getTeacherSession();
-        const teacherEmail = String(
-            options.teacherEmail
-            || teacherSession?.teacherEmail
-            || ''
-        ).trim().toLowerCase();
-        if (!teacherEmail) {
-            return this.successResult({
-                source: 'local',
-                fallback: true,
-                reason: 'missing_teacher_session',
-                statusTone: 'info',
-                statusMessage: 'Using cached dashboard data.'
-            });
+        if (this._dashboardHydrationInFlight) {
+            return this._dashboardHydrationInFlight;
         }
 
-        const result = await this.postFlowPayload('getDashboardData', { teacherEmail }, options);
-        if (!result.success) {
-            return this.successResult({
-                source: 'local',
-                fallback: true,
-                reason: result.skipped ? 'flow_unavailable' : 'flow_failed',
-                statusTone: 'info',
-                statusMessage: 'Using cached dashboard data.',
-                error: result.error || ''
-            });
-        }
-
-        if (!this.hasDashboardHydrationContract(result.data)) {
-            return this.successResult({
-                source: 'local',
-                fallback: true,
-                reason: 'invalid_flow_payload',
-                statusTone: 'info',
-                statusMessage: 'Using cached dashboard data.'
-            });
-        }
-
-        let hydrated = null;
-        try {
-            hydrated = this.hydrateDashboardFromNormalizedData(result.data, { enabled: true, persist: true });
-        } catch (_) {
-            hydrated = this.failureResult('Hydration failed.');
-        }
-        if (!hydrated.success) {
-            this.students = cachedStudentsSnapshot;
-            this.teachers = cachedTeachersSnapshot;
-            this.saveToLocalStorage();
-            this._saveTeacherList(cachedTeachersSnapshot);
+        const hydrationPromise = (async () => {
+            this.loadFromLocalStorage();
+            const cachedTeachers = this._loadTeacherList();
+            this.teachers = Array.isArray(cachedTeachers) ? [...cachedTeachers] : [];
+            const cachedStudentsSnapshot = JSON.parse(JSON.stringify(this.students || []));
+            const cachedTeachersSnapshot = JSON.parse(JSON.stringify(this.teachers || []));
+            let cachedRecordsRaw = null;
             try {
-                if (cachedRecordsRaw == null) {
-                    localStorage.removeItem('wa_gold_rush_class_records');
-                } else {
-                    localStorage.setItem('wa_gold_rush_class_records', cachedRecordsRaw);
-                }
+                cachedRecordsRaw = localStorage.getItem('wa_gold_rush_class_records');
             } catch (_) {}
-            return this.successResult({
-                source: 'local',
-                fallback: true,
-                reason: 'hydrate_failed',
-                statusTone: 'info',
-                statusMessage: 'Using cached dashboard data.'
-            });
-        }
 
-        return this.successResult({
-            source: 'flow',
-            fallback: false,
-            status: result.status,
-            statusTone: 'success',
-            statusMessage: 'Dashboard synced from SharePoint.',
-            data: hydrated.data
-        });
+            const teacherSession = this.getTeacherSession();
+            const teacherEmail = String(
+                options.teacherEmail
+                || teacherSession?.teacherEmail
+                || ''
+            ).trim().toLowerCase();
+            if (!teacherEmail) {
+                return this.successResult({
+                    source: 'local',
+                    fallback: true,
+                    reason: 'missing_teacher_session',
+                    statusTone: 'info',
+                    statusMessage: 'Using cached dashboard data.'
+                });
+            }
+
+            const result = await this.postFlowPayload('getDashboardData', { teacherEmail }, options);
+            if (!result.success) {
+                return this.successResult({
+                    source: 'local',
+                    fallback: true,
+                    reason: result.skipped ? 'flow_unavailable' : 'flow_failed',
+                    statusTone: 'info',
+                    statusMessage: 'Using cached dashboard data.',
+                    error: result.error || ''
+                });
+            }
+
+            if (!this.hasDashboardHydrationContract(result.data)) {
+                return this.successResult({
+                    source: 'local',
+                    fallback: true,
+                    reason: 'invalid_flow_payload',
+                    statusTone: 'info',
+                    statusMessage: 'Using cached dashboard data.'
+                });
+            }
+
+            let hydrated = null;
+            try {
+                hydrated = this.hydrateDashboardFromNormalizedData(result.data, { enabled: true, persist: true });
+            } catch (_) {
+                hydrated = this.failureResult('Hydration failed.');
+            }
+            if (!hydrated.success) {
+                this.students = cachedStudentsSnapshot;
+                this.teachers = cachedTeachersSnapshot;
+                this.saveToLocalStorage();
+                this._saveTeacherList(cachedTeachersSnapshot);
+                try {
+                    if (cachedRecordsRaw == null) {
+                        localStorage.removeItem('wa_gold_rush_class_records');
+                    } else {
+                        localStorage.setItem('wa_gold_rush_class_records', cachedRecordsRaw);
+                    }
+                } catch (_) {}
+                return this.successResult({
+                    source: 'local',
+                    fallback: true,
+                    reason: 'hydrate_failed',
+                    statusTone: 'info',
+                    statusMessage: 'Using cached dashboard data.'
+                });
+            }
+
+            return this.successResult({
+                source: 'flow',
+                fallback: false,
+                status: result.status,
+                statusTone: 'success',
+                statusMessage: 'Dashboard synced from SharePoint.',
+                data: hydrated.data
+            });
+        })();
+
+        this._dashboardHydrationInFlight = hydrationPromise;
+        try {
+            return await hydrationPromise;
+        } finally {
+            if (this._dashboardHydrationInFlight === hydrationPromise) {
+                this._dashboardHydrationInFlight = null;
+            }
+        }
     }
 
     async syncTeacherToBackend(teacher, options = {}) {
