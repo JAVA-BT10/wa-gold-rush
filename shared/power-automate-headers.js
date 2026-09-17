@@ -105,17 +105,103 @@
         });
     }
 
+    function isPlaceholderEndpoint(url) {
+        return /REPLACE-WITH/i.test(String(url || ''));
+    }
+
+    function resolveFlowEndpoint(flowName, endpointMap) {
+        if (!flowName) return '';
+        const flowKey = String(flowName || '').trim();
+        if (!flowKey) return '';
+        const map = endpointMap || globalObj.WA_GOLD_RUSH_FLOW_ENDPOINTS || globalObj.WA_GOLD_RUSH_DASHBOARD_CONFIG?.flowEndpoints;
+        return String(map?.[flowKey] || '').trim();
+    }
+
+    async function callFlow(flowOrUrl, payload, options = {}) {
+        const isNamedFlow = !/^https?:/i.test(String(flowOrUrl || '').trim());
+        const endpoint = isNamedFlow
+            ? resolveFlowEndpoint(flowOrUrl, options.endpoints)
+            : String(flowOrUrl || '').trim();
+
+        if (!endpoint) {
+            return {
+                success: false,
+                skipped: true,
+                flowName: isNamedFlow ? String(flowOrUrl || '').trim() : '',
+                error: isNamedFlow
+                    ? `Flow endpoint "${String(flowOrUrl || '').trim()}" is not configured.`
+                    : 'Flow endpoint URL is missing.'
+            };
+        }
+        if (isPlaceholderEndpoint(endpoint)) {
+            return {
+                success: false,
+                skipped: true,
+                flowName: isNamedFlow ? String(flowOrUrl || '').trim() : '',
+                error: isNamedFlow
+                    ? `Flow endpoint "${String(flowOrUrl || '').trim()}" is still a placeholder.`
+                    : 'Flow endpoint URL is still a placeholder.'
+            };
+        }
+
+        try {
+            const response = await postToFlow(endpoint, payload, options);
+            let rawBody = '';
+            let data = null;
+            let isJson = false;
+            try {
+                rawBody = await response.text();
+                if (rawBody) {
+                    data = JSON.parse(rawBody);
+                    isJson = true;
+                }
+            } catch (_) {
+                isJson = false;
+                data = rawBody || null;
+            }
+
+            if (!response.ok) {
+                const errorText = String(data?.error || data?.message || rawBody || `HTTP ${response.status}`).trim();
+                return {
+                    success: false,
+                    status: response.status,
+                    data: isJson ? data : null,
+                    rawBody,
+                    error: errorText || `HTTP ${response.status}`
+                };
+            }
+
+            return {
+                success: true,
+                status: response.status,
+                data: isJson ? data : null,
+                rawBody
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: String(error?.message || error || 'Flow request failed.')
+            };
+        }
+    }
+
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE = globalObj.WA_GOLD_RUSH_POWER_AUTOMATE || {};
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.buildHeaders = buildPowerAutomateHeaders;
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.getApiKey = readConfiguredApiKey;
+    globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.resolveFlowEndpoint = resolveFlowEndpoint;
+    globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.isPlaceholderEndpoint = isPlaceholderEndpoint;
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.postToFlow = postToFlow;
+    globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = callFlow;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             buildPowerAutomateHeaders,
             readConfiguredApiKey,
             resolveApiKey,
-            postToFlow
+            postToFlow,
+            callFlow,
+            resolveFlowEndpoint,
+            isPlaceholderEndpoint
         };
     }
 })(typeof globalThis !== 'undefined' ? globalThis : window);

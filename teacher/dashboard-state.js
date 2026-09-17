@@ -35,7 +35,8 @@ class TeacherDashboard {
     // =========================================================================
 
     getFlowEndpoint(flowName) {
-        const endpoints = globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.flowEndpoints;
+        const endpoints = globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.flowEndpoints
+            || globalThis.WA_GOLD_RUSH_FLOW_ENDPOINTS;
         return String(endpoints?.[flowName] || '').trim();
     }
 
@@ -81,55 +82,49 @@ class TeacherDashboard {
             return { success: false, skipped: true, error };
         }
 
-        const fetchImpl = typeof options.fetch === 'function'
-            ? options.fetch
-            : (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
-        if (!fetchImpl) {
-            console.warn(`Dashboard flow "${flowName}" could not run because fetch is unavailable.`);
-            return { success: false, skipped: true, error: 'Fetch is unavailable.' };
+        const callFlow = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.callFlow;
+        if (typeof callFlow !== 'function') {
+            return { success: false, error: 'Power Automate flow helper is unavailable.' };
         }
 
-        try {
-            const postToFlow = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.postToFlow;
-            if (typeof postToFlow !== 'function') {
-                throw new Error('Power Automate POST helper is unavailable.');
-            }
-            const response = await postToFlow(endpoint, payload, {
-                fetch: fetchImpl,
-                apiKey,
-                requireApiKey: true,
-                cache: 'no-store'
-            });
-
-            if (!response.ok) {
-                let responseText = '';
-                try {
-                    responseText = await response.text();
-                } catch (_) {}
-                console.warn(
-                    `Dashboard flow "${flowName}" failed (HTTP ${response.status}).`,
-                    responseText || ''
-                );
-                return { success: false, status: response.status, error: responseText || `HTTP ${response.status}` };
-            }
-
-            return { success: true, status: response.status };
-        } catch (error) {
-            const message = String(error?.message || error || 'Unknown error');
-            console.error(`Dashboard flow "${flowName}" request failed.`, error);
-            return { success: false, error: message };
+        const result = await callFlow(flowName, payload, {
+            ...options,
+            endpoints: {
+                ...(options.endpoints || {}),
+                [flowName]: endpoint
+            },
+            apiKey,
+            requireApiKey: true,
+            cache: 'no-store'
+        });
+        if (!result.success) {
+            console.warn(`Dashboard flow "${flowName}" failed.`, result.error || '');
+            return result;
         }
+        if (result.data && Object.prototype.hasOwnProperty.call(result.data, 'ok') && result.data.ok === false) {
+            return {
+                success: false,
+                status: result.status,
+                data: result.data,
+                error: String(result.data.message || result.data.error || 'Flow request was rejected.').trim()
+            };
+        }
+        return result;
     }
 
     buildStudentFlowPayload(student = {}) {
         const parsedLevel = parseInt(student.level ?? student.assignedLevel, 10);
+        const teacherSession = this.getTeacherSession();
         return {
             studentCode: String(student.studentCode || student.displayId || '').trim(),
-            leaderboardName: String(student.leaderboardName || student.name || '').trim(),
             studentId: String(student.studentId || student.email || '').trim(),
             studentName: String(student.studentName || student.name || '').trim(),
+            leaderboardName: String(student.leaderboardName || student.name || '').trim(),
             classCode: String(student.classCode || '').trim(),
-            level: (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : 1
+            Level: (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : 1,
+            active: student.active !== false,
+            teacherEmailPrimary: String(student.teacherEmailPrimary || teacherSession?.teacherEmail || '').trim().toLowerCase(),
+            timestampUtc: new Date().toISOString()
         };
     }
 
@@ -149,10 +144,83 @@ class TeacherDashboard {
 
     async syncStudentToBackend(student, options = {}) {
         const payload = this.buildStudentFlowPayload(student);
-        if (!payload.studentCode || !payload.leaderboardName) {
+        if (!payload.studentCode || !payload.leaderboardName || !payload.classCode) {
             return { success: false, skipped: true, error: 'Student payload is incomplete.' };
         }
         return this.postFlowPayload('upsertStudentProfile', payload, options);
+    }
+
+    async unlockStudentAccount(student = {}, options = {}) {
+        const teacherSession = this.getTeacherSession();
+        const studentCode = String(student.studentCode || student.displayId || '').trim();
+        const classCode = String(student.classCode || '').trim().toUpperCase();
+        if (!teacherSession?.teacherEmail) {
+            return this.failureResult('Teacher session is required.');
+        }
+        if (!studentCode || !classCode) {
+            return this.failureResult('Student code and class code are required.');
+        }
+        if (!this.canTeacherAccessClass(classCode)) {
+            return this.failureResult('You are not authorized to unlock students in that class.');
+        }
+        const payload = {
+            teacherEmail: String(teacherSession.teacherEmail || '').trim().toLowerCase(),
+            studentCode,
+            classCode,
+            reason: String(options.reason || '').trim()
+        };
+        const result = await this.postFlowPayload('teacherUnlockStudent', payload, options);
+        if (!result.success) {
+            return this.failureResult(result.error || 'Unable to unlock this student.', { status: result.status });
+        }
+        return this.successResult({ response: result.data, status: result.status });
+    }
+
+    async deactivateStudentInBackend(student = {}, options = {}) {
+        const payload = this.buildStudentFlowPayload({
+            ...student,
+            active: false
+        });
+        if (!payload.studentCode || !payload.classCode || !payload.leaderboardName) {
+            return this.failureResult('Student payload is incomplete.');
+        }
+        if (!this.canTeacherAccessClass(payload.classCode)) {
+            return this.failureResult('You are not authorized to deactivate that class record.');
+        }
+        const result = await this.postFlowPayload('upsertStudentProfile', payload, options);
+        if (!result.success) {
+            return this.failureResult(result.error || 'Unable to deactivate this student.', { status: result.status });
+        }
+        return this.successResult({ response: result.data, status: result.status });
+    }
+
+    normalizeDashboardHydrationPayload(payload = {}) {
+        const asArray = (value) => Array.isArray(value) ? value : [];
+        return {
+            students: asArray(payload.students).map((student) => ({
+                ...student,
+                studentCode: String(student?.studentCode || student?.StudentCode || student?.displayId || '').trim(),
+                classCode: String(student?.classCode || student?.ClassCode || '').trim().toUpperCase()
+            })),
+            teachers: asArray(payload.teachers).map((teacher) => ({
+                ...teacher,
+                email: String(teacher?.email || teacher?.teacherEmail || '').trim().toLowerCase(),
+                classCode: String(teacher?.classCode || teacher?.ClassCode || '').trim().toUpperCase()
+            })),
+            progress: asArray(payload.progress)
+        };
+    }
+
+    hydrateDashboardFromNormalizedData(payload = {}, options = {}) {
+        if (options.enabled !== true) {
+            return this.successResult({
+                skipped: true,
+                reason: 'dashboard_hydration_adapter_disabled',
+                data: this.normalizeDashboardHydrationPayload(payload)
+            });
+        }
+        const normalized = this.normalizeDashboardHydrationPayload(payload);
+        return this.successResult({ data: normalized });
     }
 
     async syncTeacherToBackend(teacher, options = {}) {
@@ -166,7 +234,7 @@ class TeacherDashboard {
     async syncStudentsToBackend(students = [], options = {}) {
         const payload = (Array.isArray(students) ? students : [])
             .map(student => this.buildStudentFlowPayload(student))
-            .filter(student => student.studentCode && student.leaderboardName);
+            .filter(student => student.studentCode && student.leaderboardName && student.classCode);
         if (!payload.length) {
             return { success: true, skipped: true, count: 0 };
         }
@@ -321,64 +389,15 @@ class TeacherDashboard {
             });
         }
 
-        const endpoint = this.getFlowEndpoint('loginTeacher');
-        if (!endpoint) {
-            return this.failureResult('Teacher login is not configured.');
-        }
-
-        const fetchImpl = typeof options.fetch === 'function'
-            ? options.fetch
-            : (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
-
-        if (!fetchImpl) {
-            return this.failureResult('This browser cannot complete teacher sign-in.');
-        }
-
-        let response;
-        try {
-            const buildHeaders = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.buildHeaders;
-            response = await fetchImpl(endpoint, {
-                method: 'POST',
-                headers: typeof buildHeaders === 'function'
-                    ? buildHeaders()
-                    : (() => {
-                        const headers = {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                        };
-                        const apiKey = String(globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey || '').trim();
-                        if (apiKey) headers['X-GGR-Key'] = apiKey;
-                        return headers;
-                    })(),
-                cache: 'no-store',
-                body: JSON.stringify({ teacherEmail, classCode })
-            });
-        } catch (_) {
-            return this.failureResult('Could not reach teacher login. Check your connection and try again.');
-        }
-
-        let payload = null;
-        let rawBody = '';
-        let responseFormatInvalid = false;
-
-        try {
-            rawBody = await response.text();
-            payload = rawBody ? JSON.parse(rawBody) : null;
-        } catch (_) {
-            payload = null;
-            responseFormatInvalid = true;
-        }
-
-        if (!response.ok) {
-            const serverMessage = String(
-                payload?.error || payload?.message || rawBody || ''
-            ).trim();
+        const result = await this.postFlowPayload('loginTeacher', { teacherEmail, classCode }, options);
+        const payload = result.data;
+        if (!result.success) {
             return this.failureResult(
-                serverMessage || `Teacher login request failed (HTTP ${response.status}).`
+                result.error || 'Could not reach teacher login. Check your connection and try again.'
             );
         }
 
-        if (responseFormatInvalid || !payload || typeof payload !== 'object') {
+        if (!payload || typeof payload !== 'object') {
             return this.failureResult('Teacher login returned an unreadable response. Please try again later.');
         }
 

@@ -389,6 +389,7 @@
             }
         }
     </script>
+    <script src="../shared/flow-endpoints.js"></script>
     <script src="dashboard-config.js"></script>
     <script src="../shared/power-automate-headers.js"></script>
     <script src="dashboard-state.js"></script>
@@ -740,6 +741,7 @@
                     <td>
                         <div class="inline-actions">
                             <button class="btn-secondary" data-action="save"   data-id="${id}">Save</button>
+                            <button class="btn-secondary" data-action="unlock" data-id="${id}">Unlock</button>
                             <button class="btn-danger"    data-action="delete" data-id="${id}">Del</button>
                         </div>
                     </td>
@@ -780,12 +782,51 @@
             refresh();
         }
 
-        function deleteRosterRow(studentId) {
+        async function unlockRosterRow(studentId) {
             const student = dashboard.getStudent(studentId);
+            if (!student) return;
+            if (!dashboard.canTeacherAccessClass(student.classCode)) {
+                const message = 'You are not authorized to unlock students in that class.';
+                setStatusMessage('rosterActionMsg', 'error', message);
+                setStatusMessage('dashboardStatus', 'error', message);
+                return;
+            }
+            const reason = String(prompt('Optional unlock reason (saved to audit trail):', 'Teacher unlock from dashboard') || '').trim();
+            const result = await dashboard.unlockStudentAccount(student, { reason });
+            if (!result.success) {
+                const error = getResultError(result, 'Unable to unlock this student.');
+                setStatusMessage('rosterActionMsg', 'error', error);
+                setStatusMessage('dashboardStatus', 'error', error);
+                return;
+            }
+            const message = `Unlocked ${describeStudent(student)} after backend confirmation.`;
+            setStatusMessage('rosterActionMsg', 'success', message);
+            setStatusMessage('dashboardStatus', 'success', message);
+        }
+
+        async function deleteRosterRow(studentId) {
+            const student = dashboard.getStudent(studentId);
+            if (!student) {
+                const message = 'Student not found.';
+                setStatusMessage('rosterActionMsg', 'error', message);
+                setStatusMessage('dashboardStatus', 'error', message);
+                return;
+            }
             if (!confirm(`Delete ${student?.leaderboardName || student?.name || 'this student'}? Cannot be undone.`)) return;
+            const deactivated = await dashboard.deactivateStudentInBackend(student);
+            if (!deactivated.success) {
+                const error = getResultError(deactivated, 'Unable to deactivate this student in the backend.');
+                setStatusMessage('rosterActionMsg', 'error', error);
+                setStatusMessage('dashboardStatus', 'error', error);
+                return;
+            }
             const result = dashboard.deleteStudent(studentId);
             if (!result.success) {
-                const error = getResultError(result, 'Unable to delete this student.');
+                const rollback = await dashboard.syncStudentToBackend({ ...student, active: true });
+                const rollbackMessage = rollback?.success
+                    ? ''
+                    : ' Backend reactivation rollback also failed; backend state may now be deactivated.';
+                const error = `${getResultError(result, 'Unable to delete this student.')}${rollbackMessage}`.trim();
                 setStatusMessage('rosterActionMsg', 'error', `Could not delete this student. ${error}`);
                 setStatusMessage('dashboardStatus', 'error', `Could not delete this student. ${error}`);
                 return;
@@ -802,6 +843,7 @@
             const sid    = t.getAttribute('data-id');
             if (!action || !sid) return;
             if (action === 'save')   saveRosterRow(sid);
+            if (action === 'unlock') unlockRosterRow(sid);
             if (action === 'delete') deleteRosterRow(sid);
         });
 

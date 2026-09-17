@@ -318,7 +318,7 @@
 
         <!-- Access Error Message -->
         <div id="accessErrorContainer" style="display: none;">
-            <div id="accessErrorMessage" class="access-error" role="alert" aria-live="assertive">🔒 That level is currently locked. Complete the required checkpoint quiz and wait for teacher approval to proceed.</div>
+            <div id="accessErrorMessage" class="access-error" role="alert" aria-live="assertive">🔒 That level is currently locked. Complete the required checkpoint quiz to proceed.</div>
         </div>
 
         <section id="main-content" class="levels-grid">
@@ -358,6 +358,30 @@
                 <button id="studentLogoutBtn" class="btn-play" type="button">Log Out</button>
                 <span id="studentSessionSummary" class="level-description" style="margin: 0;"></span>
             </div>
+            <details style="margin-top: 12px;">
+                <summary>Change Student PIN</summary>
+                <form id="studentPinChangeForm" class="student-login-grid" style="margin-top: 12px;">
+                    <label for="pinClassCodeInput">Class Code
+                        <input id="pinClassCodeInput" type="text" maxlength="20" placeholder="e.g. 6B" required>
+                    </label>
+                    <label for="pinStudentIdInput">Student ID
+                        <input id="pinStudentIdInput" type="text" maxlength="30" placeholder="e.g. 123456" required>
+                    </label>
+                    <label for="oldPinInput">Old PIN
+                        <input id="oldPinInput" type="password" maxlength="12" inputmode="numeric" required>
+                    </label>
+                    <label for="newPinInput">New PIN
+                        <input id="newPinInput" type="password" maxlength="12" inputmode="numeric" required>
+                    </label>
+                    <label for="confirmNewPinInput">Confirm New PIN
+                        <input id="confirmNewPinInput" type="password" maxlength="12" inputmode="numeric" required>
+                    </label>
+                    <div class="student-actions">
+                        <button id="studentPinChangeBtn" class="btn-student" type="submit">🔁 Change PIN</button>
+                        <span id="studentPinStatus" class="level-description" style="margin: 0;"></span>
+                    </div>
+                </form>
+            </details>
         </section>
 
         <!-- Admin Section -->
@@ -371,6 +395,22 @@
         </div>
     </div>
 
+    <script src="teacher/runtime-config.js"></script>
+    <script>
+        window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG || {};
+        if (!window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey) {
+            const runtimeApiKey = document.querySelector('meta[name="wa-ggr-api-key"]')?.content
+                || document.documentElement.dataset.ggrApiKey
+                || window.WA_GOLD_RUSH_RUNTIME_CONFIG?.apiKey
+                || '';
+            if (String(runtimeApiKey).trim()) {
+                window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey = String(runtimeApiKey).trim();
+            }
+        }
+    </script>
+    <script src="shared/flow-endpoints.js"></script>
+    <script src="shared/power-automate-headers.js"></script>
+    <script src="shared/student-auth-client.js"></script>
     <script>
         /**
          * Level structure and access logic
@@ -440,6 +480,7 @@
         const STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
         const STUDENT_LOGIN_QUERY_PARAM = 'studentLogin';
         const RETURN_TO_QUERY_PARAM = 'returnTo';
+        const FLOW_STUDENT_LOGIN_FEATURE_FLAG = !!window.WA_GOLD_RUSH_FEATURE_FLAGS?.enableFlowStudentLogin;
 
         function getTeacherDashboardUrl(isSignIn = false) {
             const path = isSignIn
@@ -466,8 +507,7 @@
                             approvalStatus: gs.approvalStatus
                         }
                         : null);
-                return progressionState?.checkpointStatus === 'quiz_passed'
-                    && progressionState?.approvalStatus === 'approved';
+                return progressionState?.checkpointStatus === 'quiz_passed';
             } catch (_) {
                 return false;
             }
@@ -490,7 +530,7 @@
             if (!level.requiresApproval) {
                 return null;
             }
-            return `Complete Level ${level.requiredCheckpointLevel} checkpoint quiz (4/5 correct) and wait for teacher approval.`;
+            return `Complete Level ${level.requiredCheckpointLevel} checkpoint quiz.`;
         }
 
         /**
@@ -544,7 +584,7 @@
                 const errorContainer = document.getElementById('accessErrorContainer');
                 const errorMessage = document.getElementById('accessErrorMessage');
                 if (errorContainer && errorMessage) {
-                    errorMessage.textContent = '🔒 That level is currently locked. Complete the required checkpoint quiz and wait for teacher approval to proceed.';
+                    errorMessage.textContent = '🔒 That level is currently locked. Complete the required checkpoint quiz to proceed.';
                     errorContainer.style.display = 'block';
                 }
                 window.history.replaceState({}, document.title, window.location.pathname);
@@ -901,11 +941,15 @@ const classCodes = Array.isArray(session.classCodes)
             };
         }
 
-        function handleStudentLogin(event) {
+        async function handleStudentLogin(event) {
             event.preventDefault();
             const nextSession = buildStudentSessionFromForm();
             if (!nextSession) {
                 alert('Student Code and Leaderboard Name are required.');
+                return;
+            }
+            if (FLOW_STUDENT_LOGIN_FEATURE_FLAG) {
+                alert('Flow-based student login is prepared but not activated for sessions until response-contract validation is complete.');
                 return;
             }
             const saved = setStorageValue(localStorage, STUDENT_SESSION_KEY, JSON.stringify(nextSession));
@@ -943,6 +987,55 @@ const classCodes = Array.isArray(session.classCodes)
             toggleStudentAuthUI();
         }
 
+        async function handleStudentPinChange(event) {
+            event.preventDefault();
+            const classCode = String(document.getElementById('pinClassCodeInput')?.value || '').trim().toUpperCase();
+            const studentId = String(document.getElementById('pinStudentIdInput')?.value || '').trim();
+            const oldPin = String(document.getElementById('oldPinInput')?.value || '').trim();
+            const newPin = String(document.getElementById('newPinInput')?.value || '').trim();
+            const confirmNewPin = String(document.getElementById('confirmNewPinInput')?.value || '').trim();
+            const statusEl = document.getElementById('studentPinStatus');
+
+            const setStatus = (message, isError = false) => {
+                if (!statusEl) return;
+                statusEl.textContent = message;
+                statusEl.style.color = isError ? '#c62828' : '#2e7d32';
+            };
+
+            if (!classCode || !studentId || !oldPin || !newPin || !confirmNewPin) {
+                setStatus('All PIN fields are required.', true);
+                return;
+            }
+            if (newPin !== confirmNewPin) {
+                setStatus('New PIN and confirmation must match.', true);
+                return;
+            }
+            if (oldPin === newPin) {
+                setStatus('New PIN must be different from old PIN.', true);
+                return;
+            }
+
+            try {
+                setStatus('Saving…');
+                const result = await window.WA_GOLD_RUSH_STUDENT_AUTH?.changeStudentPin({
+                    classCode,
+                    studentId,
+                    oldPin,
+                    newPin
+                });
+                document.getElementById('oldPinInput').value = '';
+                document.getElementById('newPinInput').value = '';
+                document.getElementById('confirmNewPinInput').value = '';
+                if (!result?.success) {
+                    setStatus(result?.error || 'PIN update failed.', true);
+                    return;
+                }
+                setStatus('PIN updated after backend confirmation.');
+            } catch (error) {
+                setStatus(error?.message || 'PIN update failed.', true);
+            }
+        }
+
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', () => {
             checkAccessError();
@@ -956,6 +1049,7 @@ const classCodes = Array.isArray(session.classCodes)
             const studentLoginForm = document.getElementById('studentLoginForm');
             const studentContinueBtn = document.getElementById('studentContinueBtn');
             const studentLogoutBtn = document.getElementById('studentLogoutBtn');
+            const studentPinChangeForm = document.getElementById('studentPinChangeForm');
             if (studentLoginForm) {
                 studentLoginForm.addEventListener('submit', handleStudentLogin);
             }
@@ -964,6 +1058,9 @@ const classCodes = Array.isArray(session.classCodes)
             }
             if (studentLogoutBtn) {
                 studentLogoutBtn.addEventListener('click', handleStudentLogout);
+            }
+            if (studentPinChangeForm) {
+                studentPinChangeForm.addEventListener('submit', handleStudentPinChange);
             }
             toggleStudentAuthUI();
         });

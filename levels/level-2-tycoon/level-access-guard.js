@@ -37,7 +37,7 @@ class LevelAccessGuard {
             return true;
         }
         const state = this.getSavedProgressionState(this.getRequiredCheckpointLevel());
-        return state?.checkpointStatus === 'quiz_passed' && state?.approvalStatus === 'approved';
+        return state?.checkpointStatus === 'quiz_passed';
     }
 
     getAccessDenialReason() {
@@ -56,8 +56,8 @@ class LevelAccessGuard {
         if (checkpointStatus !== 'quiz_passed') {
             return `Level ${requiredLevel} quiz status: ${checkpointStatus}.`;
         }
-        if (approvalStatus !== 'approved') {
-            return `Awaiting teacher approval for your Level ${requiredLevel} checkpoint.`;
+        if (approvalStatus && approvalStatus !== 'approved') {
+            return `Level ${requiredLevel} quiz passed. Last review status: ${approvalStatus}.`;
         }
 
         return null;

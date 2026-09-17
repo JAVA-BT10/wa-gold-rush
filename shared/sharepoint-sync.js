@@ -14,10 +14,8 @@ const SharePointSync = (() => {
     // Configuration — update these URLs after creating your Power Automate flows
     // -------------------------------------------------------------------------
     const CONFIG = {
-        // URL for the "upsert student/profile" Power Automate HTTP flow
-        profileEndpoint: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/06/workflows/441ec597942642278c09e29b5c7195cf/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=3VrGGK2ZaELVnG_rtkpS8RT7TGttvKNeb1YeuocZxjI',
-        // URL for the "upsert level progress/result" Power Automate HTTP flow
-        progressEndpoint: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/11/workflows/de843a7b9cd74079ae14dc3b96e2128a/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=UrSe8pJ17rOw8j3vf-TfOQMVowucgt1-FIdZzUa2vCA',
+        profileEndpointKey: 'upsertStudentProfile',
+        progressEndpointKey: 'saveProgress',
         // Shared secret sent as X-GGR-Key header — set after creating flows
         apiKey: '',
         // Maximum number of queued retries kept in localStorage
@@ -27,15 +25,85 @@ const SharePointSync = (() => {
     };
 
     const QUEUE_KEY = 'wa_gr_sync_queue';
+    const QUEUE_SCHEMA_VERSION = 2;
     let _retryTimer = null;
+    let _cloudSaveStatus = 'idle';
 
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+    function _dispatchCloudSaveStatus(status) {
+        _cloudSaveStatus = status;
+        if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof window.CustomEvent === 'function') {
+            window.dispatchEvent(new CustomEvent('wa-gr-cloud-save-status', {
+                detail: { status }
+            }));
+        }
+    }
+
+    function _normalizeQueueItem(item) {
+        if (!item || typeof item !== 'object') return null;
+        const type = item.type === 'profile' ? 'profile' : (item.type === 'progress' ? 'progress' : '');
+        if (!type) return null;
+
+        let payload = item.payload && typeof item.payload === 'object' ? { ...item.payload } : null;
+        if (!payload) return null;
+
+        if (type === 'profile' && !payload.studentCode && payload.StudentCode) {
+            payload = {
+                studentCode: String(payload.StudentCode || '').trim(),
+                studentId: String(payload.StudentID || '').trim(),
+                studentName: String(payload.StudentName || '').trim(),
+                leaderboardName: String(payload.LeaderboardName || '').trim(),
+                classCode: String(payload.ClassCode || '').trim(),
+                Level: Number(payload.Level || payload.level) || 1,
+                active: payload.active !== false,
+                teacherEmailPrimary: String(payload.teacherEmailPrimary || '').trim().toLowerCase(),
+                timestampUtc: String(payload.timestampUtc || payload.LastPlayedUtc || new Date().toISOString())
+            };
+        }
+
+        if (type === 'progress' && !payload.studentCode && payload.StudentCode) {
+            payload = {
+                studentCode: String(payload.StudentCode || '').trim(),
+                classCode: String(payload.classCode || payload.ClassCode || '').trim().toUpperCase(),
+                level: Number(payload.Level || payload.level) || 0,
+                currentRound: Number(payload.Round || payload.currentRound) || 1,
+                currentCash: Number(payload.currentCash ?? payload.Cash ?? 0),
+                currentAssets: Number(payload.currentAssets ?? payload.Assets ?? 0),
+                netWorth: Number(payload.NetWorth ?? payload.netWorth ?? 0),
+                score: Number(payload.Score ?? payload.score ?? 0),
+                progressionMarkersJson: String(payload.ProgressJson || payload.progressionMarkersJson || ''),
+                badgesJson: String(payload.BadgesJson || payload.badgesJson || ''),
+                achievementsCount: Number(payload.achievementsCount || 0),
+                sessionStatus: String(payload.sessionStatus || 'active'),
+                needsSupport: payload.needsSupport === true,
+                supportReason: String(payload.supportReason || '')
+            };
+        }
+
+        if (type === 'progress' && !payload.studentCode) return null;
+        if (type === 'profile' && !payload.studentCode) return null;
+        return {
+            type,
+            payload,
+            queuedAt: String(item.queuedAt || new Date().toISOString()),
+            attempts: Number(item.attempts) || 0,
+            payloadSchemaVersion: QUEUE_SCHEMA_VERSION
+        };
+    }
+
     function _loadQueue() {
         try {
             const q = JSON.parse(localStorage.getItem(QUEUE_KEY));
-            return Array.isArray(q) ? q : [];
+            if (!Array.isArray(q)) return [];
+            const normalized = q
+                .map(_normalizeQueueItem)
+                .filter(Boolean);
+            if (normalized.length !== q.length || q.some(item => item?.payloadSchemaVersion !== QUEUE_SCHEMA_VERSION)) {
+                _saveQueue(normalized);
+            }
+            return normalized;
         } catch (_) { return []; }
     }
 
@@ -47,22 +115,36 @@ const SharePointSync = (() => {
 
     function _enqueue(type, payload) {
         const queue = _loadQueue();
-        queue.push({ type, payload, queuedAt: new Date().toISOString(), attempts: 0 });
+        queue.push({
+            type,
+            payload,
+            queuedAt: new Date().toISOString(),
+            attempts: 0,
+            payloadSchemaVersion: QUEUE_SCHEMA_VERSION
+        });
         _saveQueue(queue);
     }
 
-    async function _post(url, payload) {
-        const postToFlow = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.postToFlow;
-        if (typeof postToFlow !== 'function') {
-            throw new Error('Power Automate POST helper is unavailable.');
+    function _resolveEndpoint(endpointKey) {
+        const resolveFlowEndpoint = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.resolveFlowEndpoint;
+        if (typeof resolveFlowEndpoint === 'function') {
+            return resolveFlowEndpoint(endpointKey);
         }
-        const response = await postToFlow(url, payload, {
+        return String(globalThis.WA_GOLD_RUSH_FLOW_ENDPOINTS?.[endpointKey] || '').trim();
+    }
+
+    async function _post(endpointKey, payload) {
+        const callFlow = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.callFlow;
+        if (typeof callFlow !== 'function') {
+            throw new Error('Power Automate flow helper is unavailable.');
+        }
+        const result = await callFlow(endpointKey, payload, {
             apiKey: CONFIG.apiKey,
             requireApiKey: true,
             cache: 'no-store'
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response;
+        if (!result.success) throw new Error(result.error || `HTTP ${result.status || 0}`);
+        return result;
     }
 
     function _startRetryLoop() {
@@ -81,12 +163,15 @@ const SharePointSync = (() => {
      */
     function buildProfilePayload(opts) {
         return {
-            StudentCode:     String(opts.studentCode   || '').trim(),
-            LeaderboardName: String(opts.leaderboardName || opts.studentCode || '').trim(),
-            StudentID:       String(opts.studentId      || '').trim(),
-            StudentName:     String(opts.studentName    || '').trim(),
-            ClassCode:       String(opts.classCode      || '').trim(),
-            LastPlayedUtc:   new Date().toISOString()
+            studentCode: String(opts.studentCode || '').trim(),
+            studentId: String(opts.studentId || '').trim(),
+            studentName: String(opts.studentName || '').trim(),
+            leaderboardName: String(opts.leaderboardName || opts.studentCode || '').trim(),
+            classCode: String(opts.classCode || '').trim().toUpperCase(),
+            Level: Number(opts.level) || 1,
+            active: opts.active !== false,
+            teacherEmailPrimary: String(opts.teacherEmailPrimary || '').trim().toLowerCase(),
+            timestampUtc: new Date().toISOString()
         };
     }
 
@@ -95,17 +180,24 @@ const SharePointSync = (() => {
      */
     function buildProgressPayload(opts) {
         return {
-            StudentCode:    String(opts.studentCode  || '').trim(),
-            Level:          Number(opts.level)        || 0,
-            Score:          Number(opts.score)        || 0,
-            NetWorth:       Number(opts.netWorth)     || 0,
-            Round:          Number(opts.round)        || 1,
-            MinesOwned:     Number(opts.minesOwned)   || 0,
-            StrategyLabel:  String(opts.strategyLabel || '').trim(),
-            InvestmentProfile: opts.investmentProfile || null,
-            BadgesJson:     opts.badgesJson     ? JSON.stringify(opts.badgesJson)     : '',
-            ProgressJson:   opts.progressJson   ? JSON.stringify(opts.progressJson)   : '',
-            LastPlayedUtc:  new Date().toISOString()
+            studentCode: String(opts.studentCode || '').trim(),
+            classCode: String(opts.classCode || '').trim().toUpperCase(),
+            level: Number(opts.level) || 0,
+            currentRound: Number(opts.currentRound) || 1,
+            currentCash: Number(opts.currentCash ?? 0),
+            currentAssets: Number(opts.currentAssets ?? 0),
+            netWorth: Number(opts.netWorth ?? 0),
+            score: Number(opts.score ?? 0),
+            progressionMarkersJson: opts.progressionMarkersJson
+                ? (typeof opts.progressionMarkersJson === 'string' ? opts.progressionMarkersJson : JSON.stringify(opts.progressionMarkersJson))
+                : '',
+            badgesJson: opts.badgesJson
+                ? (typeof opts.badgesJson === 'string' ? opts.badgesJson : JSON.stringify(opts.badgesJson))
+                : '',
+            achievementsCount: Number(opts.achievementsCount || 0),
+            sessionStatus: String(opts.sessionStatus || 'active'),
+            needsSupport: opts.needsSupport === true,
+            supportReason: String(opts.supportReason || '').trim()
         };
     }
 
@@ -117,16 +209,22 @@ const SharePointSync = (() => {
      * Sync student profile. Non-blocking — failures are queued.
      */
     async function syncProfile(opts) {
-        if (!CONFIG.profileEndpoint) return { queued: false, skipped: true };
+        if (!_resolveEndpoint(CONFIG.profileEndpointKey)) return { queued: false, skipped: true };
         const payload = buildProfilePayload(opts);
-        if (!payload.StudentCode) return { queued: false, skipped: true };
+        if (!payload.studentCode) {
+            _dispatchCloudSaveStatus('idle');
+            return { queued: false, skipped: true };
+        }
+        _dispatchCloudSaveStatus('saving');
         try {
-            await _post(CONFIG.profileEndpoint, payload);
+            await _post(CONFIG.profileEndpointKey, payload);
+            _dispatchCloudSaveStatus('saved to cloud');
             return { ok: true };
         } catch (err) {
             console.warn('[SharePointSync] Profile sync failed, queuing:', err.message);
             _enqueue('profile', payload);
             _startRetryLoop();
+            _dispatchCloudSaveStatus('locally saved with retry pending');
             return { ok: false, queued: true };
         }
     }
@@ -135,15 +233,22 @@ const SharePointSync = (() => {
      * Sync level progress/result. Non-blocking — failures are queued.
      */
     async function syncProgress(opts) {
-        if (!CONFIG.progressEndpoint) return { queued: false, skipped: true };
+        if (!_resolveEndpoint(CONFIG.progressEndpointKey)) return { queued: false, skipped: true };
         const payload = buildProgressPayload(opts);
+        if (!payload.studentCode) {
+            _dispatchCloudSaveStatus('idle');
+            return { queued: false, skipped: true };
+        }
+        _dispatchCloudSaveStatus('saving');
         try {
-            await _post(CONFIG.progressEndpoint, payload);
+            await _post(CONFIG.progressEndpointKey, payload);
+            _dispatchCloudSaveStatus('saved to cloud');
             return { ok: true };
         } catch (err) {
             console.warn('[SharePointSync] Progress sync failed, queuing:', err.message);
             _enqueue('progress', payload);
             _startRetryLoop();
+            _dispatchCloudSaveStatus('locally saved with retry pending');
             return { ok: false, queued: true };
         }
     }
@@ -157,25 +262,36 @@ const SharePointSync = (() => {
 
         const remaining = [];
         for (const item of queue) {
-            const url = item.type === 'profile' ? CONFIG.profileEndpoint : CONFIG.progressEndpoint;
+            const endpointKey = item.type === 'profile' ? CONFIG.profileEndpointKey : CONFIG.progressEndpointKey;
+            const url = _resolveEndpoint(endpointKey);
             if (!url) { remaining.push(item); continue; }
             try {
-                await _post(url, item.payload);
+                await _post(endpointKey, item.payload);
             } catch (_) {
                 item.attempts = (item.attempts || 0) + 1;
                 if (item.attempts < 10) remaining.push(item);
+                if (item.attempts >= 10) {
+                    _dispatchCloudSaveStatus('cloud save failed');
+                }
             }
         }
         _saveQueue(remaining);
         if (!remaining.length && _retryTimer) {
             clearInterval(_retryTimer);
             _retryTimer = null;
+            _dispatchCloudSaveStatus('saved to cloud');
+        } else if (remaining.length) {
+            _dispatchCloudSaveStatus('locally saved with retry pending');
         }
     }
 
     /** Returns the number of items waiting in the retry queue. */
     function queueLength() {
         return _loadQueue().length;
+    }
+
+    function getCloudSaveStatus() {
+        return _cloudSaveStatus;
     }
 
     /**
@@ -187,6 +303,14 @@ const SharePointSync = (() => {
             const normalizedCfg = { ...cfg };
             if (!normalizedCfg.apiKey && normalizedCfg.gameKey) {
                 normalizedCfg.apiKey = normalizedCfg.gameKey;
+            }
+            if (typeof normalizedCfg.profileEndpoint === 'string' && normalizedCfg.profileEndpoint.trim()) {
+                globalThis.WA_GOLD_RUSH_FLOW_ENDPOINTS = globalThis.WA_GOLD_RUSH_FLOW_ENDPOINTS || {};
+                globalThis.WA_GOLD_RUSH_FLOW_ENDPOINTS.upsertStudentProfile = normalizedCfg.profileEndpoint.trim();
+            }
+            if (typeof normalizedCfg.progressEndpoint === 'string' && normalizedCfg.progressEndpoint.trim()) {
+                globalThis.WA_GOLD_RUSH_FLOW_ENDPOINTS = globalThis.WA_GOLD_RUSH_FLOW_ENDPOINTS || {};
+                globalThis.WA_GOLD_RUSH_FLOW_ENDPOINTS.saveProgress = normalizedCfg.progressEndpoint.trim();
             }
             Object.assign(CONFIG, normalizedCfg);
         }
@@ -202,7 +326,8 @@ const SharePointSync = (() => {
         syncProfile,
         syncProgress,
         retryQueue,
-        queueLength
+        queueLength,
+        getCloudSaveStatus
     };
 })();
 
