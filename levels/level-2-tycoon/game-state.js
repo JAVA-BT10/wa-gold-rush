@@ -658,7 +658,7 @@ class GameState {
 
     canProgressToNextLevel() {
         const state = this.getProgressionState(this.assignedLevel);
-        return state.checkpointStatus === 'quiz_passed' && state.approvalStatus === 'approved';
+        return state.checkpointStatus === 'quiz_passed';
     }
 
     getDigTypeMultiplier(mineId, digType) {

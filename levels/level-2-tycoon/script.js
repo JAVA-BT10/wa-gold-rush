@@ -13,6 +13,7 @@ const STUDENT_LOGIN_PATH = '../../index.html';
 const DEFAULT_COMPANY_NAME = 'Untitled Mining Co.';
 const RANDOM_EVENT_MIN_LEVEL = 4;
 const RANDOM_EVENT_ROLL_INTERVAL = 10;
+const PROGRESSION_SNAPSHOT_SCHEMA_VERSION = 2;
 
 let gameState = null;
 let currentMineForInvestment = null;
@@ -112,6 +113,12 @@ document.addEventListener('DOMContentLoaded', async function() {
         updateAssignedLevelBadge();
         updateAllUI();
         syncPlayerRecord();
+        if (typeof SharePointSync !== 'undefined') {
+            updateCloudSaveStatusLabel(SharePointSync.getCloudSaveStatus?.() || 'idle');
+            window.addEventListener('wa-gr-cloud-save-status', (event) => {
+                updateCloudSaveStatusLabel(event?.detail?.status || 'idle');
+            });
+        }
         updateInvestmentProfilePanel();
     } catch (err) {
         console.error('Level 2 init error:', err);
@@ -599,7 +606,6 @@ function displayQuizResults(result, quiz) {
     }
 
     gameState.recordQuizAttempt?.(result);
-    syncPlayerRecord();
 
     if (passed) {
         gameState.updateProgressionState?.({
@@ -609,23 +615,25 @@ function displayQuizResults(result, quiz) {
             approvalTimestamp: null
         });
         gameState.saveToLocalStorage();
+        syncPlayerRecord();
         if (retakeBtn) retakeBtn.style.display = 'none';
         if (continueBtn) {
             continueBtn.style.display = 'block';
-            continueBtn.textContent = getNextAssignedLevel() ? 'Continue Playing (await teacher approval)' : 'Continue Playing';
+            continueBtn.textContent = getNextAssignedLevel() ? 'Continue Playing (next level unlocked)' : 'Continue Playing';
             continueBtn.onclick = () => closeAllModals();
         }
     } else {
+        gameState.updateProgressionState?.({
+            checkpointStatus: 'quiz_available',
+            approvalStatus: null,
+            approverName: null,
+            approvalTimestamp: null
+        });
+        gameState.saveToLocalStorage();
+        syncPlayerRecord();
         if (retakeBtn) {
             retakeBtn.style.display = 'block';
             retakeBtn.onclick = () => {
-                gameState.updateProgressionState?.({
-                    checkpointStatus: 'quiz_available',
-                    approvalStatus: null,
-                    approverName: null,
-                    approvalTimestamp: null
-                });
-                gameState.saveToLocalStorage();
                 showProgressionQuiz();
             };
         }
@@ -1072,6 +1080,7 @@ function applyCompetitionSessionToIdentity(updateInputs = true) {
     gameState.player.leaderboardName = matched?.leaderboardName || session.leaderboardName || session.studentCode || '';
     gameState.player.studentId       = matched?.studentId       || session.studentId  || '';
     gameState.player.studentName     = matched?.studentName     || session.studentName || '';
+    gameState.player.classCode       = String(session.classCode || matched?.classCode || '').trim().toUpperCase();
     if (updateInputs) {
         const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
         set('studentCodeInput',      gameState.player.studentCode);
@@ -1080,6 +1089,12 @@ function applyCompetitionSessionToIdentity(updateInputs = true) {
         set('studentNameInput',      gameState.player.studentName);
     }
     return competition;
+}
+
+function updateCloudSaveStatusLabel(status) {
+    const statusEl = document.getElementById('cloudSaveStatus');
+    if (!statusEl) return;
+    statusEl.textContent = `Cloud save status: ${String(status || 'idle')}`;
 }
 
 function updateCompetitionStatus() {
@@ -1093,6 +1108,7 @@ function updateCompetitionStatus() {
         updateInvestmentProfilePanel();
         return;
     }
+
     statusEl.textContent = competition.strictModeEnabled
         ? 'Competition Status: Free-play mode (login required for competition features)'
         : 'Competition Status: Free-play mode';
@@ -1224,26 +1240,50 @@ function syncPlayerRecord() {
 
     const progressionState = gameState.getProgressionState?.(gameState.assignedLevel) || {};
     const progressionStateByLevel = JSON.parse(JSON.stringify(gameState.progressionStateByLevel || {}));
-    const gameStateSnapshot = {
+    const ownedMinesSnapshot = JSON.parse(JSON.stringify(gameState.ownedMines || {}));
+    const machinerySnapshot = JSON.parse(JSON.stringify(gameState.machinery || []));
+    const roundHistorySnapshot = JSON.parse(JSON.stringify(gameState.roundHistory || []));
+    const investmentPlansSnapshot = JSON.parse(JSON.stringify(gameState.investmentPlans || {}));
+    const latestQuizAttempt = Array.isArray(progressionState.quizAttempts) && progressionState.quizAttempts.length
+        ? progressionState.quizAttempts[progressionState.quizAttempts.length - 1]
+        : null;
+    const checkpointStatus = progressionState.checkpointStatus || null;
+    const quizScore = progressionState.quizScore ?? latestQuizAttempt?.score ?? null;
+    const quizPassedAt = progressionState.quizPassedAt || (checkpointStatus === 'quiz_passed' ? new Date().toISOString() : null);
+    const buildProgressionSnapshot = globalThis.WA_GOLD_RUSH_PROGRESS_SNAPSHOT?.build;
+    const progressionSnapshotInput = {
+        schemaVersion: PROGRESSION_SNAPSHOT_SCHEMA_VERSION,
+        savedAt: new Date().toISOString(),
         assignedLevel: gameState.assignedLevel,
         round: gameState.round,
         cash: gameState.cash,
         netWorth: gameState.getNetWorth(),
-        ownedMines: gameState.getOwnedMines().length,
-        machinery: Array.isArray(gameState.machinery) ? gameState.machinery.length : 0,
-        totalProfitLoss: gameState.totalProfitLoss,
-        averageRoundProfit: gameState.totalProfitLoss / totalRounds,
-        strategyLabel: calculateStrategyLabel(),
+        player: {
+            studentCode,
+            leaderboardName,
+            studentId,
+            studentName
+        },
         companyName: gameState.player.companyName || DEFAULT_COMPANY_NAME,
+        ownedMines: ownedMinesSnapshot,
+        machinery: machinerySnapshot,
+        roundHistory: roundHistorySnapshot,
+        totalProfitLoss: gameState.totalProfitLoss,
+        investmentPlans: investmentPlansSnapshot,
         investmentProfile,
-        checkpointStatus: progressionState.checkpointStatus || null,
+        strategyLabel: calculateStrategyLabel(),
+        checkpointStatus,
+        quizScore,
+        quizPassedAt,
+        quizAttempts: Array.isArray(progressionState.quizAttempts) ? progressionState.quizAttempts : [],
         approvalStatus: progressionState.approvalStatus || null,
         approverName: progressionState.approverName || null,
         approvalTimestamp: progressionState.approvalTimestamp || null,
-        quizScore: progressionState.quizScore ?? null,
-        quizAttempts: Array.isArray(progressionState.quizAttempts) ? progressionState.quizAttempts : [],
         progressionStateByLevel
     };
+    const progressionSnapshot = typeof buildProgressionSnapshot === 'function'
+        ? buildProgressionSnapshot(progressionSnapshotInput)
+        : progressionSnapshotInput;
 
     const record = {
         playerKey,
@@ -1251,6 +1291,7 @@ function syncPlayerRecord() {
         leaderboardName,
         studentId,
         studentName,
+        classCode: competition.session?.classCode || gameState.player.classCode || '',
         companyName: gameState.player.companyName || DEFAULT_COMPANY_NAME,
         level: gameState.assignedLevel,
         round: gameState.round,
@@ -1262,7 +1303,7 @@ function syncPlayerRecord() {
         averageRoundProfit: gameState.totalProfitLoss / totalRounds,
         strategyLabel: calculateStrategyLabel(),
         investmentProfile,
-        gameState: gameStateSnapshot,
+        gameState: progressionSnapshot,
         updatedAt: new Date().toISOString()
     };
 
@@ -1274,15 +1315,25 @@ function syncPlayerRecord() {
 
     // Non-blocking SharePoint sync
     if (typeof SharePointSync !== 'undefined') {
+        const netWorth = Number(gameState.getNetWorth());
+        const currentCash = Number(gameState.cash);
+        const currentAssets = Number((netWorth - currentCash).toFixed(2));
+        const needsSupport = checkpointStatus === 'quiz_available' && latestQuizAttempt?.passed === false;
         SharePointSync.syncProgress({
             studentCode,
+            classCode: competition.session?.classCode || gameState.player.classCode || '',
             level: gameState.assignedLevel,
-            score: gameState.getNetWorth(),
-            netWorth: gameState.getNetWorth(),
-            round: gameState.round,
-            minesOwned: gameState.getOwnedMines().length,
-            strategyLabel: calculateStrategyLabel(),
-            investmentProfile
+            currentRound: gameState.round,
+            currentCash,
+            currentAssets,
+            netWorth,
+            score: netWorth,
+            progressionMarkersJson: JSON.stringify(progressionSnapshot),
+            badgesJson: JSON.stringify([]),
+            achievementsCount: Array.isArray(progressionState.quizAttempts) ? progressionState.quizAttempts.length : 0,
+            sessionStatus: competition.isLoggedIn ? 'authenticated' : 'local_only',
+            needsSupport,
+            supportReason: needsSupport ? 'checkpoint_quiz_retry' : ''
         });
     }
 }

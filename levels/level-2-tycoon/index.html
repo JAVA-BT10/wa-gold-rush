@@ -92,6 +92,7 @@
                 <section class="panel-section">
                     <h2>🏢 Company & Student Identity</h2>
                     <p id="competition-status" class="competition-status">Competition Status: Free-play mode</p>
+                    <p id="cloudSaveStatus" class="panel-note">Cloud save status: idle</p>
                     <p id="studentLoginHint" class="panel-note">Log in for competition from the <a href="../../index.html">Home page</a>. Your session carries over automatically.</p>
                     <div class="identity-grid">
                         <label>Student Code <input id="studentCodeInput" type="text" maxlength="40" placeholder="e.g. SC-Y6-1042"></label>
@@ -235,12 +236,27 @@
         </div>
     </div>
 
+    <script src="../../teacher/runtime-config.js"></script>
+    <script>
+        window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG || {};
+        if (!window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey) {
+            const runtimeApiKey = document.querySelector('meta[name="wa-ggr-api-key"]')?.content
+                || document.documentElement.dataset.ggrApiKey
+                || window.WA_GOLD_RUSH_RUNTIME_CONFIG?.apiKey
+                || '';
+            if (String(runtimeApiKey).trim()) {
+                window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey = String(runtimeApiKey).trim();
+            }
+        }
+    </script>
+    <script src="../../shared/flow-endpoints.js"></script>
     <script src="game-state.js"></script>
     <script src="level-access-guard.js"></script>
     <script src="../../shared/power-automate-headers.js"></script>
     <script src="../../teacher/dashboard-state.js"></script>
     <script src="../../shared/investment-profile.js"></script>
     <script src="../../shared/progression-quiz.js"></script>
+    <script src="../../shared/progression-snapshot.js"></script>
     <script src="../../shared/sharepoint-sync.js"></script>
     <script src="script.js"></script>
 </body>
