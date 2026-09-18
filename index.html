@@ -994,12 +994,29 @@ const classCodes = Array.isArray(session.classCodes)
             toggleStudentAuthUI();
         }
 
+        function getStudentPinFormElements() {
+            return {
+                firstTimeSetupInput: document.getElementById('firstTimePinSetupInput'),
+                oldPinInput: document.getElementById('oldPinInput'),
+                oldPinLabelText: document.getElementById('oldPinLabelText'),
+                changeBtn: document.getElementById('studentPinChangeBtn'),
+                modeHint: document.getElementById('studentPinModeHint'),
+                classCodeInput: document.getElementById('pinClassCodeInput'),
+                studentIdInput: document.getElementById('pinStudentIdInput'),
+                newPinInput: document.getElementById('newPinInput'),
+                confirmNewPinInput: document.getElementById('confirmNewPinInput'),
+                statusEl: document.getElementById('studentPinStatus')
+            };
+        }
+
         function syncStudentPinMode() {
-            const firstTimeSetupInput = document.getElementById('firstTimePinSetupInput');
-            const oldPinInput = document.getElementById('oldPinInput');
-            const oldPinLabelText = document.getElementById('oldPinLabelText');
-            const changeBtn = document.getElementById('studentPinChangeBtn');
-            const modeHint = document.getElementById('studentPinModeHint');
+            const {
+                firstTimeSetupInput,
+                oldPinInput,
+                oldPinLabelText,
+                changeBtn,
+                modeHint
+            } = getStudentPinFormElements();
             const isFirstTimeSetup = !!firstTimeSetupInput?.checked;
             if (oldPinInput) {
                 oldPinInput.required = !isFirstTimeSetup;
@@ -1024,13 +1041,21 @@ const classCodes = Array.isArray(session.classCodes)
 
         async function handleStudentPinChange(event) {
             event.preventDefault();
-            const classCode = String(document.getElementById('pinClassCodeInput')?.value || '').trim().toUpperCase();
-            const studentId = String(document.getElementById('pinStudentIdInput')?.value || '').trim();
-            const oldPin = String(document.getElementById('oldPinInput')?.value || '').trim();
-            const newPin = String(document.getElementById('newPinInput')?.value || '').trim();
-            const confirmNewPin = String(document.getElementById('confirmNewPinInput')?.value || '').trim();
-            const firstTimeSetup = !!document.getElementById('firstTimePinSetupInput')?.checked;
-            const statusEl = document.getElementById('studentPinStatus');
+            const {
+                classCodeInput,
+                studentIdInput,
+                oldPinInput,
+                newPinInput,
+                confirmNewPinInput,
+                firstTimeSetupInput,
+                statusEl
+            } = getStudentPinFormElements();
+            const classCode = String(classCodeInput?.value || '').trim().toUpperCase();
+            const studentId = String(studentIdInput?.value || '').trim();
+            const oldPin = String(oldPinInput?.value || '').trim();
+            const newPin = String(newPinInput?.value || '').trim();
+            const confirmNewPin = String(confirmNewPinInput?.value || '').trim();
+            const firstTimeSetup = !!firstTimeSetupInput?.checked;
 
             const setStatus = (message, isError = false) => {
                 if (!statusEl) return;
@@ -1060,9 +1085,9 @@ const classCodes = Array.isArray(session.classCodes)
                     newPin,
                     firstTimeSetup
                 });
-                document.getElementById('oldPinInput').value = '';
-                document.getElementById('newPinInput').value = '';
-                document.getElementById('confirmNewPinInput').value = '';
+                if (oldPinInput) oldPinInput.value = '';
+                if (newPinInput) newPinInput.value = '';
+                if (confirmNewPinInput) confirmNewPinInput.value = '';
                 if (!result?.success) {
                     setStatus(result?.error || 'PIN update failed.', true);
                     return;

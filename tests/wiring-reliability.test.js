@@ -72,8 +72,10 @@ function buildHomePageFunctionHarness() {
     };
     vm.runInNewContext(
         [
+            extractInlineFunctionSource(html, 'getStudentPinFormElements'),
             extractInlineFunctionSource(html, 'syncStudentPinMode'),
             extractInlineFunctionSource(html, 'handleStudentPinChange'),
+            'this.getStudentPinFormElements = getStudentPinFormElements;',
             'this.syncStudentPinMode = syncStudentPinMode;',
             'this.handleStudentPinChange = handleStudentPinChange;'
         ].join('\n'),
