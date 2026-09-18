@@ -18,29 +18,23 @@ function createStorage(initial = {}) {
     };
 }
 
-function extractInlineFunctionSource(html, functionName) {
-    const asyncStart = html.indexOf(`async function ${functionName}`);
-    const plainStart = html.indexOf(`function ${functionName}`);
-    const start = asyncStart >= 0 ? asyncStart : plainStart;
-    assert.notEqual(start, -1, `Expected ${functionName} in index.html`);
-    const bodyStart = html.indexOf('{', start);
-    assert.notEqual(bodyStart, -1, `Expected opening brace for ${functionName}`);
-    let depth = 0;
-    for (let index = bodyStart; index < html.length; index += 1) {
-        const char = html[index];
-        if (char === '{') depth += 1;
-        if (char === '}') {
-            depth -= 1;
-            if (depth === 0) {
-                return html.slice(start, index + 1);
-            }
-        }
-    }
-    assert.fail(`Unable to extract ${functionName} from index.html`);
+function loadStudentAuth() {
+    delete require.cache[require.resolve('../shared/student-auth-client.js')];
+    return require('../shared/student-auth-client.js');
+}
+
+function getHomePageInlineScript(html) {
+    const scriptMatches = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+    assert.ok(scriptMatches.length > 0, 'Expected inline scripts in index.html');
+    const inlineScript = scriptMatches[scriptMatches.length - 1]?.[1] || '';
+    assert.match(inlineScript, /function syncStudentPinMode/);
+    assert.match(inlineScript, /handleStudentPinChange/);
+    return inlineScript;
 }
 
 function buildHomePageFunctionHarness() {
     const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+    const listeners = new Map();
     const elements = {
         firstTimePinSetupInput: { checked: false },
         oldPinInput: { value: '', required: true, disabled: false, placeholder: '' },
@@ -54,14 +48,31 @@ function buildHomePageFunctionHarness() {
         studentPinStatus: { textContent: '', style: {} }
     };
     const document = {
+        baseURI: 'https://example.com/index.html',
+        addEventListener(type, listener) {
+            listeners.set(type, listener);
+        },
         getElementById(id) {
             return elements[id] || null;
         }
     };
     let capturedPayload = null;
     const context = {
+        console,
         document,
+        localStorage: createStorage(),
+        sessionStorage: createStorage(),
+        URL,
+        URLSearchParams,
         window: {
+            location: {
+                href: 'https://example.com/index.html',
+                search: '',
+                pathname: '/index.html'
+            },
+            history: {
+                replaceState() {}
+            },
             WA_GOLD_RUSH_STUDENT_AUTH: {
                 async changeStudentPin(payload) {
                     capturedPayload = payload;
@@ -72,10 +83,7 @@ function buildHomePageFunctionHarness() {
     };
     vm.runInNewContext(
         [
-            extractInlineFunctionSource(html, 'getStudentPinFormElements'),
-            extractInlineFunctionSource(html, 'syncStudentPinMode'),
-            extractInlineFunctionSource(html, 'handleStudentPinChange'),
-            'this.getStudentPinFormElements = getStudentPinFormElements;',
+            getHomePageInlineScript(html),
             'this.syncStudentPinMode = syncStudentPinMode;',
             'this.handleStudentPinChange = handleStudentPinChange;'
         ].join('\n'),
@@ -149,7 +157,7 @@ test('student auth login hashes PIN and sends expected fields', async () => {
             data: { ok: true, ...payload, leaderboardName: 'Gold Miner', studentCode: 'SC-1' }
         })
     };
-    const auth = require('../shared/student-auth-client.js');
+    const auth = loadStudentAuth();
     const result = await auth.loginStudent({ classCode: '6b', studentId: '123456', pin: '1234' });
     assert.equal(result.success, true);
     assert.equal(result.response.classCode, '6B');
@@ -164,7 +172,7 @@ test('student auth change pin respects backend ok=false responses', async () => 
             data: { ok: false, message: 'Old PIN mismatch' }
         })
     };
-    const auth = require('../shared/student-auth-client.js');
+    const auth = loadStudentAuth();
     const result = await auth.changeStudentPin({
         classCode: '6B',
         studentId: '123456',
@@ -187,7 +195,7 @@ test('student auth change pin omits old pin hash for first-time setup', async ()
             };
         }
     };
-    const auth = require('../shared/student-auth-client.js');
+    const auth = loadStudentAuth();
     const result = await auth.changeStudentPin({
         classCode: '6b',
         studentId: '123456',
@@ -210,7 +218,7 @@ test('student auth change pin still requires old pin for normal changes', async 
             data: { ok: true }
         })
     };
-    const auth = require('../shared/student-auth-client.js');
+    const auth = loadStudentAuth();
     await assert.rejects(
         () => auth.changeStudentPin({
             classCode: '6B',
