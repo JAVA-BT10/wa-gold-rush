@@ -367,6 +367,10 @@
                     <label for="pinStudentIdInput">Student ID
                         <input id="pinStudentIdInput" type="text" maxlength="30" placeholder="e.g. 123456" required>
                     </label>
+                    <label for="firstTimePinSetupInput" style="display: flex; align-items: center; gap: 8px; align-self: end;">
+                        <input id="firstTimePinSetupInput" type="checkbox">
+                        First-time PIN setup / I do not have an old PIN yet
+                    </label>
                     <label for="oldPinInput">Old PIN
                         <input id="oldPinInput" type="password" maxlength="12" inputmode="numeric" required>
                     </label>
@@ -376,6 +380,9 @@
                     <label for="confirmNewPinInput">Confirm New PIN
                         <input id="confirmNewPinInput" type="password" maxlength="12" inputmode="numeric" required>
                     </label>
+                    <p id="studentPinModeHint" class="level-description" style="margin: 0;">
+                        Enter your old PIN to change it. If this is your first time or a teacher reset your PIN, tick the box above.
+                    </p>
                     <div class="student-actions">
                         <button id="studentPinChangeBtn" class="btn-student" type="submit">🔁 Change PIN</button>
                         <span id="studentPinStatus" class="level-description" style="margin: 0;"></span>
@@ -987,6 +994,37 @@ const classCodes = Array.isArray(session.classCodes)
             toggleStudentAuthUI();
         }
 
+        function syncStudentPinMode() {
+            const firstTimeSetupInput = document.getElementById('firstTimePinSetupInput');
+            const oldPinInput = document.getElementById('oldPinInput');
+            const oldPinLabel = document.querySelector('label[for="oldPinInput"]');
+            const changeBtn = document.getElementById('studentPinChangeBtn');
+            const modeHint = document.getElementById('studentPinModeHint');
+            const isFirstTimeSetup = !!firstTimeSetupInput?.checked;
+            if (oldPinInput) {
+                oldPinInput.required = !isFirstTimeSetup;
+                oldPinInput.disabled = isFirstTimeSetup;
+                oldPinInput.placeholder = isFirstTimeSetup ? 'Not needed for first-time setup' : '';
+                if (isFirstTimeSetup) {
+                    oldPinInput.value = '';
+                }
+            }
+            if (oldPinLabel) {
+                oldPinLabel.textContent = isFirstTimeSetup ? 'Old PIN (not needed yet)' : 'Old PIN';
+                if (oldPinInput) {
+                    oldPinLabel.appendChild(oldPinInput);
+                }
+            }
+            if (changeBtn) {
+                changeBtn.textContent = isFirstTimeSetup ? '✅ Set PIN' : '🔁 Change PIN';
+            }
+            if (modeHint) {
+                modeHint.textContent = isFirstTimeSetup
+                    ? 'First-time setup sends only your new PIN for backend confirmation. If this fails, ask your teacher to confirm your account is ready for first-time setup.'
+                    : 'Enter your old PIN to change it. If this is your first time or a teacher reset your PIN, tick the box above.';
+            }
+        }
+
         async function handleStudentPinChange(event) {
             event.preventDefault();
             const classCode = String(document.getElementById('pinClassCodeInput')?.value || '').trim().toUpperCase();
@@ -994,6 +1032,7 @@ const classCodes = Array.isArray(session.classCodes)
             const oldPin = String(document.getElementById('oldPinInput')?.value || '').trim();
             const newPin = String(document.getElementById('newPinInput')?.value || '').trim();
             const confirmNewPin = String(document.getElementById('confirmNewPinInput')?.value || '').trim();
+            const firstTimeSetup = !!document.getElementById('firstTimePinSetupInput')?.checked;
             const statusEl = document.getElementById('studentPinStatus');
 
             const setStatus = (message, isError = false) => {
@@ -1002,26 +1041,27 @@ const classCodes = Array.isArray(session.classCodes)
                 statusEl.style.color = isError ? '#c62828' : '#2e7d32';
             };
 
-            if (!classCode || !studentId || !oldPin || !newPin || !confirmNewPin) {
-                setStatus('All PIN fields are required.', true);
+            if (!classCode || !studentId || !newPin || !confirmNewPin || (!firstTimeSetup && !oldPin)) {
+                setStatus(firstTimeSetup ? 'Class code, student ID, and both new PIN fields are required.' : 'All PIN fields are required.', true);
                 return;
             }
             if (newPin !== confirmNewPin) {
                 setStatus('New PIN and confirmation must match.', true);
                 return;
             }
-            if (oldPin === newPin) {
+            if (!firstTimeSetup && oldPin === newPin) {
                 setStatus('New PIN must be different from old PIN.', true);
                 return;
             }
 
             try {
-                setStatus('Saving…');
+                setStatus(firstTimeSetup ? 'Setting PIN…' : 'Saving…');
                 const result = await window.WA_GOLD_RUSH_STUDENT_AUTH?.changeStudentPin({
                     classCode,
                     studentId,
                     oldPin,
-                    newPin
+                    newPin,
+                    firstTimeSetup
                 });
                 document.getElementById('oldPinInput').value = '';
                 document.getElementById('newPinInput').value = '';
@@ -1030,7 +1070,7 @@ const classCodes = Array.isArray(session.classCodes)
                     setStatus(result?.error || 'PIN update failed.', true);
                     return;
                 }
-                setStatus('PIN updated after backend confirmation.');
+                setStatus(firstTimeSetup ? 'PIN set after backend confirmation.' : 'PIN updated after backend confirmation.');
             } catch (error) {
                 setStatus(error?.message || 'PIN update failed.', true);
             }
@@ -1050,6 +1090,7 @@ const classCodes = Array.isArray(session.classCodes)
             const studentContinueBtn = document.getElementById('studentContinueBtn');
             const studentLogoutBtn = document.getElementById('studentLogoutBtn');
             const studentPinChangeForm = document.getElementById('studentPinChangeForm');
+            const firstTimePinSetupInput = document.getElementById('firstTimePinSetupInput');
             if (studentLoginForm) {
                 studentLoginForm.addEventListener('submit', handleStudentLogin);
             }
@@ -1062,6 +1103,10 @@ const classCodes = Array.isArray(session.classCodes)
             if (studentPinChangeForm) {
                 studentPinChangeForm.addEventListener('submit', handleStudentPinChange);
             }
+            if (firstTimePinSetupInput) {
+                firstTimePinSetupInput.addEventListener('change', syncStudentPinMode);
+            }
+            syncStudentPinMode();
             toggleStudentAuthUI();
         });
     </script>
