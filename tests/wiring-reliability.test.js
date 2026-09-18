@@ -24,7 +24,7 @@ function loadStudentAuth() {
 }
 
 function getHomePageInlineScript(html) {
-    const scriptMatches = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+    const scriptMatches = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)];
     assert.ok(scriptMatches.length > 0, 'Expected inline scripts in index.html');
     const inlineScript = scriptMatches[scriptMatches.length - 1]?.[1] || '';
     assert.match(inlineScript, /function syncStudentPinMode/);
@@ -57,6 +57,10 @@ function buildHomePageFunctionHarness() {
         }
     };
     let capturedPayload = null;
+    let changeStudentPinImpl = async (payload) => {
+        capturedPayload = payload;
+        return { success: true };
+    };
     const context = {
         console,
         document,
@@ -75,8 +79,7 @@ function buildHomePageFunctionHarness() {
             },
             WA_GOLD_RUSH_STUDENT_AUTH: {
                 async changeStudentPin(payload) {
-                    capturedPayload = payload;
-                    return { success: true };
+                    return changeStudentPinImpl(payload);
                 }
             }
         }
@@ -96,6 +99,12 @@ function buildHomePageFunctionHarness() {
         getCapturedPayload: () => JSON.parse(JSON.stringify(capturedPayload)),
         clearCapturedPayload: () => {
             capturedPayload = null;
+        },
+        setChangeStudentPinImpl: (impl) => {
+            changeStudentPinImpl = async (payload) => {
+                capturedPayload = payload;
+                return impl(payload);
+            };
         }
     };
 }
@@ -285,6 +294,23 @@ test('home page normal PIN mode keeps old PIN required and submits change payloa
         firstTimeSetup: false
     });
     assert.equal(harness.elements.studentPinStatus.textContent, 'PIN updated after backend confirmation.');
+});
+
+test('home page keeps PIN entries when backend rejects the change', async () => {
+    const harness = buildHomePageFunctionHarness();
+    harness.setChangeStudentPinImpl(async () => ({ success: false, error: 'Old PIN mismatch' }));
+    harness.elements.pinClassCodeInput.value = '6b';
+    harness.elements.pinStudentIdInput.value = '123456';
+    harness.elements.oldPinInput.value = '1111';
+    harness.elements.newPinInput.value = '2222';
+    harness.elements.confirmNewPinInput.value = '2222';
+
+    await harness.handleStudentPinChange({ preventDefault() {} });
+
+    assert.equal(harness.elements.oldPinInput.value, '1111');
+    assert.equal(harness.elements.newPinInput.value, '2222');
+    assert.equal(harness.elements.confirmNewPinInput.value, '2222');
+    assert.equal(harness.elements.studentPinStatus.textContent, 'Old PIN mismatch');
 });
 
 test('sharepoint sync builds lower-case save payload and migrates legacy queue items', async () => {

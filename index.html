@@ -368,8 +368,8 @@
                         <input id="pinStudentIdInput" type="text" maxlength="30" placeholder="e.g. 123456" required>
                     </label>
                     <label for="firstTimePinSetupInput" style="display: flex; align-items: center; gap: 8px; align-self: end;">
-                        <input id="firstTimePinSetupInput" type="checkbox">
-                        First-time PIN setup / I do not have an old PIN yet
+                        <input id="firstTimePinSetupInput" type="checkbox" aria-labelledby="firstTimePinSetupLabel">
+                        <span id="firstTimePinSetupLabel">First-time PIN setup / I do not have an old PIN yet</span>
                     </label>
                     <label for="oldPinInput"><span id="oldPinLabelText">Old PIN</span>
                         <input id="oldPinInput" type="password" maxlength="12" inputmode="numeric" required>
@@ -1085,13 +1085,13 @@ const classCodes = Array.isArray(session.classCodes)
                     newPin,
                     firstTimeSetup
                 });
-                if (oldPinInput) oldPinInput.value = '';
-                if (newPinInput) newPinInput.value = '';
-                if (confirmNewPinInput) confirmNewPinInput.value = '';
                 if (!result?.success) {
                     setStatus(result?.error || 'PIN update failed.', true);
                     return;
                 }
+                if (oldPinInput) oldPinInput.value = '';
+                if (newPinInput) newPinInput.value = '';
+                if (confirmNewPinInput) confirmNewPinInput.value = '';
                 setStatus(firstTimeSetup ? 'PIN set after backend confirmation.' : 'PIN updated after backend confirmation.');
             } catch (error) {
                 setStatus(error?.message || 'PIN update failed.', true);
