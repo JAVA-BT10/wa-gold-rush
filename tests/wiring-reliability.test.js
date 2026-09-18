@@ -219,13 +219,6 @@ test('student auth change pin still requires old pin for normal changes', async 
     );
 });
 
-test('home page exposes first-time student PIN setup path', () => {
-    const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
-    assert.ok(html.includes('firstTimePinSetupInput'));
-    assert.match(html, /changeStudentPin\(\{[\s\S]*firstTimeSetup[\s\S]*\}\)/);
-    assert.match(html, /syncStudentPinMode\(\)/);
-});
-
 test('home page first-time PIN mode disables old PIN and submits first-time payload', async () => {
     const harness = buildHomePageFunctionHarness();
     harness.elements.oldPinInput.value = '1111';
