@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const vm = require('node:vm');
 
 function createStorage(initial = {}) {
     const store = new Map(Object.entries(initial));
@@ -13,6 +14,78 @@ function createStorage(initial = {}) {
         },
         removeItem(key) {
             store.delete(key);
+        }
+    };
+}
+
+function extractInlineFunctionSource(html, functionName) {
+    const asyncStart = html.indexOf(`async function ${functionName}`);
+    const plainStart = html.indexOf(`function ${functionName}`);
+    const start = asyncStart >= 0 ? asyncStart : plainStart;
+    assert.notEqual(start, -1, `Expected ${functionName} in index.html`);
+    const bodyStart = html.indexOf('{', start);
+    assert.notEqual(bodyStart, -1, `Expected opening brace for ${functionName}`);
+    let depth = 0;
+    for (let index = bodyStart; index < html.length; index += 1) {
+        const char = html[index];
+        if (char === '{') depth += 1;
+        if (char === '}') {
+            depth -= 1;
+            if (depth === 0) {
+                return html.slice(start, index + 1);
+            }
+        }
+    }
+    assert.fail(`Unable to extract ${functionName} from index.html`);
+}
+
+function buildHomePageFunctionHarness() {
+    const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+    const elements = {
+        firstTimePinSetupInput: { checked: false },
+        oldPinInput: { value: '', required: true, disabled: false, placeholder: '' },
+        oldPinLabelText: { textContent: 'Old PIN' },
+        studentPinChangeBtn: { textContent: '🔁 Change PIN' },
+        studentPinModeHint: { textContent: '' },
+        pinClassCodeInput: { value: '' },
+        pinStudentIdInput: { value: '' },
+        newPinInput: { value: '' },
+        confirmNewPinInput: { value: '' },
+        studentPinStatus: { textContent: '', style: {} }
+    };
+    const document = {
+        getElementById(id) {
+            return elements[id] || null;
+        }
+    };
+    let capturedPayload = null;
+    const context = {
+        document,
+        window: {
+            WA_GOLD_RUSH_STUDENT_AUTH: {
+                async changeStudentPin(payload) {
+                    capturedPayload = payload;
+                    return { success: true };
+                }
+            }
+        }
+    };
+    vm.runInNewContext(
+        [
+            extractInlineFunctionSource(html, 'syncStudentPinMode'),
+            extractInlineFunctionSource(html, 'handleStudentPinChange'),
+            'this.syncStudentPinMode = syncStudentPinMode;',
+            'this.handleStudentPinChange = handleStudentPinChange;'
+        ].join('\n'),
+        context
+    );
+    return {
+        elements,
+        syncStudentPinMode: context.syncStudentPinMode,
+        handleStudentPinChange: context.handleStudentPinChange,
+        getCapturedPayload: () => JSON.parse(JSON.stringify(capturedPayload)),
+        clearCapturedPayload: () => {
+            capturedPayload = null;
         }
     };
 }
@@ -151,6 +224,64 @@ test('home page exposes first-time student PIN setup path', () => {
     assert.ok(html.includes('firstTimePinSetupInput'));
     assert.match(html, /changeStudentPin\(\{[\s\S]*firstTimeSetup[\s\S]*\}\)/);
     assert.match(html, /syncStudentPinMode\(\)/);
+});
+
+test('home page first-time PIN mode disables old PIN and submits first-time payload', async () => {
+    const harness = buildHomePageFunctionHarness();
+    harness.elements.oldPinInput.value = '1111';
+    harness.elements.firstTimePinSetupInput.checked = true;
+
+    harness.syncStudentPinMode();
+
+    assert.equal(harness.elements.oldPinInput.required, false);
+    assert.equal(harness.elements.oldPinInput.disabled, true);
+    assert.equal(harness.elements.oldPinInput.value, '');
+    assert.equal(harness.elements.oldPinLabelText.textContent, 'Old PIN (not needed yet)');
+    assert.equal(harness.elements.studentPinChangeBtn.textContent, '✅ Set PIN');
+
+    harness.elements.pinClassCodeInput.value = '6b';
+    harness.elements.pinStudentIdInput.value = '123456';
+    harness.elements.newPinInput.value = '2222';
+    harness.elements.confirmNewPinInput.value = '2222';
+
+    await harness.handleStudentPinChange({ preventDefault() {} });
+
+    assert.deepEqual(harness.getCapturedPayload(), {
+        classCode: '6B',
+        studentId: '123456',
+        oldPin: '',
+        newPin: '2222',
+        firstTimeSetup: true
+    });
+    assert.equal(harness.elements.studentPinStatus.textContent, 'PIN set after backend confirmation.');
+});
+
+test('home page normal PIN mode keeps old PIN required and submits change payload', async () => {
+    const harness = buildHomePageFunctionHarness();
+    harness.elements.firstTimePinSetupInput.checked = false;
+    harness.syncStudentPinMode();
+
+    assert.equal(harness.elements.oldPinInput.required, true);
+    assert.equal(harness.elements.oldPinInput.disabled, false);
+    assert.equal(harness.elements.oldPinLabelText.textContent, 'Old PIN');
+    assert.equal(harness.elements.studentPinChangeBtn.textContent, '🔁 Change PIN');
+
+    harness.elements.pinClassCodeInput.value = '6b';
+    harness.elements.pinStudentIdInput.value = '123456';
+    harness.elements.oldPinInput.value = '1111';
+    harness.elements.newPinInput.value = '2222';
+    harness.elements.confirmNewPinInput.value = '2222';
+
+    await harness.handleStudentPinChange({ preventDefault() {} });
+
+    assert.deepEqual(harness.getCapturedPayload(), {
+        classCode: '6B',
+        studentId: '123456',
+        oldPin: '1111',
+        newPin: '2222',
+        firstTimeSetup: false
+    });
+    assert.equal(harness.elements.studentPinStatus.textContent, 'PIN updated after backend confirmation.');
 });
 
 test('sharepoint sync builds lower-case save payload and migrates legacy queue items', async () => {

@@ -371,7 +371,7 @@
                         <input id="firstTimePinSetupInput" type="checkbox">
                         First-time PIN setup / I do not have an old PIN yet
                     </label>
-                    <label for="oldPinInput">Old PIN
+                    <label for="oldPinInput"><span id="oldPinLabelText">Old PIN</span>
                         <input id="oldPinInput" type="password" maxlength="12" inputmode="numeric" required>
                     </label>
                     <label for="newPinInput">New PIN
@@ -997,7 +997,7 @@ const classCodes = Array.isArray(session.classCodes)
         function syncStudentPinMode() {
             const firstTimeSetupInput = document.getElementById('firstTimePinSetupInput');
             const oldPinInput = document.getElementById('oldPinInput');
-            const oldPinLabel = document.querySelector('label[for="oldPinInput"]');
+            const oldPinLabelText = document.getElementById('oldPinLabelText');
             const changeBtn = document.getElementById('studentPinChangeBtn');
             const modeHint = document.getElementById('studentPinModeHint');
             const isFirstTimeSetup = !!firstTimeSetupInput?.checked;
@@ -1009,11 +1009,8 @@ const classCodes = Array.isArray(session.classCodes)
                     oldPinInput.value = '';
                 }
             }
-            if (oldPinLabel) {
-                oldPinLabel.textContent = isFirstTimeSetup ? 'Old PIN (not needed yet)' : 'Old PIN';
-                if (oldPinInput) {
-                    oldPinLabel.appendChild(oldPinInput);
-                }
+            if (oldPinLabelText) {
+                oldPinLabelText.textContent = isFirstTimeSetup ? 'Old PIN (not needed yet)' : 'Old PIN';
             }
             if (changeBtn) {
                 changeBtn.textContent = isFirstTimeSetup ? '✅ Set PIN' : '🔁 Change PIN';
