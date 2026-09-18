@@ -68,19 +68,29 @@
         };
     }
 
-    async function changeStudentPin({ classCode, studentId, oldPin, newPin }, options = {}) {
+    async function changeStudentPin({ classCode, studentId, oldPin, newPin, firstTimeSetup = false }, options = {}) {
         const callFlow = globalObj.WA_GOLD_RUSH_POWER_AUTOMATE?.callFlow;
         if (typeof callFlow !== 'function') {
             throw new Error('Power Automate flow helper is unavailable.');
         }
+        const normalizedClassCode = String(classCode || '').trim().toUpperCase();
+        const normalizedStudentId = String(studentId || '').trim();
+        const normalizedOldPin = String(oldPin || '').trim();
         const payload = {
-            classCode: String(classCode || '').trim().toUpperCase(),
-            studentId: String(studentId || '').trim(),
-            oldPinHash: await hashPin(oldPin),
+            classCode: normalizedClassCode,
+            studentId: normalizedStudentId,
             newPinHash: await hashPin(newPin)
         };
-        if (!payload.classCode || !payload.studentId || !payload.oldPinHash || !payload.newPinHash) {
-            throw new Error('Class code, student ID, old PIN, and new PIN are required.');
+        if (!normalizedClassCode || !normalizedStudentId || !payload.newPinHash) {
+            throw new Error('Class code, student ID, and new PIN are required.');
+        }
+        if (!firstTimeSetup) {
+            if (!normalizedOldPin) {
+                throw new Error('Class code, student ID, old PIN, and new PIN are required.');
+            }
+            payload.oldPinHash = await hashPin(normalizedOldPin);
+        } else {
+            payload.firstTimeSetup = true;
         }
         const result = await callFlow('changeStudentPin', payload, {
             ...options,

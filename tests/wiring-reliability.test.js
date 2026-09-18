@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const vm = require('node:vm');
 
 function createStorage(initial = {}) {
     const store = new Map(Object.entries(initial));
@@ -13,6 +14,97 @@ function createStorage(initial = {}) {
         },
         removeItem(key) {
             store.delete(key);
+        }
+    };
+}
+
+function loadStudentAuth() {
+    delete require.cache[require.resolve('../shared/student-auth-client.js')];
+    return require('../shared/student-auth-client.js');
+}
+
+function getHomePageInlineScript(html) {
+    const scriptMatches = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)];
+    assert.ok(scriptMatches.length > 0, 'Expected inline scripts in index.html');
+    const inlineScript = scriptMatches[scriptMatches.length - 1]?.[1] || '';
+    assert.match(inlineScript, /function syncStudentPinMode/);
+    assert.match(inlineScript, /handleStudentPinChange/);
+    return inlineScript;
+}
+
+function buildHomePageFunctionHarness() {
+    const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+    const listeners = new Map();
+    const elements = {
+        firstTimePinSetupInput: { checked: false },
+        oldPinInput: { value: '', required: true, disabled: false, placeholder: '' },
+        oldPinLabelText: { textContent: 'Old PIN' },
+        studentPinChangeBtn: { textContent: '🔁 Change PIN' },
+        studentPinModeHint: { textContent: '' },
+        pinClassCodeInput: { value: '' },
+        pinStudentIdInput: { value: '' },
+        newPinInput: { value: '' },
+        confirmNewPinInput: { value: '' },
+        studentPinStatus: { textContent: '', style: {} }
+    };
+    const document = {
+        baseURI: 'https://example.com/index.html',
+        addEventListener(type, listener) {
+            listeners.set(type, listener);
+        },
+        getElementById(id) {
+            return elements[id] || null;
+        }
+    };
+    let capturedPayload = null;
+    let changeStudentPinImpl = async (payload) => {
+        capturedPayload = payload;
+        return { success: true };
+    };
+    const context = {
+        console,
+        document,
+        localStorage: createStorage(),
+        sessionStorage: createStorage(),
+        URL,
+        URLSearchParams,
+        window: {
+            location: {
+                href: 'https://example.com/index.html',
+                search: '',
+                pathname: '/index.html'
+            },
+            history: {
+                replaceState() {}
+            },
+            WA_GOLD_RUSH_STUDENT_AUTH: {
+                async changeStudentPin(payload) {
+                    return changeStudentPinImpl(payload);
+                }
+            }
+        }
+    };
+    vm.runInNewContext(
+        [
+            getHomePageInlineScript(html),
+            'this.syncStudentPinMode = syncStudentPinMode;',
+            'this.handleStudentPinChange = handleStudentPinChange;'
+        ].join('\n'),
+        context
+    );
+    return {
+        elements,
+        syncStudentPinMode: context.syncStudentPinMode,
+        handleStudentPinChange: context.handleStudentPinChange,
+        getCapturedPayload: () => JSON.parse(JSON.stringify(capturedPayload)),
+        clearCapturedPayload: () => {
+            capturedPayload = null;
+        },
+        setChangeStudentPinImpl: (impl) => {
+            changeStudentPinImpl = async (payload) => {
+                capturedPayload = payload;
+                return impl(payload);
+            };
         }
     };
 }
@@ -74,7 +166,7 @@ test('student auth login hashes PIN and sends expected fields', async () => {
             data: { ok: true, ...payload, leaderboardName: 'Gold Miner', studentCode: 'SC-1' }
         })
     };
-    const auth = require('../shared/student-auth-client.js');
+    const auth = loadStudentAuth();
     const result = await auth.loginStudent({ classCode: '6b', studentId: '123456', pin: '1234' });
     assert.equal(result.success, true);
     assert.equal(result.response.classCode, '6B');
@@ -89,7 +181,7 @@ test('student auth change pin respects backend ok=false responses', async () => 
             data: { ok: false, message: 'Old PIN mismatch' }
         })
     };
-    const auth = require('../shared/student-auth-client.js');
+    const auth = loadStudentAuth();
     const result = await auth.changeStudentPin({
         classCode: '6B',
         studentId: '123456',
@@ -98,6 +190,127 @@ test('student auth change pin respects backend ok=false responses', async () => 
     });
     assert.equal(result.success, false);
     assert.equal(result.error, 'Old PIN mismatch');
+});
+
+test('student auth change pin omits old pin hash for first-time setup', async () => {
+    let capturedPayload = null;
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        callFlow: async (_flowName, payload) => {
+            capturedPayload = payload;
+            return {
+                success: true,
+                status: 200,
+                data: { ok: true }
+            };
+        }
+    };
+    const auth = loadStudentAuth();
+    const result = await auth.changeStudentPin({
+        classCode: '6b',
+        studentId: '123456',
+        newPin: '2222',
+        firstTimeSetup: true
+    });
+    assert.equal(result.success, true);
+    assert.equal(capturedPayload.classCode, '6B');
+    assert.equal(capturedPayload.studentId, '123456');
+    assert.equal(capturedPayload.firstTimeSetup, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(capturedPayload, 'oldPinHash'), false);
+    assert.match(capturedPayload.newPinHash, /^[a-f0-9]{64}$/);
+});
+
+test('student auth change pin still requires old pin for normal changes', async () => {
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        callFlow: async () => ({
+            success: true,
+            status: 200,
+            data: { ok: true }
+        })
+    };
+    const auth = loadStudentAuth();
+    await assert.rejects(
+        () => auth.changeStudentPin({
+            classCode: '6B',
+            studentId: '123456',
+            newPin: '2222'
+        }),
+        /old PIN, and new PIN are required/
+    );
+});
+
+test('home page first-time PIN mode disables old PIN and submits first-time payload', async () => {
+    const harness = buildHomePageFunctionHarness();
+    harness.elements.oldPinInput.value = '1111';
+    harness.elements.firstTimePinSetupInput.checked = true;
+
+    harness.syncStudentPinMode();
+
+    assert.equal(harness.elements.oldPinInput.required, false);
+    assert.equal(harness.elements.oldPinInput.disabled, true);
+    assert.equal(harness.elements.oldPinInput.value, '');
+    assert.equal(harness.elements.oldPinLabelText.textContent, 'Old PIN (not needed yet)');
+    assert.equal(harness.elements.studentPinChangeBtn.textContent, '✅ Set PIN');
+
+    harness.elements.pinClassCodeInput.value = '6b';
+    harness.elements.pinStudentIdInput.value = '123456';
+    harness.elements.newPinInput.value = '2222';
+    harness.elements.confirmNewPinInput.value = '2222';
+
+    await harness.handleStudentPinChange({ preventDefault() {} });
+
+    assert.deepEqual(harness.getCapturedPayload(), {
+        classCode: '6B',
+        studentId: '123456',
+        oldPin: '',
+        newPin: '2222',
+        firstTimeSetup: true
+    });
+    assert.equal(harness.elements.studentPinStatus.textContent, 'PIN set after backend confirmation.');
+});
+
+test('home page normal PIN mode keeps old PIN required and submits change payload', async () => {
+    const harness = buildHomePageFunctionHarness();
+    harness.elements.firstTimePinSetupInput.checked = false;
+    harness.syncStudentPinMode();
+
+    assert.equal(harness.elements.oldPinInput.required, true);
+    assert.equal(harness.elements.oldPinInput.disabled, false);
+    assert.equal(harness.elements.oldPinLabelText.textContent, 'Old PIN');
+    assert.equal(harness.elements.studentPinChangeBtn.textContent, '🔁 Change PIN');
+
+    harness.elements.pinClassCodeInput.value = '6b';
+    harness.elements.pinStudentIdInput.value = '123456';
+    harness.elements.oldPinInput.value = '1111';
+    harness.elements.newPinInput.value = '2222';
+    harness.elements.confirmNewPinInput.value = '2222';
+
+    await harness.handleStudentPinChange({ preventDefault() {} });
+
+    assert.deepEqual(harness.getCapturedPayload(), {
+        classCode: '6B',
+        studentId: '123456',
+        oldPin: '1111',
+        newPin: '2222',
+        firstTimeSetup: false
+    });
+    assert.equal(harness.elements.studentPinStatus.textContent, 'PIN updated after backend confirmation.');
+});
+
+test('home page keeps PIN entries when backend rejects the change', async () => {
+    const harness = buildHomePageFunctionHarness();
+    harness.setChangeStudentPinImpl(async () => ({ success: false, error: 'Old PIN mismatch' }));
+    harness.elements.pinClassCodeInput.value = '6b';
+    harness.elements.pinStudentIdInput.value = '123456';
+    harness.elements.oldPinInput.value = '1111';
+    harness.elements.newPinInput.value = '2222';
+    harness.elements.confirmNewPinInput.value = '2222';
+
+    await harness.handleStudentPinChange({ preventDefault() {} });
+
+    assert.equal(harness.elements.oldPinInput.value, '1111');
+    assert.equal(harness.elements.newPinInput.value, '2222');
+    assert.equal(harness.elements.confirmNewPinInput.value, '2222');
+    assert.equal(harness.elements.studentPinStatus.textContent, 'Old PIN mismatch');
 });
 
 test('sharepoint sync builds lower-case save payload and migrates legacy queue items', async () => {
