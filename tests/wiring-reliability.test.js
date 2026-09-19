@@ -138,6 +138,15 @@ test('dashboard config resolves getDashboardData from shared endpoint registry',
     );
 });
 
+test('runtime config script marks load status flag', () => {
+    const script = fs.readFileSync(require.resolve('../teacher/runtime-config.js'), 'utf8');
+    const context = {
+        window: {}
+    };
+    vm.runInNewContext(script, context);
+    assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED, true);
+});
+
 test('callFlow detects placeholders and parses successful JSON', async () => {
     const helpers = require('../shared/power-automate-headers.js');
     const placeholderResult = await helpers.callFlow('https://REPLACE-WITH-ENDPOINT', { ok: true });
@@ -458,6 +467,13 @@ test('dashboard hydration loads students/teachers/progress from flow response', 
 
     assert.equal(result.success, true);
     assert.equal(result.source, 'flow');
+    assert.equal(result.diagnostics.teacherSessionFound, true);
+    assert.equal(result.diagnostics.apiKeyPresent, true);
+    assert.equal(result.diagnostics.hasConfiguredFlowEndpoint, true);
+    assert.equal(result.diagnostics.flowRequestAttempted, true);
+    assert.equal(result.diagnostics.flowRequestSucceeded, true);
+    assert.equal(result.diagnostics.studentsReturned, 1);
+    assert.equal(result.diagnostics.fallbackTriggered, false);
     assert.equal(dashboard.students.length, 1);
     assert.equal(dashboard.students[0].studentCode, 'SC-1');
     assert.equal(dashboard.students[0].classCode, '6B');
@@ -470,6 +486,82 @@ test('dashboard hydration loads students/teachers/progress from flow response', 
     const persistedProgress = JSON.parse(global.localStorage.getItem('wa_gold_rush_class_records'));
     assert.equal(persistedProgress[0].round, 4);
     assert.equal(persistedProgress[0].cash, 456.75);
+});
+
+test('dashboard hydration falls back before flow call when teacher session is missing', async () => {
+    global.localStorage = createStorage({
+        teacher_dashboard: JSON.stringify({ students: [] }),
+        wa_gold_rush_teacher_list: JSON.stringify([])
+    });
+    global.sessionStorage = createStorage();
+    global.WA_GOLD_RUSH_DASHBOARD_CONFIG = {
+        apiKey: 'key',
+        flowEndpoints: {
+            getDashboardData: 'https://example.com/get-dashboard-data'
+        }
+    };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey: 'key' };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        getApiKey: () => 'key',
+        callFlow: async () => {
+            throw new Error('Flow should not be called when teacher session is missing');
+        }
+    };
+
+    const TeacherDashboard = require('../teacher/dashboard-state.js');
+    const dashboard = new TeacherDashboard();
+    const result = await dashboard.hydrateDashboardFromFlowWithFallback();
+
+    assert.equal(result.success, true);
+    assert.equal(result.source, 'local');
+    assert.equal(result.reason, 'missing_teacher_session');
+    assert.equal(result.diagnostics.teacherSessionFound, false);
+    assert.equal(result.diagnostics.teacherEmailPresent, false);
+    assert.equal(result.diagnostics.flowRequestAttempted, false);
+    assert.equal(result.diagnostics.flowResponseReceived, false);
+    assert.equal(result.diagnostics.flowRequestSucceeded, false);
+    assert.equal(result.diagnostics.fallbackTriggered, true);
+    assert.equal(result.diagnostics.fallbackReason, 'missing_teacher_session');
+});
+
+test('dashboard hydration reports flow_unavailable when api key is missing', async () => {
+    global.localStorage = createStorage({
+        teacher_dashboard: JSON.stringify({ students: [] }),
+        wa_gold_rush_teacher_list: JSON.stringify([])
+    });
+    global.sessionStorage = createStorage({
+        wa_gold_rush_teacher_session: JSON.stringify({
+            ok: true,
+            teacherEmail: 'teacher@example.com',
+            classCode: '6B',
+            classCodes: ['6B']
+        })
+    });
+    global.WA_GOLD_RUSH_DASHBOARD_CONFIG = {
+        apiKey: '',
+        flowEndpoints: {
+            getDashboardData: 'https://example.com/get-dashboard-data'
+        }
+    };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey: '' };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        getApiKey: () => '',
+        callFlow: async () => {
+            throw new Error('Flow helper should not run without API key');
+        }
+    };
+
+    const TeacherDashboard = require('../teacher/dashboard-state.js');
+    const dashboard = new TeacherDashboard();
+    const result = await dashboard.hydrateDashboardFromFlowWithFallback();
+
+    assert.equal(result.success, true);
+    assert.equal(result.source, 'local');
+    assert.equal(result.reason, 'flow_unavailable');
+    assert.equal(result.diagnostics.apiKeyPresent, false);
+    assert.equal(result.diagnostics.flowRequestAttempted, false);
+    assert.equal(result.diagnostics.fallbackTriggered, true);
+    assert.equal(result.diagnostics.fallbackReason, 'flow_unavailable');
 });
 
 test('dashboard hydration falls back to local cache when flow fails or payload is invalid', async () => {
@@ -509,6 +601,9 @@ test('dashboard hydration falls back to local cache when flow fails or payload i
     const failedResult = await dashboard.hydrateDashboardFromFlowWithFallback();
     assert.equal(failedResult.success, true);
     assert.equal(failedResult.source, 'local');
+    assert.equal(failedResult.diagnostics.flowRequestAttempted, true);
+    assert.equal(failedResult.diagnostics.flowRequestSucceeded, false);
+    assert.equal(failedResult.diagnostics.fallbackReason, 'flow_failed');
     assert.equal(dashboard.students[0].studentCode, 'LOCAL-1');
 
     global.WA_GOLD_RUSH_POWER_AUTOMATE = {
@@ -522,6 +617,9 @@ test('dashboard hydration falls back to local cache when flow fails or payload i
     const invalidResult = await dashboard.hydrateDashboardFromFlowWithFallback();
     assert.equal(invalidResult.success, true);
     assert.equal(invalidResult.source, 'local');
+    assert.equal(invalidResult.diagnostics.flowRequestAttempted, true);
+    assert.equal(invalidResult.diagnostics.flowRequestSucceeded, true);
+    assert.equal(invalidResult.diagnostics.fallbackReason, 'invalid_flow_payload');
     assert.equal(dashboard.students[0].studentCode, 'LOCAL-1');
 });
 
@@ -592,6 +690,10 @@ test('dashboard html lifecycle invokes hydration for startup, login, and refresh
         html,
         /async function refreshDashboardFromBestSource\(options = \{\}\)\s*\{[\s\S]*dashboard\.hydrateDashboardFromFlowWithFallback\(\)[\s\S]*refresh\(\)[\s\S]*refreshTeachers\(\)/
     );
+    assert.ok(html.includes('id="hydrationDiagnosticsBanner"'));
+    assert.ok(html.includes('id="diagTeacherSessionFound"'));
+    assert.ok(html.includes('renderHydrationDiagnostics(hydration);'));
+    assert.ok(html.includes('window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED = window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED === true;'));
 });
 
 test('progression snapshot builder keeps full restoration fields', () => {

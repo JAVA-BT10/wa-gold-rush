@@ -76,6 +76,18 @@
         .status-message.info { background: #edf4ff; border-color: #c8d8ff; color: #1d4ed8; }
         .status-message ul { margin: 8px 0 0 18px; padding: 0; }
         .status-banner.is-visible { margin-bottom: 16px; }
+        .hydration-diagnostics {
+            border-color: #c8d8ff;
+            background: #f7faff;
+        }
+        .hydration-diagnostics h2 {
+            margin-bottom: 10px;
+        }
+        .hydration-diagnostics ul {
+            margin: 0;
+            padding-left: 18px;
+            line-height: 1.6;
+        }
 
         /* Access denied panel */
         #authRequiredMessage {
@@ -141,6 +153,18 @@
 
     <div class="container">
         <div id="dashboardStatus" class="status-message status-banner" role="status" aria-live="polite"></div>
+        <section id="hydrationDiagnosticsBanner" class="card hydration-diagnostics">
+            <h2>Hydration Status</h2>
+            <ul>
+                <li>Teacher session found: <strong id="diagTeacherSessionFound">Pending</strong></li>
+                <li>API Key loaded: <strong id="diagApiKeyLoaded">Pending</strong></li>
+                <li>getDashboardData endpoint found: <strong id="diagEndpointFound">Pending</strong></li>
+                <li>Flow request attempted: <strong id="diagFlowAttempted">Pending</strong></li>
+                <li>Flow request succeeded: <strong id="diagFlowSucceeded">Pending</strong></li>
+                <li>Students returned: <strong id="diagStudentsReturned">Pending</strong></li>
+            </ul>
+            <p class="muted" id="diagMetaSummary"></p>
+        </section>
         <h1>👨‍🏫 Goldfields Goldrush W.A. — Teacher Dashboard</h1>
         <div class="inline-actions" style="margin-bottom: 8px; flex-wrap: wrap;">
             <span id="teacherSessionSummary" class="muted"></span>
@@ -377,6 +401,7 @@
 
     <script src="runtime-config.js"></script>
     <script>
+        window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED = window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED === true;
         window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG || {};
         if (!window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey) {
             const runtimeApiKey = document.querySelector('meta[name="wa-ggr-api-key"]')?.content
@@ -556,6 +581,52 @@
 
         function getResultError(result, fallback) {
             return serializeErrorMessage(result?.error ?? result?.message ?? result, fallback);
+        }
+
+        function yesNo(value, pendingLabel = 'Pending') {
+            if (value === true) return 'Yes';
+            if (value === false) return 'No';
+            return pendingLabel;
+        }
+
+        function renderHydrationDiagnostics(result = null) {
+            const diagnostics = result?.diagnostics
+                || (typeof dashboard.getHydrationDiagnostics === 'function' ? dashboard.getHydrationDiagnostics() : {})
+                || {};
+            const setText = (id, value) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = value;
+            };
+
+            const studentsReturned = Number.isFinite(Number(diagnostics.studentsReturned))
+                ? String(Number(diagnostics.studentsReturned))
+                : 'Pending';
+            const fallbackReason = diagnostics.fallbackReason
+                ? `fallback=${diagnostics.fallbackReason}`
+                : (diagnostics.fallbackTriggered === false ? 'fallback=none' : 'fallback=pending');
+            const endpointConfigured = diagnostics.hasConfiguredFlowEndpoint === true
+                ? 'configured endpoint ready'
+                : (diagnostics.hasConfiguredFlowEndpoint === false ? 'configured endpoint missing' : 'configured endpoint pending');
+            const runtimeConfigStatus = diagnostics.runtimeConfigScriptLoaded === true
+                ? 'runtime-config.js loaded'
+                : 'runtime-config.js not confirmed';
+            const endpointRuntime = diagnostics.runtimeGetDashboardDataUrl
+                ? `runtime URL: ${diagnostics.runtimeGetDashboardDataUrl}`
+                : 'runtime URL: unavailable';
+            const endpointConfiguredUrl = diagnostics.configuredGetDashboardDataUrl
+                ? `configured URL: ${diagnostics.configuredGetDashboardDataUrl}`
+                : 'configured URL: unavailable';
+            const metaSummary = [endpointConfigured, fallbackReason, runtimeConfigStatus, endpointConfiguredUrl, endpointRuntime]
+                .filter(Boolean)
+                .join(' | ');
+
+            setText('diagTeacherSessionFound', yesNo(diagnostics.teacherSessionFound));
+            setText('diagApiKeyLoaded', yesNo(diagnostics.apiKeyPresent));
+            setText('diagEndpointFound', yesNo(diagnostics.hasConfiguredFlowEndpoint));
+            setText('diagFlowAttempted', yesNo(diagnostics.flowRequestAttempted));
+            setText('diagFlowSucceeded', yesNo(diagnostics.flowRequestSucceeded));
+            setText('diagStudentsReturned', studentsReturned);
+            setText('diagMetaSummary', metaSummary);
         }
 
         function withBusyButton(buttonId, busyLabel, callback) {
@@ -1094,7 +1165,16 @@
         }
 
         async function refreshDashboardFromBestSource(options = {}) {
+            renderHydrationDiagnostics({
+                diagnostics: {
+                    startupReached: true,
+                    flowRequestAttempted: false,
+                    flowRequestSucceeded: false,
+                    studentsReturned: null
+                }
+            });
             const hydration = await dashboard.hydrateDashboardFromFlowWithFallback();
+            renderHydrationDiagnostics(hydration);
             refresh();
             refreshTeachers();
 
@@ -1148,6 +1228,7 @@
 
         function init() {
             if (!enforceTeacherDashboardAccess()) return;
+            renderHydrationDiagnostics();
             initializeDashboard({ showHydrationStatus: true });
         }
 

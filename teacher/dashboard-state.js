@@ -30,6 +30,8 @@ class TeacherDashboard {
         this.PERMANENT_ADMIN_ENABLED = true;
         this.PERMANENT_ADMIN_ALLOWLIST = new Set(['ben.turner@education.wa.edu.au']);
         this._dashboardHydrationInFlight = null;
+        this._lastHydrationDiagnostics = {};
+        this.dashboardDiagnosticsEnabled = globalThis.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS !== false;
     }
 
     // =========================================================================
@@ -40,6 +42,38 @@ class TeacherDashboard {
         const endpoints = globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.flowEndpoints
             || globalThis.WA_GOLD_RUSH_FLOW_ENDPOINTS;
         return String(endpoints?.[flowName] || '').trim();
+    }
+
+    redactEndpointForDiagnostics(endpoint) {
+        const raw = String(endpoint || '').trim();
+        if (!raw) return '';
+        if (/REPLACE-WITH/i.test(raw)) return raw;
+        try {
+            const parsed = new URL(raw);
+            return parsed.search
+                ? `${parsed.origin}${parsed.pathname}?<redacted>`
+                : `${parsed.origin}${parsed.pathname}`;
+        } catch (_) {
+            return raw.split('?')[0];
+        }
+    }
+
+    getHydrationDiagnostics() {
+        return { ...(this._lastHydrationDiagnostics || {}) };
+    }
+
+    setHydrationDiagnostics(updates = {}) {
+        this._lastHydrationDiagnostics = {
+            ...(this._lastHydrationDiagnostics || {}),
+            ...updates,
+            updatedAt: new Date().toISOString()
+        };
+        return this.getHydrationDiagnostics();
+    }
+
+    logHydrationDiagnostics(stage, diagnostics = {}) {
+        if (!this.dashboardDiagnosticsEnabled) return;
+        console.info(`[Dashboard Hydration] ${stage}`, diagnostics);
     }
 
     hasConfiguredFlowEndpoint(flowName) {
@@ -67,7 +101,7 @@ class TeacherDashboard {
         if (!endpoint || /REPLACE-WITH/i.test(endpoint)) {
             const error = `Dashboard flow endpoint "${flowName}" is missing or not configured.`;
             console.warn(error);
-            return { success: false, skipped: true, error };
+            return { success: false, skipped: true, attempted: false, error };
         }
 
         const readApiKey = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.getApiKey;
@@ -81,12 +115,12 @@ class TeacherDashboard {
         if (!apiKey) {
             const error = 'Power Automate API key is required before authenticated dashboard flows can be sent.';
             console.warn(`[Dashboard] ${error}`);
-            return { success: false, skipped: true, error };
+            return { success: false, skipped: true, attempted: false, error };
         }
 
         const callFlow = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.callFlow;
         if (typeof callFlow !== 'function') {
-            return { success: false, error: 'Power Automate flow helper is unavailable.' };
+            return { success: false, attempted: false, error: 'Power Automate flow helper is unavailable.' };
         }
 
         const result = await callFlow(flowName, payload, {
@@ -99,19 +133,21 @@ class TeacherDashboard {
             requireApiKey: true,
             cache: 'no-store'
         });
+        const attemptedResult = { ...result, attempted: true };
         if (!result.success) {
             console.warn(`Dashboard flow "${flowName}" failed.`, result.error || '');
-            return result;
+            return attemptedResult;
         }
         if (result.data && Object.prototype.hasOwnProperty.call(result.data, 'ok') && result.data.ok === false) {
             return {
                 success: false,
+                attempted: true,
                 status: result.status,
                 data: result.data,
                 error: String(result.data.message || result.data.error || 'Flow request was rejected.').trim()
             };
         }
-        return result;
+        return attemptedResult;
     }
 
     buildStudentFlowPayload(student = {}) {
@@ -419,36 +455,93 @@ class TeacherDashboard {
                 || teacherSession?.teacherEmail
                 || ''
             ).trim().toLowerCase();
+            const configuredEndpoint = this.getFlowEndpoint('getDashboardData');
+            const resolveFlowEndpoint = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.resolveFlowEndpoint;
+            const runtimeEndpoint = typeof resolveFlowEndpoint === 'function'
+                ? String(resolveFlowEndpoint('getDashboardData', { getDashboardData: configuredEndpoint }) || '').trim()
+                : configuredEndpoint;
+            const readApiKey = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.getApiKey;
+            const apiKey = typeof readApiKey === 'function'
+                ? String(readApiKey() || '').trim()
+                : String(
+                    globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey
+                    || globalThis.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey
+                    || ''
+                ).trim();
+            const baseDiagnostics = this.setHydrationDiagnostics({
+                startupReached: true,
+                teacherSessionFound: !!teacherSession,
+                teacherEmail,
+                teacherEmailPresent: !!teacherEmail,
+                hasConfiguredFlowEndpoint: this.hasConfiguredFlowEndpoint('getDashboardData'),
+                configuredGetDashboardDataUrl: this.redactEndpointForDiagnostics(configuredEndpoint),
+                runtimeGetDashboardDataUrl: this.redactEndpointForDiagnostics(runtimeEndpoint),
+                apiKeyPresent: !!apiKey,
+                runtimeConfigLoaded: !!globalThis.WA_GOLD_RUSH_RUNTIME_CONFIG,
+                runtimeConfigScriptLoaded: globalThis.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED === true,
+                flowRequestAttempted: false,
+                flowResponseReceived: false,
+                flowRequestSucceeded: false,
+                fallbackTriggered: false,
+                fallbackReason: '',
+                studentsReturned: null
+            });
+            this.logHydrationDiagnostics('startup', baseDiagnostics);
+
             if (!teacherEmail) {
-                return this.successResult({
+                const response = this.successResult({
                     source: 'local',
                     fallback: true,
                     reason: 'missing_teacher_session',
                     statusTone: 'info',
-                    statusMessage: 'Using cached dashboard data.'
+                    statusMessage: 'Using cached dashboard data.',
+                    diagnostics: this.setHydrationDiagnostics({
+                        fallbackTriggered: true,
+                        fallbackReason: 'missing_teacher_session'
+                    })
                 });
+                this.logHydrationDiagnostics('fallback', response.diagnostics);
+                return response;
             }
 
             const result = await this.postFlowPayload('getDashboardData', { teacherEmail }, options);
+            this.setHydrationDiagnostics({
+                flowRequestAttempted: result.attempted === true,
+                flowResponseReceived: result.attempted === true,
+                flowRequestSucceeded: result.success === true
+            });
+            this.logHydrationDiagnostics('flow-response', this.getHydrationDiagnostics());
             if (!result.success) {
-                return this.successResult({
+                const response = this.successResult({
                     source: 'local',
                     fallback: true,
                     reason: result.skipped ? 'flow_unavailable' : 'flow_failed',
                     statusTone: 'info',
                     statusMessage: 'Using cached dashboard data.',
-                    error: result.error || ''
+                    error: result.error || '',
+                    diagnostics: this.setHydrationDiagnostics({
+                        fallbackTriggered: true,
+                        fallbackReason: result.skipped ? 'flow_unavailable' : 'flow_failed'
+                    })
                 });
+                this.logHydrationDiagnostics('fallback', response.diagnostics);
+                return response;
             }
 
             if (!this.hasDashboardHydrationContract(result.data)) {
-                return this.successResult({
+                const response = this.successResult({
                     source: 'local',
                     fallback: true,
                     reason: 'invalid_flow_payload',
                     statusTone: 'info',
-                    statusMessage: 'Using cached dashboard data.'
+                    statusMessage: 'Using cached dashboard data.',
+                    diagnostics: this.setHydrationDiagnostics({
+                        fallbackTriggered: true,
+                        fallbackReason: 'invalid_flow_payload'
+                    })
                 });
+                this.logHydrationDiagnostics('fallback', response.diagnostics);
+                return response;
             }
 
             let hydrated = null;
@@ -469,23 +562,36 @@ class TeacherDashboard {
                         localStorage.setItem('wa_gold_rush_class_records', cachedRecordsRaw);
                     }
                 } catch (_) {}
-                return this.successResult({
+                const response = this.successResult({
                     source: 'local',
                     fallback: true,
                     reason: 'hydrate_failed',
                     statusTone: 'info',
-                    statusMessage: 'Using cached dashboard data.'
+                    statusMessage: 'Using cached dashboard data.',
+                    diagnostics: this.setHydrationDiagnostics({
+                        fallbackTriggered: true,
+                        fallbackReason: 'hydrate_failed'
+                    })
                 });
+                this.logHydrationDiagnostics('fallback', response.diagnostics);
+                return response;
             }
 
-            return this.successResult({
+            const response = this.successResult({
                 source: 'flow',
                 fallback: false,
                 status: result.status,
                 statusTone: 'success',
                 statusMessage: 'Dashboard synced from SharePoint.',
-                data: hydrated.data
+                data: hydrated.data,
+                diagnostics: this.setHydrationDiagnostics({
+                    fallbackTriggered: false,
+                    fallbackReason: '',
+                    studentsReturned: Array.isArray(hydrated?.data?.students) ? hydrated.data.students.length : this.students.length
+                })
             });
+            this.logHydrationDiagnostics('completed', response.diagnostics);
+            return response;
         })();
 
         this._dashboardHydrationInFlight = hydrationPromise;
