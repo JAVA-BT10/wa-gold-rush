@@ -58,6 +58,15 @@ class TeacherDashboard {
         }
     }
 
+    maskEmailForDiagnostics(email) {
+        const normalized = String(email || '').trim().toLowerCase();
+        if (!normalized) return '';
+        const [localPart = '', domain = ''] = normalized.split('@');
+        if (!domain) return '***';
+        const localPrefix = localPart ? `${localPart[0]}***` : '***';
+        return `${localPrefix}@${domain}`;
+    }
+
     getHydrationDiagnostics() {
         return { ...(this._lastHydrationDiagnostics || {}) };
     }
@@ -475,7 +484,7 @@ class TeacherDashboard {
             const baseDiagnostics = this.setHydrationDiagnostics({
                 startupReached: true,
                 teacherSessionFound: !!teacherSession,
-                teacherEmail,
+                teacherEmailMasked: this.maskEmailForDiagnostics(teacherEmail),
                 teacherEmailPresent: !!teacherEmail,
                 hasConfiguredFlowEndpoint: this.hasConfiguredFlowEndpoint('getDashboardData'),
                 configuredGetDashboardDataUrl: this.redactEndpointForDiagnostics(configuredEndpoint),
