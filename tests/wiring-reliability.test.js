@@ -141,10 +141,28 @@ test('dashboard config resolves getDashboardData from shared endpoint registry',
 test('runtime config script marks load status flag', () => {
     const script = fs.readFileSync(require.resolve('../teacher/runtime-config.js'), 'utf8');
     const context = {
-        window: {}
+        window: {
+            WA_GOLD_RUSH_RUNTIME_CONFIG: {
+                existing: true
+            }
+        }
     };
     vm.runInNewContext(script, context);
     assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED, true);
+    assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG.existing, true);
+    assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG.version, 'dev');
+});
+
+test('pages deploy workflow version-busts runtime config and bridges injected api key', () => {
+    const html = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
+    assert.ok(html.includes('runtime-config.js?v=__WA_GGR_RUNTIME_CONFIG_VERSION__'));
+
+    const workflow = fs.readFileSync(require.resolve('../.github/workflows/build-and-deploy.yml'), 'utf8');
+    assert.ok(workflow.includes('WA_GGR_API_KEY: ${{ secrets.WA_GGR_API_KEY }}'));
+    assert.ok(workflow.includes('WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}'));
+    assert.ok(workflow.includes("windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey = apiKey;"));
+    assert.ok(workflow.includes('windowObj.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED = true;'));
+    assert.ok(workflow.includes('dashboard_html.replace("__WA_GGR_RUNTIME_CONFIG_VERSION__", runtime_config_version)'));
 });
 
 test('callFlow detects placeholders and parses successful JSON', async () => {
@@ -682,6 +700,10 @@ test('dashboard hydration reuses one in-flight flow request for overlapping call
 
 test('dashboard html lifecycle invokes hydration for startup, login, and refresh button', () => {
     const html = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
+    const runtimeConfigScriptIndex = html.indexOf('runtime-config.js?v=__WA_GGR_RUNTIME_CONFIG_VERSION__');
+    const dashboardConfigScriptIndex = html.indexOf('dashboard-config.js');
+    assert.ok(runtimeConfigScriptIndex >= 0);
+    assert.ok(dashboardConfigScriptIndex > runtimeConfigScriptIndex);
     assert.ok(
         html.includes("withBusyButton('refreshBtn', 'Refreshing…', () => refreshDashboardFromBestSource({ showStatus: true }))")
     );
