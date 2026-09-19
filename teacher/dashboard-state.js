@@ -155,6 +155,7 @@ class TeacherDashboard {
             return {
                 success: false,
                 attempted: true,
+                responseReceived: true,
                 status: result.status,
                 data: result.data,
                 error: String(result.data.message || result.data.error || 'Flow request was rejected.').trim()
