@@ -25,16 +25,27 @@ jobs:
         env:
           WA_GGR_API_KEY: ${{ secrets.WA_GGR_API_KEY }}
           WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}
+          WA_GGR_PAGES_BUILD_DIR: pages-dist
         run: |
           python - <<'PY'
           import json
           import os
           from pathlib import Path
+          import shutil
 
           api_key = os.environ.get("WA_GGR_API_KEY", "").strip()
           runtime_config_version = os.environ.get("WA_GGR_RUNTIME_CONFIG_VERSION", "").strip() or "dev"
+          build_dir = Path(os.environ.get("WA_GGR_PAGES_BUILD_DIR", "").strip() or "pages-dist")
 
-          runtime_config_path = Path("teacher/runtime-config.js")
+          if build_dir.exists():
+              shutil.rmtree(build_dir)
+          shutil.copytree(
+              ".",
+              build_dir,
+              ignore=shutil.ignore_patterns(".git", ".github")
+          )
+
+          runtime_config_path = build_dir / "teacher/runtime-config.js"
           runtime_config_path.write_text(
               "(function initRuntimeConfig(windowObj) {\n"
               "  const existingRuntimeConfig = windowObj.WA_GOLD_RUSH_RUNTIME_CONFIG || {};\n"
@@ -55,7 +66,7 @@ jobs:
               encoding="utf-8",
           )
 
-          dashboard_path = Path("teacher/dashboard.html")
+          dashboard_path = build_dir / "teacher/dashboard.html"
           dashboard_html = dashboard_path.read_text(encoding="utf-8")
           dashboard_path.write_text(
               dashboard_html.replace("__WA_GGR_RUNTIME_CONFIG_VERSION__", runtime_config_version),
@@ -69,7 +80,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: pages-dist
           name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
 
   deploy:

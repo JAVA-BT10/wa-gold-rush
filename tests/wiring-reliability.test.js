@@ -160,8 +160,12 @@ test('pages deploy workflow version-busts runtime config and bridges injected ap
     const workflow = fs.readFileSync(require.resolve('../.github/workflows/build-and-deploy.yml'), 'utf8');
     assert.ok(workflow.includes('WA_GGR_API_KEY: ${{ secrets.WA_GGR_API_KEY }}'));
     assert.ok(workflow.includes('WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}'));
+    assert.ok(workflow.includes('WA_GGR_PAGES_BUILD_DIR: pages-dist'));
+    assert.ok(workflow.includes('shutil.copytree('));
+    assert.ok(workflow.includes('ignore=shutil.ignore_patterns(".git", ".github")'));
     assert.ok(workflow.includes("windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey = apiKey;"));
     assert.ok(workflow.includes('windowObj.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED = true;'));
+    assert.ok(workflow.includes('path: pages-dist'));
     assert.ok(workflow.includes('dashboard_html.replace("__WA_GGR_RUNTIME_CONFIG_VERSION__", runtime_config_version)'));
 });
 
