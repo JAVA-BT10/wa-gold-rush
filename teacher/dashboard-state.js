@@ -85,6 +85,17 @@ class TeacherDashboard {
         console.info(`[Dashboard Hydration] ${stage}`, diagnostics);
     }
 
+    readDashboardApiKey() {
+        const readApiKey = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.getApiKey;
+        return typeof readApiKey === 'function'
+            ? String(readApiKey() || '').trim()
+            : String(
+                globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey
+                || globalThis.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey
+                || ''
+            ).trim();
+    }
+
     hasConfiguredFlowEndpoint(flowName) {
         const endpoint = this.getFlowEndpoint(flowName);
         return !!endpoint && !/REPLACE-WITH/i.test(endpoint);
@@ -113,14 +124,7 @@ class TeacherDashboard {
             return { success: false, skipped: true, attempted: false, responseReceived: false, error };
         }
 
-        const readApiKey = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.getApiKey;
-        const apiKey = typeof readApiKey === 'function'
-            ? String(readApiKey() || '').trim()
-            : String(
-                globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey
-                || globalThis.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey
-                || ''
-            ).trim();
+        const apiKey = this.readDashboardApiKey();
         if (!apiKey) {
             const error = 'Power Automate API key is required before authenticated dashboard flows can be sent.';
             console.warn(`[Dashboard] ${error}`);
@@ -474,14 +478,7 @@ class TeacherDashboard {
             const runtimeEndpoint = typeof resolveFlowEndpoint === 'function'
                 ? String(resolveFlowEndpoint('getDashboardData', { getDashboardData: configuredEndpoint }) || '').trim()
                 : configuredEndpoint;
-            const readApiKey = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.getApiKey;
-            const apiKey = typeof readApiKey === 'function'
-                ? String(readApiKey() || '').trim()
-                : String(
-                    globalThis.WA_GOLD_RUSH_DASHBOARD_CONFIG?.apiKey
-                    || globalThis.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG?.apiKey
-                    || ''
-                ).trim();
+            const apiKey = this.readDashboardApiKey();
             const baseDiagnostics = this.setHydrationDiagnostics({
                 startupReached: true,
                 teacherSessionFound: !!teacherSession,

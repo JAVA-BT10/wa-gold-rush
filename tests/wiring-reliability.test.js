@@ -692,6 +692,7 @@ test('dashboard html lifecycle invokes hydration for startup, login, and refresh
     );
     assert.ok(html.includes('id="hydrationDiagnosticsBanner"'));
     assert.ok(html.includes('id="diagTeacherSessionFound"'));
+    assert.ok(html.includes('id="diagMetaSummary" role="status" aria-live="polite" aria-atomic="true"'));
     assert.ok(html.includes('renderHydrationDiagnostics(hydration);'));
     assert.ok(html.includes('window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED = window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED === true;'));
 });
