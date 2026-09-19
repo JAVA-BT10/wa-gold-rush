@@ -32,6 +32,31 @@ function getHomePageInlineScript(html) {
     return inlineScript;
 }
 
+function renderDeployedDashboardArtifacts({ dashboardTemplate, apiKey, version }) {
+    const normalizedApiKey = String(apiKey || '').trim();
+    const normalizedVersion = String(version || '').trim() || 'dev';
+    return {
+        runtimeConfigScript: [
+            '(function initRuntimeConfig(windowObj) {',
+            '  const existingRuntimeConfig = windowObj.WA_GOLD_RUSH_RUNTIME_CONFIG || {};',
+            `  const apiKey = String(${JSON.stringify(normalizedApiKey)} || '').trim();`,
+            '  windowObj.WA_GOLD_RUSH_RUNTIME_CONFIG = {',
+            '    ...existingRuntimeConfig,',
+            '    apiKey,',
+            `    version: ${JSON.stringify(normalizedVersion)}`,
+            '  };',
+            '  windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG || {};',
+            '  if (apiKey) {',
+            '    windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey = apiKey;',
+            '  }',
+            '  windowObj.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED = true;',
+            '})(window);',
+            ''
+        ].join('\n'),
+        dashboardHtml: String(dashboardTemplate || '').replace('__WA_GGR_RUNTIME_CONFIG_VERSION__', normalizedVersion)
+    };
+}
+
 function buildHomePageFunctionHarness() {
     const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
     const listeners = new Map();
@@ -141,10 +166,48 @@ test('dashboard config resolves getDashboardData from shared endpoint registry',
 test('runtime config script marks load status flag', () => {
     const script = fs.readFileSync(require.resolve('../teacher/runtime-config.js'), 'utf8');
     const context = {
-        window: {}
+        window: {
+            WA_GOLD_RUSH_RUNTIME_CONFIG: {
+                existing: true
+            }
+        }
     };
     vm.runInNewContext(script, context);
     assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED, true);
+    assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG.existing, true);
+    assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG.version, 'dev');
+});
+
+test('pages deploy workflow keeps secret injection and rendered runtime artifacts usable', () => {
+    const workflow = fs.readFileSync(require.resolve('../.github/workflows/build-and-deploy.yml'), 'utf8');
+    assert.ok(workflow.includes('WA_GGR_API_KEY: ${{ secrets.WA_GGR_API_KEY }}'));
+    assert.ok(workflow.includes('WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}'));
+    assert.ok(workflow.includes('WA_GGR_PAGES_BUILD_DIR: pages-dist'));
+    assert.ok(workflow.includes('path: pages-dist'));
+    assert.ok(workflow.includes('raise SystemExit("WA_GGR_API_KEY secret is required to deploy teacher/runtime-config.js")'));
+
+    const dashboardTemplate = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
+    const rendered = renderDeployedDashboardArtifacts({
+        dashboardTemplate,
+        apiKey: 'runtime-key',
+        version: '123-1'
+    });
+    const context = {
+        window: {
+            WA_GOLD_RUSH_RUNTIME_CONFIG: {
+                existing: true
+            }
+        }
+    };
+    vm.runInNewContext(rendered.runtimeConfigScript, context);
+
+    assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG.apiKey, 'runtime-key');
+    assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG.version, '123-1');
+    assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG.existing, true);
+    assert.equal(context.window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey, 'runtime-key');
+    assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED, true);
+    assert.ok(rendered.dashboardHtml.includes('runtime-config.js?v=123-1'));
+    assert.ok(dashboardTemplate.includes('runtime-config.js?v=__WA_GGR_RUNTIME_CONFIG_VERSION__'));
 });
 
 test('callFlow detects placeholders and parses successful JSON', async () => {
@@ -682,6 +745,10 @@ test('dashboard hydration reuses one in-flight flow request for overlapping call
 
 test('dashboard html lifecycle invokes hydration for startup, login, and refresh button', () => {
     const html = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
+    const runtimeConfigScriptIndex = html.indexOf('runtime-config.js?v=__WA_GGR_RUNTIME_CONFIG_VERSION__');
+    const dashboardConfigScriptIndex = html.indexOf('dashboard-config.js');
+    assert.ok(runtimeConfigScriptIndex >= 0);
+    assert.ok(dashboardConfigScriptIndex > runtimeConfigScriptIndex);
     assert.ok(
         html.includes("withBusyButton('refreshBtn', 'Refreshing…', () => refreshDashboardFromBestSource({ showStatus: true }))")
     );

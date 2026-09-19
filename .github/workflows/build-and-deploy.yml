@@ -24,21 +24,54 @@ jobs:
       - name: Generate runtime config
         env:
           WA_GGR_API_KEY: ${{ secrets.WA_GGR_API_KEY }}
+          WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}
+          WA_GGR_PAGES_BUILD_DIR: pages-dist
         run: |
           python - <<'PY'
           import json
           import os
           from pathlib import Path
+          import shutil
 
           api_key = os.environ.get("WA_GGR_API_KEY", "").strip()
           if not api_key:
               raise SystemExit("WA_GGR_API_KEY secret is required to deploy teacher/runtime-config.js")
+          runtime_config_version = os.environ.get("WA_GGR_RUNTIME_CONFIG_VERSION", "").strip() or "dev"
+          build_dir = Path(os.environ.get("WA_GGR_PAGES_BUILD_DIR", "").strip() or "pages-dist")
 
-          runtime_config_path = Path("teacher/runtime-config.js")
+          if build_dir.exists():
+              shutil.rmtree(build_dir)
+          shutil.copytree(
+              ".",
+              build_dir,
+              ignore=shutil.ignore_patterns(".git", ".github", "tests", "scripts", "__pycache__", "README.md")
+          )
+
+          runtime_config_path = build_dir / "teacher/runtime-config.js"
           runtime_config_path.write_text(
-              "window.WA_GOLD_RUSH_RUNTIME_CONFIG = {\n"
-              f"  apiKey: {json.dumps(api_key)}\n"
-              "};\n",
+              "(function initRuntimeConfig(windowObj) {\n"
+              "  const existingRuntimeConfig = windowObj.WA_GOLD_RUSH_RUNTIME_CONFIG || {};\n"
+              "  const apiKey = String("
+              + json.dumps(api_key)
+              + " || '').trim();\n"
+              "  windowObj.WA_GOLD_RUSH_RUNTIME_CONFIG = {\n"
+              "    ...existingRuntimeConfig,\n"
+              "    apiKey,\n"
+              f"    version: {json.dumps(runtime_config_version)}\n"
+              "  };\n"
+              "  windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG || {};\n"
+              "  if (apiKey) {\n"
+              "    windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey = apiKey;\n"
+              "  }\n"
+              "  windowObj.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED = true;\n"
+              "})(window);\n",
+              encoding="utf-8",
+          )
+
+          dashboard_path = build_dir / "teacher/dashboard.html"
+          dashboard_html = dashboard_path.read_text(encoding="utf-8")
+          dashboard_path.write_text(
+              dashboard_html.replace("__WA_GGR_RUNTIME_CONFIG_VERSION__", runtime_config_version),
               encoding="utf-8",
           )
           PY
@@ -49,7 +82,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: pages-dist
           name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
 
   deploy:
