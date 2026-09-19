@@ -34,20 +34,18 @@ jobs:
           import shutil
 
           api_key = os.environ.get("WA_GGR_API_KEY", "").strip()
+          if not api_key:
+              raise SystemExit("WA_GGR_API_KEY secret is required to deploy teacher/runtime-config.js")
           runtime_config_version = os.environ.get("WA_GGR_RUNTIME_CONFIG_VERSION", "").strip() or "dev"
           build_dir = Path(os.environ.get("WA_GGR_PAGES_BUILD_DIR", "").strip() or "pages-dist")
 
           if build_dir.exists():
               shutil.rmtree(build_dir)
-          build_dir.mkdir(parents=True, exist_ok=True)
-          for relative_path in ("index.html", "script.js", "levels", "shared", "teacher"):
-              source_path = Path(relative_path)
-              destination_path = build_dir / relative_path
-              if source_path.is_dir():
-                  shutil.copytree(source_path, destination_path)
-              else:
-                  destination_path.parent.mkdir(parents=True, exist_ok=True)
-                  shutil.copy2(source_path, destination_path)
+          shutil.copytree(
+              ".",
+              build_dir,
+              ignore=shutil.ignore_patterns(".git", ".github", "tests", "scripts", "__pycache__", "README.md")
+          )
 
           runtime_config_path = build_dir / "teacher/runtime-config.js"
           runtime_config_path.write_text(
