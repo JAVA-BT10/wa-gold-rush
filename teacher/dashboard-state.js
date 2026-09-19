@@ -489,9 +489,8 @@ class TeacherDashboard {
                 configuredGetDashboardDataUrl: this.redactEndpointForDiagnostics(configuredEndpoint),
                 runtimeGetDashboardDataUrl: this.redactEndpointForDiagnostics(runtimeEndpoint),
                 apiKeyPresent: !!apiKey,
-                runtimeConfigLoaded: !!runtimeConfig
-                    && typeof runtimeConfig === 'object'
-                    && Object.keys(runtimeConfig).length > 0,
+                runtimeConfigLoaded: globalThis.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED === true
+                    || (!!runtimeConfig && typeof runtimeConfig === 'object'),
                 runtimeConfigScriptLoaded: globalThis.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED === true,
                 flowRequestAttempted: false,
                 flowResponseReceived: false,
