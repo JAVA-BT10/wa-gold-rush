@@ -31,7 +31,7 @@ class TeacherDashboard {
         this.PERMANENT_ADMIN_ALLOWLIST = new Set(['ben.turner@education.wa.edu.au']);
         this._dashboardHydrationInFlight = null;
         this._lastHydrationDiagnostics = {};
-        this.dashboardDiagnosticsEnabled = globalThis.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS !== false;
+        this.dashboardDiagnosticsEnabled = globalThis.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS === true;
     }
 
     // =========================================================================
@@ -101,7 +101,7 @@ class TeacherDashboard {
         if (!endpoint || /REPLACE-WITH/i.test(endpoint)) {
             const error = `Dashboard flow endpoint "${flowName}" is missing or not configured.`;
             console.warn(error);
-            return { success: false, skipped: true, attempted: false, error };
+            return { success: false, skipped: true, attempted: false, responseReceived: false, error };
         }
 
         const readApiKey = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.getApiKey;
@@ -115,12 +115,12 @@ class TeacherDashboard {
         if (!apiKey) {
             const error = 'Power Automate API key is required before authenticated dashboard flows can be sent.';
             console.warn(`[Dashboard] ${error}`);
-            return { success: false, skipped: true, attempted: false, error };
+            return { success: false, skipped: true, attempted: false, responseReceived: false, error };
         }
 
         const callFlow = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.callFlow;
         if (typeof callFlow !== 'function') {
-            return { success: false, attempted: false, error: 'Power Automate flow helper is unavailable.' };
+            return { success: false, attempted: false, responseReceived: false, error: 'Power Automate flow helper is unavailable.' };
         }
 
         const result = await callFlow(flowName, payload, {
@@ -133,7 +133,11 @@ class TeacherDashboard {
             requireApiKey: true,
             cache: 'no-store'
         });
-        const attemptedResult = { ...result, attempted: true };
+        const attemptedResult = {
+            ...result,
+            attempted: true,
+            responseReceived: Number.isFinite(Number(result?.status))
+        };
         if (!result.success) {
             console.warn(`Dashboard flow "${flowName}" failed.`, result.error || '');
             return attemptedResult;
@@ -507,7 +511,7 @@ class TeacherDashboard {
             const result = await this.postFlowPayload('getDashboardData', { teacherEmail }, options);
             this.setHydrationDiagnostics({
                 flowRequestAttempted: result.attempted === true,
-                flowResponseReceived: result.attempted === true,
+                flowResponseReceived: result.responseReceived === true,
                 flowRequestSucceeded: result.success === true
             });
             this.logHydrationDiagnostics('flow-response', this.getHydrationDiagnostics());

@@ -153,7 +153,7 @@
 
     <div class="container">
         <div id="dashboardStatus" class="status-message status-banner" role="status" aria-live="polite"></div>
-        <section id="hydrationDiagnosticsBanner" class="card hydration-diagnostics">
+        <section id="hydrationDiagnosticsBanner" class="card hydration-diagnostics" hidden>
             <h2>Hydration Status</h2>
             <ul>
                 <li>Teacher session found: <strong id="diagTeacherSessionFound">Pending</strong></li>
@@ -402,6 +402,8 @@
     <script src="runtime-config.js"></script>
     <script>
         window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED = window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED === true;
+        const diagnosticsQueryEnabled = /(?:\?|&)diagnostics=1(?:&|$)/.test(window.location.search);
+        window.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS = window.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS === true || diagnosticsQueryEnabled;
         window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG || {};
         if (!window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey) {
             const runtimeApiKey = document.querySelector('meta[name="wa-ggr-api-key"]')?.content
@@ -426,6 +428,8 @@
         const PAUSE_STATE_KEY   = 'wa_gold_rush_pause_state';
         const STRICT_MODE_KEY   = 'wa_gold_rush_strict_mode';
         const dashboard = new TeacherDashboard();
+        const diagnosticsEnabled = window.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS === true;
+        document.getElementById('hydrationDiagnosticsBanner').hidden = !diagnosticsEnabled;
 
         function describeAuthorizedClasses(session) {
             if (!session) return '';
@@ -590,6 +594,7 @@
         }
 
         function renderHydrationDiagnostics(result = null) {
+            if (!diagnosticsEnabled) return;
             const diagnostics = result?.diagnostics
                 || (typeof dashboard.getHydrationDiagnostics === 'function' ? dashboard.getHydrationDiagnostics() : {})
                 || {};
