@@ -145,7 +145,7 @@ class TeacherDashboard {
         const attemptedResult = {
             ...result,
             attempted: true,
-            responseReceived: Number.isFinite(Number(result?.status))
+            responseReceived: typeof result?.status === 'number' && result.status >= 100 && result.status <= 599
         };
         if (!result.success) {
             console.warn(`Dashboard flow "${flowName}" failed.`, result.error || '');
