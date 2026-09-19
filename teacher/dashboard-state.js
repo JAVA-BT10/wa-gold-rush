@@ -479,6 +479,7 @@ class TeacherDashboard {
                 ? String(resolveFlowEndpoint('getDashboardData', { getDashboardData: configuredEndpoint }) || '').trim()
                 : configuredEndpoint;
             const apiKey = this.readDashboardApiKey();
+            const runtimeConfig = globalThis.WA_GOLD_RUSH_RUNTIME_CONFIG;
             const baseDiagnostics = this.setHydrationDiagnostics({
                 startupReached: true,
                 teacherSessionFound: !!teacherSession,
@@ -488,7 +489,9 @@ class TeacherDashboard {
                 configuredGetDashboardDataUrl: this.redactEndpointForDiagnostics(configuredEndpoint),
                 runtimeGetDashboardDataUrl: this.redactEndpointForDiagnostics(runtimeEndpoint),
                 apiKeyPresent: !!apiKey,
-                runtimeConfigLoaded: !!globalThis.WA_GOLD_RUSH_RUNTIME_CONFIG,
+                runtimeConfigLoaded: !!runtimeConfig
+                    && typeof runtimeConfig === 'object'
+                    && Object.keys(runtimeConfig).length > 0,
                 runtimeConfigScriptLoaded: globalThis.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED === true,
                 flowRequestAttempted: false,
                 flowResponseReceived: false,
