@@ -109,6 +109,7 @@ jobs:
           WA_GGR_PAGES_BUILD_DIR: pages-dist
         run: |
           python - <<'PY'
+          import json
           import os
           import re
           import subprocess
@@ -124,7 +125,7 @@ jobs:
               "const apiKey = String(",
               "apiKey,",
               "buildTarget: 'github-pages'",
-              f"version: {runtime_config_version!r}",
+              f"version: {json.dumps(runtime_config_version)}",
               "windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey = apiKey;",
           )
           for fragment in required_runtime_fragments:
