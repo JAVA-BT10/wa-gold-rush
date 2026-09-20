@@ -196,7 +196,12 @@ test('pages deploy workflow keeps secret injection and rendered runtime artifact
     assert.ok(workflow.includes('replaced_html_paths.append(html_path)'));
     assert.ok(workflow.includes('Missing runtime config version token in built HTML files'));
     assert.ok(workflow.includes('Verify Pages artifact contents'));
-    assert.ok(workflow.includes('archive.getmember("teacher/runtime-config.js")'));
+    assert.ok(workflow.includes('"tar",'));
+    assert.ok(workflow.includes('"--dereference"'));
+    assert.ok(workflow.includes('"--hard-dereference"'));
+    assert.ok(workflow.includes('str(archive_path)'));
+    assert.ok(workflow.includes('candidate.name.lstrip("./") == "teacher/runtime-config.js"'));
+    assert.ok(workflow.includes('Packaged Pages artifact does not contain teacher/runtime-config.js'));
     assert.ok(workflow.includes('raise SystemExit("WA_GGR_API_KEY secret is required to deploy teacher/runtime-config.js")'));
     assert.ok(workflow.includes('raise SystemExit("WA_GGR_RUNTIME_CONFIG_VERSION must be a non-dev build marker")'));
 

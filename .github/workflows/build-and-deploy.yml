@@ -103,8 +103,8 @@ jobs:
           WA_GGR_PAGES_BUILD_DIR: pages-dist
         run: |
           python - <<'PY'
-          import io
           import os
+          import subprocess
           import tarfile
           from pathlib import Path
 
@@ -142,14 +142,37 @@ jobs:
               if "__WA_GGR_RUNTIME_CONFIG_VERSION__" in html:
                   raise SystemExit(f"Built HTML still contains the runtime config version placeholder: {html_path}")
 
-          archive_buffer = io.BytesIO()
-          with tarfile.open(fileobj=archive_buffer, mode="w:gz") as archive:
-              for path in sorted(build_dir.rglob("*")):
-                  archive.add(path, arcname=path.relative_to(build_dir).as_posix())
-
-          archive_buffer.seek(0)
-          with tarfile.open(fileobj=archive_buffer, mode="r:gz") as archive:
-              member = archive.getmember("teacher/runtime-config.js")
+          archive_path = Path(os.environ.get("RUNNER_TEMP", ".")).resolve() / "pages-artifact-verify.tar"
+          if archive_path.exists():
+              archive_path.unlink()
+          subprocess.run(
+              [
+                  "tar",
+                  "--dereference",
+                  "--hard-dereference",
+                  "--directory",
+                  str(build_dir),
+                  "-cvf",
+                  str(archive_path),
+                  "--exclude=.git",
+                  "--exclude=.github",
+                  ".",
+              ],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+          with tarfile.open(archive_path, mode="r") as archive:
+              member = next(
+                  (
+                      candidate
+                      for candidate in archive.getmembers()
+                      if candidate.name.lstrip("./") == "teacher/runtime-config.js"
+                  ),
+                  None,
+              )
+              if member is None:
+                  raise SystemExit("Packaged Pages artifact does not contain teacher/runtime-config.js")
               archived_runtime_config = archive.extractfile(member).read().decode("utf-8")
               if archived_runtime_config != runtime_config:
                   raise SystemExit("Packaged Pages artifact runtime config does not match the generated file")
