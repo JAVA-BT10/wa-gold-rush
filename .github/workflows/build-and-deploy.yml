@@ -36,16 +36,36 @@ jobs:
           api_key = os.environ.get("WA_GGR_API_KEY", "").strip()
           if not api_key:
               raise SystemExit("WA_GGR_API_KEY secret is required to deploy teacher/runtime-config.js")
-          runtime_config_version = os.environ.get("WA_GGR_RUNTIME_CONFIG_VERSION", "").strip() or "dev"
+          runtime_config_version = os.environ.get("WA_GGR_RUNTIME_CONFIG_VERSION", "").strip()
+          if not runtime_config_version or runtime_config_version == "dev":
+              raise SystemExit("WA_GGR_RUNTIME_CONFIG_VERSION must be a non-dev build marker")
           build_dir = Path(os.environ.get("WA_GGR_PAGES_BUILD_DIR", "").strip() or "pages-dist")
+          runtime_config_version_token = "__WA_GGR_RUNTIME_CONFIG_VERSION__"
+          excluded_entry_names = {
+              ".git",
+              ".github",
+              "tests",
+              "scripts",
+              "__pycache__",
+              "README.md",
+          }
+
+          def ignore_entries(_directory, names):
+              return [name for name in names if name in excluded_entry_names]
 
           if build_dir.exists():
               shutil.rmtree(build_dir)
-          shutil.copytree(
-              ".",
-              build_dir,
-              ignore=shutil.ignore_patterns(".git", ".github", "tests", "scripts", "__pycache__", "README.md")
-          )
+          build_dir.mkdir(parents=True, exist_ok=True)
+          for source in sorted(Path(".").iterdir(), key=lambda path: path.name):
+              if source.name in excluded_entry_names:
+                  continue
+              destination = build_dir / source
+              if source.is_dir():
+                  shutil.copytree(source, destination, ignore=ignore_entries)
+              else:
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(source, destination)
+          (build_dir / ".nojekyll").write_text("", encoding="utf-8")
 
           runtime_config_path = build_dir / "teacher/runtime-config.js"
           runtime_config_path.write_text(
@@ -57,6 +77,7 @@ jobs:
               "  windowObj.WA_GOLD_RUSH_RUNTIME_CONFIG = {\n"
               "    ...existingRuntimeConfig,\n"
               "    apiKey,\n"
+              "    buildTarget: 'github-pages',\n"
               f"    version: {json.dumps(runtime_config_version)}\n"
               "  };\n"
               "  windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG || {};\n"
@@ -68,12 +89,100 @@ jobs:
               encoding="utf-8",
           )
 
-          dashboard_path = build_dir / "teacher/dashboard.html"
-          dashboard_html = dashboard_path.read_text(encoding="utf-8")
-          dashboard_path.write_text(
-              dashboard_html.replace("__WA_GGR_RUNTIME_CONFIG_VERSION__", runtime_config_version),
-              encoding="utf-8",
+          html_paths = sorted(build_dir.rglob("*.html"))
+          replaced_html_paths = []
+          for html_path in html_paths:
+              html = html_path.read_text(encoding="utf-8")
+              if runtime_config_version_token in html:
+                  html_path.write_text(
+                      html.replace(runtime_config_version_token, runtime_config_version),
+                      encoding="utf-8",
+                  )
+                  replaced_html_paths.append(html_path)
+          if not replaced_html_paths:
+              raise SystemExit("Missing runtime config version token in built HTML files")
+          PY
+
+      - name: Verify Pages artifact contents
+        env:
+          WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}
+          WA_GGR_PAGES_BUILD_DIR: pages-dist
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+          import tarfile
+          from pathlib import Path
+
+          runtime_config_version = os.environ.get("WA_GGR_RUNTIME_CONFIG_VERSION", "").strip()
+          build_dir = Path(os.environ.get("WA_GGR_PAGES_BUILD_DIR", "").strip() or "pages-dist")
+          runtime_config_path = build_dir / "teacher/runtime-config.js"
+          runtime_config = runtime_config_path.read_text(encoding="utf-8")
+
+          required_runtime_fragments = (
+              "const apiKey = String(",
+              "apiKey,",
+              "buildTarget: 'github-pages'",
+              f"version: {runtime_config_version!r}",
+              "windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey = apiKey;",
           )
+          for fragment in required_runtime_fragments:
+              if fragment not in runtime_config:
+                  raise SystemExit(f"Generated runtime config is missing required fragment: {fragment}")
+          if "version: existingRuntimeConfig.version || 'dev'" in runtime_config:
+              raise SystemExit("Generated runtime config still contains the development stub version")
+          if "__WA_GGR_RUNTIME_CONFIG_VERSION__" in runtime_config:
+              raise SystemExit("Generated runtime config still contains the version placeholder token")
+          if "String(\"\" || '').trim()" in runtime_config or "String('' || '').trim()" in runtime_config:
+              raise SystemExit("Generated runtime config must include a non-empty API key")
+
+          runtime_config_reference_count = 0
+          for html_path in sorted(build_dir.rglob("*.html")):
+              html = html_path.read_text(encoding="utf-8")
+              if "__WA_GGR_RUNTIME_CONFIG_VERSION__" in html:
+                  raise SystemExit(f"Built HTML still contains the runtime config version placeholder: {html_path}")
+              for match in re.finditer(r'runtime-config\.js\?v=([^"\'<>\s]+)', html):
+                  runtime_config_reference_count += 1
+                  if match.group(1) != runtime_config_version:
+                      raise SystemExit(f"Built HTML contains an unexpected runtime config version: {html_path}")
+          if runtime_config_reference_count == 0:
+              raise SystemExit("Built HTML does not reference cache-busted runtime config")
+
+          archive_path = Path(os.environ.get("RUNNER_TEMP", ".")).resolve() / "pages-artifact-verify.tar"
+          if archive_path.exists():
+              archive_path.unlink()
+          subprocess.run(
+              [
+                  "tar",
+                  "--dereference",
+                  "--hard-dereference",
+                  "--directory",
+                  str(build_dir),
+                  "-cvf",
+                  str(archive_path),
+                  "--exclude=.git",
+                  "--exclude=.github",
+                  ".",
+              ],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+          with tarfile.open(archive_path, mode="r") as archive:
+              member = next(
+                  (
+                      candidate
+                      for candidate in archive.getmembers()
+                      if candidate.name.lstrip("./") == "teacher/runtime-config.js"
+                  ),
+                  None,
+              )
+              if member is None:
+                  raise SystemExit("Packaged Pages artifact does not contain teacher/runtime-config.js")
+              archived_runtime_config = archive.extractfile(member).read().decode("utf-8")
+              if archived_runtime_config != runtime_config:
+                  raise SystemExit("Packaged Pages artifact runtime config does not match the generated file")
           PY
 
       - name: Setup Pages
