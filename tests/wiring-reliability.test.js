@@ -32,9 +32,11 @@ function getHomePageInlineScript(html) {
     return inlineScript;
 }
 
-function renderDeployedDashboardArtifacts({ dashboardTemplate, apiKey, version }) {
+function renderDeployedPagesArtifacts({ dashboardTemplate, homeTemplate, levelTemplate, apiKey, version }) {
     const normalizedApiKey = String(apiKey || '').trim();
-    const normalizedVersion = String(version || '').trim() || 'dev';
+    const normalizedVersion = String(version || '').trim();
+    assert.notEqual(normalizedVersion, '', 'Expected a non-empty deployed runtime config version');
+    assert.notEqual(normalizedVersion, 'dev', 'Expected a non-dev deployed runtime config version');
     return {
         runtimeConfigScript: [
             '(function initRuntimeConfig(windowObj) {',
@@ -43,6 +45,7 @@ function renderDeployedDashboardArtifacts({ dashboardTemplate, apiKey, version }
             '  windowObj.WA_GOLD_RUSH_RUNTIME_CONFIG = {',
             '    ...existingRuntimeConfig,',
             '    apiKey,',
+            "    buildTarget: 'github-pages',",
             `    version: ${JSON.stringify(normalizedVersion)}`,
             '  };',
             '  windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = windowObj.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG || {};',
@@ -53,7 +56,9 @@ function renderDeployedDashboardArtifacts({ dashboardTemplate, apiKey, version }
             '})(window);',
             ''
         ].join('\n'),
-        dashboardHtml: String(dashboardTemplate || '').replace('__WA_GGR_RUNTIME_CONFIG_VERSION__', normalizedVersion)
+        dashboardHtml: String(dashboardTemplate || '').replaceAll('__WA_GGR_RUNTIME_CONFIG_VERSION__', normalizedVersion),
+        homeHtml: String(homeTemplate || '').replaceAll('__WA_GGR_RUNTIME_CONFIG_VERSION__', normalizedVersion),
+        levelHtml: String(levelTemplate || '').replaceAll('__WA_GGR_RUNTIME_CONFIG_VERSION__', normalizedVersion)
     };
 }
 
@@ -184,11 +189,22 @@ test('pages deploy workflow keeps secret injection and rendered runtime artifact
     assert.ok(workflow.includes('WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}'));
     assert.ok(workflow.includes('WA_GGR_PAGES_BUILD_DIR: pages-dist'));
     assert.ok(workflow.includes('path: pages-dist'));
+    assert.ok(workflow.includes('artifact_sources = ['));
+    assert.ok(workflow.includes('(build_dir / ".nojekyll").write_text("", encoding="utf-8")'));
+    assert.ok(workflow.includes("buildTarget: 'github-pages'"));
+    assert.ok(workflow.includes('Missing runtime config version token'));
+    assert.ok(workflow.includes('Verify Pages artifact contents'));
+    assert.ok(workflow.includes('archive.getmember("teacher/runtime-config.js")'));
     assert.ok(workflow.includes('raise SystemExit("WA_GGR_API_KEY secret is required to deploy teacher/runtime-config.js")'));
+    assert.ok(workflow.includes('raise SystemExit("WA_GGR_RUNTIME_CONFIG_VERSION must be a non-dev build marker")'));
 
     const dashboardTemplate = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
-    const rendered = renderDeployedDashboardArtifacts({
+    const homeTemplate = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+    const levelTemplate = fs.readFileSync(require.resolve('../levels/level-2-tycoon/index.html'), 'utf8');
+    const rendered = renderDeployedPagesArtifacts({
         dashboardTemplate,
+        homeTemplate,
+        levelTemplate,
         apiKey: 'runtime-key',
         version: '123-1'
     });
@@ -203,10 +219,18 @@ test('pages deploy workflow keeps secret injection and rendered runtime artifact
 
     assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG.apiKey, 'runtime-key');
     assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG.version, '123-1');
+    assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG.buildTarget, 'github-pages');
     assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG.existing, true);
     assert.equal(context.window.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG.apiKey, 'runtime-key');
     assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED, true);
     assert.ok(rendered.dashboardHtml.includes('runtime-config.js?v=123-1'));
+    assert.ok(rendered.homeHtml.includes('teacher/runtime-config.js?v=123-1'));
+    assert.ok(rendered.levelHtml.includes('../../teacher/runtime-config.js?v=123-1'));
+    assert.ok(!rendered.dashboardHtml.includes('__WA_GGR_RUNTIME_CONFIG_VERSION__'));
+    assert.ok(!rendered.homeHtml.includes('__WA_GGR_RUNTIME_CONFIG_VERSION__'));
+    assert.ok(!rendered.levelHtml.includes('__WA_GGR_RUNTIME_CONFIG_VERSION__'));
+    assert.ok(homeTemplate.includes('teacher/runtime-config.js?v=__WA_GGR_RUNTIME_CONFIG_VERSION__'));
+    assert.ok(levelTemplate.includes('../../teacher/runtime-config.js?v=__WA_GGR_RUNTIME_CONFIG_VERSION__'));
     assert.ok(dashboardTemplate.includes('runtime-config.js?v=__WA_GGR_RUNTIME_CONFIG_VERSION__'));
 });
 
@@ -762,6 +786,13 @@ test('dashboard html lifecycle invokes hydration for startup, login, and refresh
     assert.ok(html.includes('id="diagMetaSummary" role="status" aria-live="polite" aria-atomic="true"'));
     assert.ok(html.includes('renderHydrationDiagnostics(hydration);'));
     assert.ok(html.includes('window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED = window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED === true;'));
+});
+
+test('non-dashboard html pages cache-bust runtime config requests', () => {
+    const homeHtml = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+    const levelHtml = fs.readFileSync(require.resolve('../levels/level-2-tycoon/index.html'), 'utf8');
+    assert.ok(homeHtml.includes('teacher/runtime-config.js?v=__WA_GGR_RUNTIME_CONFIG_VERSION__'));
+    assert.ok(levelHtml.includes('../../teacher/runtime-config.js?v=__WA_GGR_RUNTIME_CONFIG_VERSION__'));
 });
 
 test('progression snapshot builder keeps full restoration fields', () => {
