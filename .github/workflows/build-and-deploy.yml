@@ -41,21 +41,27 @@ jobs:
               raise SystemExit("WA_GGR_RUNTIME_CONFIG_VERSION must be a non-dev build marker")
           build_dir = Path(os.environ.get("WA_GGR_PAGES_BUILD_DIR", "").strip() or "pages-dist")
           runtime_config_version_token = "__WA_GGR_RUNTIME_CONFIG_VERSION__"
-          artifact_sources = [
-              Path("index.html"),
-              Path("script.js"),
-              Path("levels"),
-              Path("shared"),
-              Path("teacher"),
-          ]
+          excluded_entry_names = {
+              ".git",
+              ".github",
+              "tests",
+              "scripts",
+              "__pycache__",
+              "README.md",
+          }
+
+          def ignore_entries(_directory, names):
+              return [name for name in names if name in excluded_entry_names]
 
           if build_dir.exists():
               shutil.rmtree(build_dir)
           build_dir.mkdir(parents=True, exist_ok=True)
-          for source in artifact_sources:
+          for source in sorted(Path(".").iterdir(), key=lambda path: path.name):
+              if source.name in excluded_entry_names:
+                  continue
               destination = build_dir / source
               if source.is_dir():
-                  shutil.copytree(source, destination)
+                  shutil.copytree(source, destination, ignore=ignore_entries)
               else:
                   destination.parent.mkdir(parents=True, exist_ok=True)
                   shutil.copy2(source, destination)

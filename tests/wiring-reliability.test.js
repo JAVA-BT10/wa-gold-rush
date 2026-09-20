@@ -189,7 +189,9 @@ test('pages deploy workflow keeps secret injection and rendered runtime artifact
     assert.ok(workflow.includes('WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}'));
     assert.ok(workflow.includes('WA_GGR_PAGES_BUILD_DIR: pages-dist'));
     assert.ok(workflow.includes('path: pages-dist'));
-    assert.ok(workflow.includes('artifact_sources = ['));
+    assert.ok(workflow.includes('excluded_entry_names = {'));
+    assert.ok(workflow.includes('for source in sorted(Path(".").iterdir(), key=lambda path: path.name):'));
+    assert.ok(workflow.includes('shutil.copytree(source, destination, ignore=ignore_entries)'));
     assert.ok(workflow.includes('(build_dir / ".nojekyll").write_text("", encoding="utf-8")'));
     assert.ok(workflow.includes("buildTarget: 'github-pages'"));
     assert.ok(workflow.includes('html_paths = sorted(build_dir.rglob("*.html"))'));
