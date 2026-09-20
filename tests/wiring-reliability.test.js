@@ -196,6 +196,10 @@ test('pages deploy workflow keeps secret injection and rendered runtime artifact
     assert.ok(workflow.includes('replaced_html_paths.append(html_path)'));
     assert.ok(workflow.includes('Missing runtime config version token in built HTML files'));
     assert.ok(workflow.includes('Verify Pages artifact contents'));
+    assert.ok(workflow.includes("for html_path in sorted(build_dir.rglob(\"*.html\"))"));
+    assert.ok(workflow.includes("re.finditer(r'runtime-config\\.js\\?v="));
+    assert.ok(workflow.includes('Built HTML contains an unexpected runtime config version'));
+    assert.ok(workflow.includes('Built HTML does not reference cache-busted runtime config'));
     assert.ok(workflow.includes('"tar",'));
     assert.ok(workflow.includes('"--dereference"'));
     assert.ok(workflow.includes('"--hard-dereference"'));

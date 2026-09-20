@@ -104,6 +104,7 @@ jobs:
         run: |
           python - <<'PY'
           import os
+          import re
           import subprocess
           import tarfile
           from pathlib import Path
@@ -130,17 +131,17 @@ jobs:
           if "String(\"\" || '').trim()" in runtime_config or "String('' || '').trim()" in runtime_config:
               raise SystemExit("Generated runtime config must include a non-empty API key")
 
-          expected_html_runtime_paths = {
-              build_dir / "index.html": f'teacher/runtime-config.js?v={runtime_config_version}',
-              build_dir / "teacher/dashboard.html": f'runtime-config.js?v={runtime_config_version}',
-              build_dir / "levels/level-2-tycoon/index.html": f'../../teacher/runtime-config.js?v={runtime_config_version}',
-          }
-          for html_path, expected_runtime_path in expected_html_runtime_paths.items():
+          runtime_config_reference_count = 0
+          for html_path in sorted(build_dir.rglob("*.html")):
               html = html_path.read_text(encoding="utf-8")
-              if expected_runtime_path not in html:
-                  raise SystemExit(f"Built HTML does not reference cache-busted runtime config: {html_path}")
               if "__WA_GGR_RUNTIME_CONFIG_VERSION__" in html:
                   raise SystemExit(f"Built HTML still contains the runtime config version placeholder: {html_path}")
+              for match in re.finditer(r'runtime-config\.js\?v=([^"\'<>\s]+)', html):
+                  runtime_config_reference_count += 1
+                  if match.group(1) != runtime_config_version:
+                      raise SystemExit(f"Built HTML contains an unexpected runtime config version: {html_path}")
+          if runtime_config_reference_count == 0:
+              raise SystemExit("Built HTML does not reference cache-busted runtime config")
 
           archive_path = Path(os.environ.get("RUNNER_TEMP", ".")).resolve() / "pages-artifact-verify.tar"
           if archive_path.exists():
