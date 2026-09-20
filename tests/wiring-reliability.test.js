@@ -192,7 +192,9 @@ test('pages deploy workflow keeps secret injection and rendered runtime artifact
     assert.ok(workflow.includes('artifact_sources = ['));
     assert.ok(workflow.includes('(build_dir / ".nojekyll").write_text("", encoding="utf-8")'));
     assert.ok(workflow.includes("buildTarget: 'github-pages'"));
-    assert.ok(workflow.includes('Missing runtime config version token'));
+    assert.ok(workflow.includes('html_paths = sorted(build_dir.rglob("*.html"))'));
+    assert.ok(workflow.includes('replaced_html_paths.append(html_path)'));
+    assert.ok(workflow.includes('Missing runtime config version token in built HTML files'));
     assert.ok(workflow.includes('Verify Pages artifact contents'));
     assert.ok(workflow.includes('archive.getmember("teacher/runtime-config.js")'));
     assert.ok(workflow.includes('raise SystemExit("WA_GGR_API_KEY secret is required to deploy teacher/runtime-config.js")'));

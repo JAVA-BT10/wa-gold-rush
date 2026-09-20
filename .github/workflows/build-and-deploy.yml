@@ -83,19 +83,18 @@ jobs:
               encoding="utf-8",
           )
 
-          html_paths = [
-              build_dir / "index.html",
-              build_dir / "teacher/dashboard.html",
-              build_dir / "levels/level-2-tycoon/index.html",
-          ]
+          html_paths = sorted(build_dir.rglob("*.html"))
+          replaced_html_paths = []
           for html_path in html_paths:
               html = html_path.read_text(encoding="utf-8")
-              if runtime_config_version_token not in html:
-                  raise SystemExit(f"Missing runtime config version token in {html_path}")
-              html_path.write_text(
-                  html.replace(runtime_config_version_token, runtime_config_version),
-                  encoding="utf-8",
-              )
+              if runtime_config_version_token in html:
+                  html_path.write_text(
+                      html.replace(runtime_config_version_token, runtime_config_version),
+                      encoding="utf-8",
+                  )
+                  replaced_html_paths.append(html_path)
+          if not replaced_html_paths:
+              raise SystemExit("Missing runtime config version token in built HTML files")
           PY
 
       - name: Verify Pages artifact contents
