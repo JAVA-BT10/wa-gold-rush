@@ -102,7 +102,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
 
     try {
-        gameState.loadFromLocalStorage();
+        const localLoadResult = gameState.loadFromLocalStorage();
+        hydrateIdentityInputs();
+        applyCompetitionSessionToIdentity();
+        await restoreProgressFromBestSource({ preferRemote: !localLoadResult?.success });
         if (!enforceCurrentLevelAccess()) return;
         gameState.assignedLevel = getAssignedLevelFromUrl();
         gameState.applyLevelConfigAdapter?.();
@@ -1183,6 +1186,78 @@ function getClassRecords() {
     }
 }
 
+function getLocalAutosaveMetadata(slotName = 'level2_autosave') {
+    try {
+        const raw = localStorage.getItem(slotName);
+        if (!raw) return { exists: false, timestamp: '', studentCode: '' };
+        const data = JSON.parse(raw);
+        const gameStateData = data?.gameState || {};
+        const savedAt = String(
+            data?.timestamp
+            || gameStateData?.savedAt
+            || gameStateData?.lastPlayed
+            || gameStateData?.approvalTimestamp
+            || ''
+        ).trim();
+        return {
+            exists: true,
+            timestamp: savedAt,
+            studentCode: String(gameStateData?.player?.studentCode || gameStateData?.player?.studentId || '').trim()
+        };
+    } catch (_) {
+        return { exists: false, timestamp: '', studentCode: '' };
+    }
+}
+
+async function restoreProgressFromBestSource(options = {}) {
+    if (typeof SharePointSync === 'undefined' || typeof SharePointSync.loadProgress !== 'function') {
+        return { restored: false, source: 'local', skipped: true };
+    }
+
+    const competition = getCompetitionContext();
+    if (!competition.isLoggedIn) {
+        return { restored: false, source: 'local', skipped: true };
+    }
+
+    const identity = {
+        studentCode: competition.session.studentCode || gameState.player.studentCode || '',
+        studentId: competition.session.studentId || gameState.player.studentId || '',
+        classCode: competition.session.classCode || gameState.player.classCode || '',
+        level: getAssignedLevelFromUrl()
+    };
+    if (!identity.studentCode && !identity.studentId) {
+        return { restored: false, source: 'local', skipped: true };
+    }
+
+    const remote = await SharePointSync.loadProgress(identity);
+    if (!remote?.ok || !remote.snapshot) {
+        return { restored: false, source: 'local', skipped: true, error: remote?.error || '' };
+    }
+
+    const local = getLocalAutosaveMetadata();
+    const localTimestamp = local.timestamp ? Date.parse(local.timestamp) : 0;
+    const remoteTimestamp = remote.updatedAt ? Date.parse(remote.updatedAt) : 0;
+    const sameStudent = !local.studentCode
+        || String(local.studentCode).trim().toLowerCase() === String(identity.studentCode || identity.studentId || '').trim().toLowerCase();
+    const shouldUseRemote = options.force === true
+        || !local.exists
+        || !sameStudent
+        || (Number.isFinite(remoteTimestamp) && remoteTimestamp > localTimestamp)
+        || options.preferRemote === true;
+
+    if (!shouldUseRemote) {
+        return { restored: false, source: 'local', skipped: true };
+    }
+
+    const restored = gameState.loadFromProgressionSnapshot(remote.snapshot);
+    if (!restored?.success) {
+        return { restored: false, source: 'local', skipped: true, error: 'Unable to restore remote progress snapshot.' };
+    }
+    applyCompetitionSessionToIdentity(false);
+    updateCloudSaveStatusLabel('restored from cloud');
+    return { restored: true, source: 'remote', recoveredCash: restored.recoveredCash };
+}
+
 function saveClassRecords(records) {
     localStorage.setItem(CLASS_RECORDS_KEY, JSON.stringify(records));
 }
@@ -1397,12 +1472,15 @@ function saveGame() {
     alert(result ? '✅ Game saved successfully!' : '❌ Error saving game.');
 }
 
-function loadGame() {
+async function loadGame() {
     if (!confirm('Load saved game? This will overwrite current progress.')) return;
     const result = gameState.loadFromLocalStorage();
     if (!result.success) {
-        alert('❌ No save data found');
-        return;
+        const remoteRestore = await restoreProgressFromBestSource({ force: true });
+        if (!remoteRestore?.restored) {
+            alert('❌ No save data found');
+            return;
+        }
     }
     const savedLevel = gameState.assignedLevel;
     const urlLevel = getAssignedLevelFromUrl();

@@ -714,34 +714,95 @@ class GameState {
         InvestmentProfile.recordAction(code, this.assignedLevel, bucket, weight || 1);
     }
 
+    createAutosaveData() {
+        this.persistProgressionStateForLevel(this.assignedLevel);
+        return {
+            timestamp: new Date().toISOString(),
+            gameState: {
+                round: this.round,
+                cash: this.cash,
+                assignedLevel: this.assignedLevel,
+                player: this.player,
+                ownedMines: this.ownedMines,
+                machinery: this.machinery,
+                roundHistory: this.roundHistory,
+                totalProfitLoss: this.totalProfitLoss,
+                investmentPlans: this.investmentPlans,
+                checkpointStatus: this.checkpointStatus,
+                quizAttempts: this.quizAttempts,
+                approvalStatus: this.approvalStatus,
+                approverName: this.approverName,
+                approvalTimestamp: this.approvalTimestamp,
+                progressionStateByLevel: this.progressionStateByLevel
+            }
+        };
+    }
+
     saveToLocalStorage(slotName = 'level2_autosave') {
         try {
-            this.persistProgressionStateForLevel(this.assignedLevel);
-            const data = {
-                timestamp: new Date().toISOString(),
-                gameState: {
-                    round: this.round,
-                    cash: this.cash,
-                    assignedLevel: this.assignedLevel,
-                    player: this.player,
-                    ownedMines: this.ownedMines,
-                    machinery: this.machinery,
-                    roundHistory: this.roundHistory,
-                    totalProfitLoss: this.totalProfitLoss,
-                    investmentPlans: this.investmentPlans,
-                    checkpointStatus: this.checkpointStatus,
-                    quizAttempts: this.quizAttempts,
-                    approvalStatus: this.approvalStatus,
-                    approverName: this.approverName,
-                    approvalTimestamp: this.approvalTimestamp,
-                    progressionStateByLevel: this.progressionStateByLevel
-                }
-            };
+            const data = this.createAutosaveData();
             localStorage.setItem(slotName, JSON.stringify(data));
             return true;
         } catch (error) {
             console.error('Failed to save game state:', error);
             return false;
+        }
+    }
+
+    loadFromProgressionSnapshot(snapshot = {}, slotName = 'level2_autosave') {
+        if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+            return { success: false, recoveredCash: false };
+        }
+
+        try {
+            const numericRound = Number(snapshot.round);
+            this.assignedLevel = this.normalizeLevel(snapshot.assignedLevel || this.assignedLevel || 2);
+            this.round = Number.isFinite(numericRound) && numericRound >= 1 ? numericRound : 1;
+
+            this.player = {
+                ...this.player,
+                ...(snapshot.player && typeof snapshot.player === 'object' ? snapshot.player : {}),
+                companyName: String(snapshot.companyName || snapshot.player?.companyName || this.player.companyName || 'Untitled Mining Co.')
+            };
+            this.ownedMines = snapshot.ownedMines || this.ownedMines;
+            this.machinery = Array.isArray(snapshot.machinery) ? snapshot.machinery : [];
+            this.roundHistory = Array.isArray(snapshot.roundHistory) ? snapshot.roundHistory : [];
+            this.totalProfitLoss = typeof snapshot.totalProfitLoss === 'number' ? snapshot.totalProfitLoss : 0;
+            this.investmentPlans = snapshot.investmentPlans || {};
+
+            this.progressionStateByLevel = snapshot.progressionStateByLevel || {};
+            if (!Object.keys(this.progressionStateByLevel).length && (
+                snapshot.checkpointStatus
+                || snapshot.approvalStatus
+                || Array.isArray(snapshot.quizAttempts)
+            )) {
+                this.progressionStateByLevel[this.getLevelKey(this.assignedLevel)] = {
+                    ...this.getDefaultProgressionState(),
+                    checkpointStatus: snapshot.checkpointStatus || null,
+                    quizAttempts: Array.isArray(snapshot.quizAttempts) ? snapshot.quizAttempts : [],
+                    approvalStatus: snapshot.approvalStatus || null,
+                    approverName: snapshot.approverName || null,
+                    approvalTimestamp: snapshot.approvalTimestamp || null,
+                    quizScore: snapshot.quizScore ?? null,
+                    quizPassedAt: snapshot.quizPassedAt || null
+                };
+            }
+
+            this.applyProgressionStateForAssignedLevel();
+            const activeState = this.getProgressionState(this.assignedLevel);
+            const normalizedCash = this.normalizeLoadedCash(snapshot.cash, {
+                ...snapshot,
+                checkpointStatus: activeState.checkpointStatus,
+                approvalStatus: activeState.approvalStatus,
+                quizAttempts: activeState.quizAttempts
+            });
+            this.cash = normalizedCash.cash;
+            this.applyLevelConfigAdapter();
+            this.saveToLocalStorage(slotName);
+            return { success: true, recoveredCash: normalizedCash.recovered };
+        } catch (error) {
+            console.error('Failed to load progression snapshot:', error);
+            return { success: false, recoveredCash: false };
         }
     }
 

@@ -27,14 +27,15 @@
     }
 
     function normalizeStudentLoginResponse(data = {}) {
+        const studentCode = String(data.studentCode || data.StudentCode || '').trim();
         return {
             ok: data.ok === true,
-            studentCode: String(data.studentCode || '').trim(),
-            leaderboardName: String(data.leaderboardName || '').trim(),
-            studentId: String(data.studentId || '').trim(),
-            studentName: String(data.studentName || '').trim(),
-            classCode: String(data.classCode || '').trim().toUpperCase(),
-            assignedLevel: Number(data.assignedLevel) || null,
+            studentCode,
+            leaderboardName: String(data.leaderboardName || data.LeaderboardName || studentCode).trim(),
+            studentId: String(data.studentId || data.StudentID || '').trim(),
+            studentName: String(data.studentName || data.StudentName || '').trim(),
+            classCode: String(data.classCode || data.ClassCode || '').trim().toUpperCase(),
+            assignedLevel: Number(data.assignedLevel || data.AssignedLevel) || null,
             message: String(data.message || data.error || '').trim()
         };
     }

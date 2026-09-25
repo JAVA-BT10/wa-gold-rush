@@ -173,6 +173,33 @@ const CheckpointApproval = (() => {
         }
     }
 
+    function getStudentProgressRecord(studentCode, level) {
+        try {
+            const raw = localStorage.getItem('wa_gold_rush_class_records');
+            const records = raw ? JSON.parse(raw) : [];
+            if (!Array.isArray(records)) return null;
+            return records.find((record) => {
+                const candidateCode = String(record?.studentCode || record?.studentId || '').trim().toLowerCase();
+                const matchesStudent = candidateCode === String(studentCode || '').trim().toLowerCase();
+                const recordLevel = Number(record?.level || record?.gameState?.assignedLevel || 0) || 0;
+                return matchesStudent && (!level || recordLevel === Number(level));
+            }) || null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    async function syncApprovalRecordToBackend(studentCode, level) {
+        if (typeof dashboard === 'undefined' || typeof dashboard.syncProgressRecordToBackend !== 'function') {
+            return { success: false, skipped: true, error: 'Dashboard progress sync helper is unavailable.' };
+        }
+        const record = getStudentProgressRecord(studentCode, level);
+        if (!record) {
+            return { success: false, skipped: true, error: 'Student progress record was not found for backend sync.' };
+        }
+        return dashboard.syncProgressRecordToBackend(record);
+    }
+
     /**
      * Generate HTML for quiz review modal
      */
@@ -293,6 +320,9 @@ const CheckpointApproval = (() => {
                 <button class="btn-approve-checkpoint" style="flex: 1; min-width: 120px; padding: 12px; background: #4caf50; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px;">
                     ✅ Approve for Next Level
                 </button>
+                <button class="btn-reject-checkpoint" style="flex: 1; min-width: 120px; padding: 12px; background: #f44336; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px;">
+                    ⛔ Reject
+                </button>
                 <button class="btn-retake-checkpoint" style="flex: 1; min-width: 120px; padding: 12px; background: #ff9800; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px;">
                     🔄 Request Retake
                 </button>
@@ -304,21 +334,46 @@ const CheckpointApproval = (() => {
 
         // Attach event handlers
         const approveBtn = content.querySelector('.btn-approve-checkpoint');
+        const rejectBtn = content.querySelector('.btn-reject-checkpoint');
         const retakeBtn = content.querySelector('.btn-retake-checkpoint');
 
-        approveBtn.onclick = () => {
+        approveBtn.onclick = async () => {
             const teacherName = prompt('Your name (for record):') || 'Teacher';
             saveApproval(studentCode, level, 'approved', teacherName);
             syncApprovalToGameState(studentCode, level, { status: 'approved', approverName: teacherName });
-            alert(`✅ Approved ${studentName} for Level ${level + 1}`);
+            const backendResult = await syncApprovalRecordToBackend(studentCode, level);
+            alert(
+                backendResult?.success
+                    ? `✅ Approved ${studentName} for Level ${level + 1} after backend confirmation.`
+                    : `✅ Approved ${studentName} locally, but backend sync is still pending or failed.`
+            );
             modal.remove();
             if (window.refreshCheckpointTable) window.refreshCheckpointTable();
         };
 
-        retakeBtn.onclick = () => {
+        rejectBtn.onclick = async () => {
+            const teacherName = prompt('Optional rejection note (for record):', 'Teacher review rejected') || 'Teacher';
+            saveApproval(studentCode, level, 'rejected', teacherName);
+            syncApprovalToGameState(studentCode, level, { status: 'rejected', approverName: teacherName });
+            const backendResult = await syncApprovalRecordToBackend(studentCode, level);
+            alert(
+                backendResult?.success
+                    ? `⛔ Rejected ${studentName} after backend confirmation.`
+                    : `⛔ Rejected ${studentName} locally, but backend sync is still pending or failed.`
+            );
+            modal.remove();
+            if (window.refreshCheckpointTable) window.refreshCheckpointTable();
+        };
+
+        retakeBtn.onclick = async () => {
             saveApproval(studentCode, level, 'retake_requested', 'Teacher');
             syncApprovalToGameState(studentCode, level, { status: 'retake_requested', approverName: 'Teacher' });
-            alert(`🔄 Requested retake for ${studentName}. They can now re-attempt the quiz.`);
+            const backendResult = await syncApprovalRecordToBackend(studentCode, level);
+            alert(
+                backendResult?.success
+                    ? `🔄 Requested retake for ${studentName} after backend confirmation.`
+                    : `🔄 Requested retake for ${studentName} locally, but backend sync is still pending or failed.`
+            );
             modal.remove();
             if (window.refreshCheckpointTable) window.refreshCheckpointTable();
         };

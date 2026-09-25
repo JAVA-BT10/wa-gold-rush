@@ -428,6 +428,7 @@
         const PAUSE_STATE_KEY   = 'wa_gold_rush_pause_state';
         const STRICT_MODE_KEY   = 'wa_gold_rush_strict_mode';
         const dashboard = new TeacherDashboard();
+        window.dashboard = dashboard;
         const diagnosticsEnabled = window.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS === true;
         document.getElementById('hydrationDiagnosticsBanner').hidden = !diagnosticsEnabled;
 
@@ -585,6 +586,22 @@
 
         function getResultError(result, fallback) {
             return serializeErrorMessage(result?.error ?? result?.message ?? result, fallback);
+        }
+
+        function describeSyncOutcome(result, successMessage, localOnlyMessage) {
+            if (result?.success) {
+                return { tone: 'success', message: successMessage };
+            }
+            if (result?.skipped) {
+                return {
+                    tone: 'info',
+                    message: localOnlyMessage || `Saved locally only. ${getResultError(result, 'Remote sync is unavailable.')}`
+                };
+            }
+            return {
+                tone: 'error',
+                message: localOnlyMessage || `Saved locally only. ${getResultError(result, 'Remote sync failed.')}`
+            };
         }
 
         function yesNo(value, pendingLabel = 'Pending') {
@@ -825,7 +842,7 @@
             }).join('');
         }
 
-        function saveRosterRow(studentId) {
+        async function saveRosterRow(studentId) {
             const esc = CSS.escape(studentId);
             const get = (field, tag = 'input') =>
                 document.querySelector(`${tag}[data-field="${field}"][data-id="${esc}"]`)?.value || '';
@@ -852,9 +869,14 @@
                 setStatusMessage('dashboardStatus', 'error', `Could not save student changes. ${error}`);
                 return;
             }
-            dashboard.syncStudentToBackend(result.student);
-            setStatusMessage('rosterActionMsg', 'success', `Saved changes for ${describeStudent(result.student)}.`);
-            setStatusMessage('dashboardStatus', 'success', `Saved changes for ${describeStudent(result.student)}.`);
+            const syncResult = await dashboard.syncStudentToBackend(result.student);
+            const outcome = describeSyncOutcome(
+                syncResult,
+                `Saved changes for ${describeStudent(result.student)} after backend confirmation.`,
+                `Saved changes for ${describeStudent(result.student)} locally only.`
+            );
+            setStatusMessage('rosterActionMsg', outcome.tone, outcome.message);
+            setStatusMessage('dashboardStatus', outcome.tone, outcome.message);
             refresh();
         }
 
@@ -924,7 +946,7 @@
         });
 
         document.getElementById('addStudentBtn').addEventListener('click', () => {
-            withBusyButton('addStudentBtn', 'Adding…', () => {
+            withBusyButton('addStudentBtn', 'Adding…', async () => {
                 const studentCode     = document.getElementById('studentCode').value.trim();
                 const leaderboardName = document.getElementById('studentLeaderboardName').value.trim();
                 const studentName     = document.getElementById('studentName').value.trim();
@@ -957,7 +979,7 @@
                     return;
                 }
 
-                dashboard.syncStudentToBackend(result.student);
+                const syncResult = await dashboard.syncStudentToBackend(result.student);
 
                 document.getElementById('studentCode').value = '';
                 document.getElementById('studentLeaderboardName').value = '';
@@ -966,14 +988,19 @@
                 document.getElementById('studentClassCode').value = '';
                 document.getElementById('studentLevel').value = '2';
 
-                setStatusMessage('studentActionMsg', 'success', `Added ${describeStudent(result.student)} to the roster.`);
-                setStatusMessage('dashboardStatus', 'success', `Added ${describeStudent(result.student)} to the roster.`);
+                const outcome = describeSyncOutcome(
+                    syncResult,
+                    `Added ${describeStudent(result.student)} to the roster after backend confirmation.`,
+                    `Added ${describeStudent(result.student)} to the roster locally only.`
+                );
+                setStatusMessage('studentActionMsg', outcome.tone, outcome.message);
+                setStatusMessage('dashboardStatus', outcome.tone, outcome.message);
                 refresh();
             });
         });
 
         document.getElementById('importBtn').addEventListener('click', () => {
-            withBusyButton('importBtn', 'Importing…', () => {
+            withBusyButton('importBtn', 'Importing…', async () => {
                 const format = document.getElementById('importFormat').value;
                 const input = document.getElementById('bulkInput').value.trim();
                 if (!input) {
@@ -1009,14 +1036,26 @@
                         ...formatSkipDetails(result.teachers.skipped)
                     ];
 
-                    dashboard.syncStudentsToBackend(result.added);
-                    dashboard.syncTeachersToBackend([
+                    const studentSync = await dashboard.syncStudentsToBackend(result.added);
+                    const teacherSync = await dashboard.syncTeachersToBackend([
                         ...result.teachers.added,
                         ...result.teachers.updated
                     ]);
-
-                    setStatusMessage('importResult', tone, `Roster import finished: ${summaryParts.join(', ')}.`, details);
-                    setStatusMessage('dashboardStatus', tone, `Roster import finished: ${summaryParts.join(', ')}.`);
+                    const syncMessages = [];
+                    if (studentCount) {
+                        const studentOutcome = describeSyncOutcome(studentSync, '', 'Student roster changes are currently local only.');
+                        if (studentOutcome.tone !== 'success') syncMessages.push(studentOutcome.message);
+                    }
+                    if (teacherChanges) {
+                        const teacherOutcome = describeSyncOutcome(teacherSync, '', 'Teacher roster changes are currently local only.');
+                        if (teacherOutcome.tone !== 'success') syncMessages.push(teacherOutcome.message);
+                    }
+                    const combinedDetails = [...details, ...syncMessages.filter(Boolean)];
+                    const syncTone = (studentSync?.success || teacherSync?.success)
+                        ? tone
+                        : (syncMessages.length ? 'info' : tone);
+                    setStatusMessage('importResult', syncTone, `Roster import finished: ${summaryParts.join(', ')}.`, combinedDetails);
+                    setStatusMessage('dashboardStatus', syncTone, `Roster import finished: ${summaryParts.join(', ')}.`);
                     refresh();
                     refreshTeachers();
                 } catch (error) {
@@ -1028,7 +1067,7 @@
         });
 
         document.getElementById('teacherImportBtn').addEventListener('click', () => {
-            withBusyButton('teacherImportBtn', 'Importing…', () => {
+            withBusyButton('teacherImportBtn', 'Importing…', async () => {
                 const input = document.getElementById('teacherImportInput').value.trim();
                 if (!input) {
                     const message = 'Paste teacher CSV data before importing.';
@@ -1043,19 +1082,19 @@
                 const tone = changedCount ? 'success' : 'info';
                 const summary = `Teacher import finished: ${result.added.length} added, ${result.updated.length} updated${skippedCount ? `, ${skippedCount} skipped` : ''}.`;
 
-                dashboard.syncTeachersToBackend([
+                const syncResult = await dashboard.syncTeachersToBackend([
                     ...result.added,
                     ...result.updated
                 ]);
-
-                setStatusMessage('teacherImportResult', tone, summary, formatSkipDetails(result.skipped));
-                setStatusMessage('dashboardStatus', tone, summary);
+                const outcome = describeSyncOutcome(syncResult, summary, `${summary} Teacher changes are currently local only.`);
+                setStatusMessage('teacherImportResult', outcome.tone, outcome.message, formatSkipDetails(result.skipped));
+                setStatusMessage('dashboardStatus', outcome.tone, outcome.message);
                 refreshTeachers();
             });
         });
 
         document.getElementById('addTeacherBtn').addEventListener('click', () => {
-            withBusyButton('addTeacherBtn', 'Saving…', () => {
+            withBusyButton('addTeacherBtn', 'Saving…', async () => {
                 const email = document.getElementById('newTeacherEmail').value.trim();
                 const name = document.getElementById('newTeacherName').value.trim();
                 const classCode = document.getElementById('newTeacherClassCode').value.trim();
@@ -1082,7 +1121,7 @@
                     return;
                 }
 
-                dashboard.syncTeacherToBackend(result.teacher);
+                const syncResult = await dashboard.syncTeacherToBackend(result.teacher);
 
                 document.getElementById('newTeacherEmail').value = '';
                 document.getElementById('newTeacherName').value = '';
@@ -1090,8 +1129,13 @@
                 document.getElementById('newTeacherRole').value = 'teacher';
 
                 const prefix = result.updated ? 'Updated' : 'Added';
-                setStatusMessage('teacherAddMsg', 'success', `${prefix} ${describeTeacher(result.teacher)}.`);
-                setStatusMessage('dashboardStatus', 'success', `${prefix} ${describeTeacher(result.teacher)}.`);
+                const outcome = describeSyncOutcome(
+                    syncResult,
+                    `${prefix} ${describeTeacher(result.teacher)} after backend confirmation.`,
+                    `${prefix} ${describeTeacher(result.teacher)} locally only.`
+                );
+                setStatusMessage('teacherAddMsg', outcome.tone, outcome.message);
+                setStatusMessage('dashboardStatus', outcome.tone, outcome.message);
                 refreshTeachers();
             });
         });
@@ -1132,8 +1176,8 @@
                 return;
             }
 
-            setStatusMessage('teacherAddMsg', 'success', `Deleted ${describeTeacher(result.teacher)}.`);
-            setStatusMessage('dashboardStatus', 'success', `Deleted ${describeTeacher(result.teacher)}.`);
+            setStatusMessage('teacherAddMsg', 'info', `Deleted ${describeTeacher(result.teacher)} locally only. No backend delete flow is configured.`);
+            setStatusMessage('dashboardStatus', 'info', `Deleted ${describeTeacher(result.teacher)} locally only. No backend delete flow is configured.`);
             refreshTeachers();
         });
 
@@ -1153,7 +1197,7 @@
             withBusyButton('refreshBtn', 'Refreshing…', () => refreshDashboardFromBestSource({ showStatus: true }));
         });
         document.getElementById('exportCsvBtn').addEventListener('click', () => {
-            const csv = dashboard.exportAsCSV();
+            const csv = withAuthorizedStudents(() => dashboard.exportAsCSV());
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1231,8 +1275,17 @@
             return refreshDashboardFromBestSource({ showStatus: options.showHydrationStatus === true });
         }
 
-        function init() {
+        async function init() {
             if (!enforceTeacherDashboardAccess()) return;
+            const revalidated = await dashboard.revalidateTeacherSession();
+            if (!revalidated.success) {
+                dashboard.clearTeacherSession();
+                document.body.classList.remove('authorized');
+                clearProtectedDashboardContent();
+                setStatusMessage('authStatusMessage', 'error', getResultError(revalidated, 'Teacher session expired. Please sign in again.'));
+                return;
+            }
+            showTeacherDashboard();
             renderHydrationDiagnostics();
             initializeDashboard({ showHydrationStatus: true });
         }

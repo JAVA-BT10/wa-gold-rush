@@ -37,7 +37,8 @@ class LevelAccessGuard {
             return true;
         }
         const state = this.getSavedProgressionState(this.getRequiredCheckpointLevel());
-        return state?.checkpointStatus === 'quiz_passed';
+        return state?.checkpointStatus === 'quiz_passed'
+            && state?.approvalStatus === 'approved';
     }
 
     getAccessDenialReason() {

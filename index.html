@@ -318,7 +318,7 @@
 
         <!-- Access Error Message -->
         <div id="accessErrorContainer" style="display: none;">
-            <div id="accessErrorMessage" class="access-error" role="alert" aria-live="assertive">🔒 That level is currently locked. Complete the required checkpoint quiz to proceed.</div>
+            <div id="accessErrorMessage" class="access-error" role="alert" aria-live="assertive">🔒 That level is currently locked. Complete the required checkpoint quiz and receive teacher approval to proceed.</div>
         </div>
 
         <section id="main-content" class="levels-grid">
@@ -329,27 +329,30 @@
 
         <section class="student-section" aria-labelledby="studentLoginHeading">
             <h2 id="studentLoginHeading">🎓 Students</h2>
-            <p>Sign in with your student code to use competition features and carry your identity into levels.</p>
+            <p>Sign in with your class code, student ID, and PIN to use competition features and carry your identity into levels.</p>
             <form id="studentLoginForm">
                 <div class="student-login-grid">
-                    <label for="studentCodeInput">Student Code
-                        <input id="studentCodeInput" type="text" maxlength="40" placeholder="e.g. SC-Y6-1042" required>
+                    <label for="studentClassCodeInput">Class Code
+                        <input id="studentClassCodeInput" type="text" maxlength="20" placeholder="e.g. 6B" required>
                     </label>
-                    <label for="leaderboardNameInput">Leaderboard Name
-                        <input id="leaderboardNameInput" type="text" maxlength="30" placeholder="Public nickname" required>
+                    <label for="studentIdInput">Student ID
+                        <input id="studentIdInput" type="text" maxlength="30" placeholder="e.g. 123456" required>
                     </label>
-                    <label for="studentIdInput">Student ID (optional)
-                        <input id="studentIdInput" type="text" maxlength="30" placeholder="e.g. 123456">
+                    <label for="studentLoginPinInput">PIN
+                        <input id="studentLoginPinInput" type="password" maxlength="12" inputmode="numeric" placeholder="Enter your PIN" required>
                     </label>
-                    <label for="studentNameInput">Student Name (optional)
+                    <label for="studentCodeInput">Student Code (filled after sign-in)
+                        <input id="studentCodeInput" type="text" maxlength="40" placeholder="Auto-filled after login" readonly>
+                    </label>
+                    <label for="leaderboardNameInput">Leaderboard Name (filled after sign-in)
+                        <input id="leaderboardNameInput" type="text" maxlength="30" placeholder="Auto-filled after login" readonly>
+                    </label>
+                    <label for="studentNameInput">Student Name (filled after sign-in)
                         <input id="studentNameInput" type="text" maxlength="50" placeholder="e.g. Alex">
-                    </label>
-                    <label for="studentClassCodeInput">Class Code (optional)
-                        <input id="studentClassCodeInput" type="text" maxlength="20" placeholder="e.g. 6B">
                     </label>
                 </div>
                 <div class="student-actions">
-                    <button id="studentLoginBtn" class="btn-student" type="submit">🔐 Student Login</button>
+                    <button id="studentLoginBtn" class="btn-student" type="submit">🔐 Student Sign In</button>
                     <span id="studentLoginHint" class="level-description" style="margin: 0;"></span>
                 </div>
             </form>
@@ -514,7 +517,8 @@
                             approvalStatus: gs.approvalStatus
                         }
                         : null);
-                return progressionState?.checkpointStatus === 'quiz_passed';
+                return progressionState?.checkpointStatus === 'quiz_passed'
+                    && progressionState?.approvalStatus === 'approved';
             } catch (_) {
                 return false;
             }
@@ -537,7 +541,7 @@
             if (!level.requiresApproval) {
                 return null;
             }
-            return `Complete Level ${level.requiredCheckpointLevel} checkpoint quiz.`;
+            return `Complete Level ${level.requiredCheckpointLevel} checkpoint quiz and receive teacher approval.`;
         }
 
         /**
@@ -591,7 +595,7 @@
                 const errorContainer = document.getElementById('accessErrorContainer');
                 const errorMessage = document.getElementById('accessErrorMessage');
                 if (errorContainer && errorMessage) {
-                    errorMessage.textContent = '🔒 That level is currently locked. Complete the required checkpoint quiz to proceed.';
+                    errorMessage.textContent = '🔒 That level is currently locked. Complete the required checkpoint quiz and receive teacher approval to proceed.';
                     errorContainer.style.display = 'block';
                 }
                 window.history.replaceState({}, document.title, window.location.pathname);
@@ -844,15 +848,18 @@ const classCodes = Array.isArray(session.classCodes)
                 const session = JSON.parse(raw);
                 if (!session || typeof session !== 'object') return null;
                 const studentCode = String(session.studentCode || session.studentId || '').trim();
-                if (!studentCode) return null;
+                const studentId = String(session.studentId || '').trim();
+                const classCode = String(session.classCode || '').trim().toUpperCase();
+                const authenticatedAt = String(session.authenticatedAt || '').trim();
+                if (!studentCode || !studentId || !classCode || !authenticatedAt) return null;
                 return {
                     ok: true,
                     studentCode,
                     leaderboardName: String(session.leaderboardName || studentCode).trim(),
-                    studentId: String(session.studentId || '').trim(),
+                    studentId,
                     studentName: String(session.studentName || '').trim(),
-                    classCode: String(session.classCode || '').trim().toUpperCase(),
-                    authenticatedAt: String(session.authenticatedAt || '').trim()
+                    classCode,
+                    authenticatedAt
                 };
             } catch (_) {
                 return null;
@@ -923,51 +930,68 @@ const classCodes = Array.isArray(session.classCodes)
                 : 'Sign in, then choose a level below.';
             const shouldFocusLogin = new URLSearchParams(window.location.search).get(STUDENT_LOGIN_QUERY_PARAM) === '1';
             if (shouldFocusLogin) {
-                const studentCodeInput = document.getElementById('studentCodeInput');
-                if (studentCodeInput && typeof studentCodeInput.focus === 'function') {
-                    studentCodeInput.focus();
+                const classCodeInput = document.getElementById('studentClassCodeInput');
+                if (classCodeInput && typeof classCodeInput.focus === 'function') {
+                    classCodeInput.focus();
                 }
             }
         }
 
-        function buildStudentSessionFromForm() {
-            const studentCode = String(document.getElementById('studentCodeInput')?.value || '').trim();
-            const leaderboardName = String(document.getElementById('leaderboardNameInput')?.value || '').trim();
-            const studentId = String(document.getElementById('studentIdInput')?.value || '').trim();
-            const studentName = String(document.getElementById('studentNameInput')?.value || '').trim();
-            const classCode = String(document.getElementById('studentClassCodeInput')?.value || '').trim().toUpperCase();
-            if (!studentCode || !leaderboardName) return null;
+        function buildStudentSessionFromLoginResponse(response = {}) {
+            const studentCode = String(response.studentCode || '').trim();
+            const studentId = String(response.studentId || '').trim();
+            const classCode = String(response.classCode || '').trim().toUpperCase();
+            if (!studentCode || !studentId || !classCode) return null;
             return {
                 ok: true,
                 studentCode,
-                leaderboardName,
+                leaderboardName: String(response.leaderboardName || studentCode).trim(),
                 studentId,
-                studentName,
+                studentName: String(response.studentName || '').trim(),
                 classCode,
+                assignedLevel: Number(response.assignedLevel) || null,
                 authenticatedAt: new Date().toISOString()
             };
         }
 
         async function handleStudentLogin(event) {
             event.preventDefault();
-            const nextSession = buildStudentSessionFromForm();
-            if (!nextSession) {
-                alert('Student Code and Leaderboard Name are required.');
+            const classCode = String(document.getElementById('studentClassCodeInput')?.value || '').trim().toUpperCase();
+            const studentId = String(document.getElementById('studentIdInput')?.value || '').trim();
+            const pin = String(document.getElementById('studentLoginPinInput')?.value || '').trim();
+            if (!classCode || !studentId || !pin) {
+                alert('Class code, student ID, and PIN are required.');
                 return;
             }
-            if (FLOW_STUDENT_LOGIN_FEATURE_FLAG) {
-                alert('Flow-based student login is prepared but not activated for sessions until response-contract validation is complete.');
+            if (!window.WA_GOLD_RUSH_STUDENT_AUTH?.loginStudent) {
+                alert('Student sign-in is currently unavailable. Please try again later.');
                 return;
             }
-            const saved = setStorageValue(localStorage, STUDENT_SESSION_KEY, JSON.stringify(nextSession));
-            if (!saved) {
-                alert('Could not save student login in this browser.');
-                return;
-            }
-            toggleStudentAuthUI();
-            const returnTo = getStudentLoginTargetUrl();
-            if (returnTo) {
-                window.location.href = returnTo;
+            try {
+                const result = await window.WA_GOLD_RUSH_STUDENT_AUTH.loginStudent({ classCode, studentId, pin });
+                if (!result?.success) {
+                    alert(result?.error || 'Student sign-in failed.');
+                    return;
+                }
+                const nextSession = buildStudentSessionFromLoginResponse(result.response);
+                if (!nextSession) {
+                    alert('Student sign-in returned an unreadable session. Please try again.');
+                    return;
+                }
+                const saved = setStorageValue(localStorage, STUDENT_SESSION_KEY, JSON.stringify(nextSession));
+                if (!saved) {
+                    alert('Could not save student login in this browser.');
+                    return;
+                }
+                const pinInput = document.getElementById('studentLoginPinInput');
+                if (pinInput) pinInput.value = '';
+                toggleStudentAuthUI();
+                const returnTo = getStudentLoginTargetUrl();
+                if (returnTo) {
+                    window.location.href = returnTo;
+                }
+            } catch (error) {
+                alert(error?.message || 'Student sign-in failed.');
             }
         }
 
@@ -991,6 +1015,8 @@ const classCodes = Array.isArray(session.classCodes)
         function handleStudentLogout() {
             removeStorageValue(localStorage, STUDENT_SESSION_KEY);
             hydrateStudentForm(null);
+            const pinInput = document.getElementById('studentLoginPinInput');
+            if (pinInput) pinInput.value = '';
             toggleStudentAuthUI();
         }
 

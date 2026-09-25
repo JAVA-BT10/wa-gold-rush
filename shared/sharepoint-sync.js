@@ -16,6 +16,7 @@ const SharePointSync = (() => {
     const CONFIG = {
         profileEndpointKey: 'upsertStudentProfile',
         progressEndpointKey: 'saveProgress',
+        loadProgressEndpointKey: 'getStudentProgress',
         // Shared secret sent as X-GGR-Key header — set after creating flows
         apiKey: '',
         // Maximum number of queued retries kept in localStorage
@@ -201,6 +202,89 @@ const SharePointSync = (() => {
         };
     }
 
+    function extractProgressRecord(responseData, criteria = {}) {
+        const isObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
+        const unwrap = (value) => {
+            if (!isObject(value)) return value;
+            if (Array.isArray(value.records)) return value.records;
+            if (Array.isArray(value.items)) return value.items;
+            if (Array.isArray(value.value)) return value.value;
+            if (Array.isArray(value.progress)) return value.progress;
+            if (Array.isArray(value.Progress)) return value.Progress;
+            if (Array.isArray(value.data)) return value.data;
+            if (isObject(value.body)) return unwrap(value.body);
+            if (isObject(value.data)) return unwrap(value.data);
+            return value;
+        };
+        const parsedCriteria = {
+            studentCode: String(criteria.studentCode || '').trim().toLowerCase(),
+            studentId: String(criteria.studentId || '').trim().toLowerCase(),
+            classCode: String(criteria.classCode || '').trim().toUpperCase(),
+            level: Number(criteria.level) || 0
+        };
+        const unwrapped = unwrap(responseData);
+        const records = Array.isArray(unwrapped) ? unwrapped : [unwrapped].filter(isObject);
+        if (!records.length) return null;
+
+        const scoreRecord = (record) => {
+            let score = 0;
+            const recordStudentCode = String(record?.studentCode || record?.StudentCode || '').trim().toLowerCase();
+            const recordStudentId = String(record?.studentId || record?.StudentID || '').trim().toLowerCase();
+            const recordClassCode = String(record?.classCode || record?.ClassCode || '').trim().toUpperCase();
+            const recordLevel = Number(record?.level || record?.Level || record?.assignedLevel || 0) || 0;
+            if (parsedCriteria.studentCode && recordStudentCode === parsedCriteria.studentCode) score += 4;
+            if (parsedCriteria.studentId && recordStudentId === parsedCriteria.studentId) score += 3;
+            if (parsedCriteria.classCode && recordClassCode === parsedCriteria.classCode) score += 2;
+            if (parsedCriteria.level && recordLevel === parsedCriteria.level) score += 1;
+            return score;
+        };
+
+        return [...records]
+            .map((record, index) => ({ record, index, score: scoreRecord(record) }))
+            .sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                return a.index - b.index;
+            })[0]?.record || null;
+    }
+
+    function extractProgressSnapshot(record = {}) {
+        const rawSnapshot = record?.progressionMarkersJson
+            || record?.ProgressionMarkersJson
+            || record?.ProgressJson
+            || record?.progressJson
+            || '';
+        if (rawSnapshot && typeof rawSnapshot === 'object') {
+            return rawSnapshot;
+        }
+        if (!rawSnapshot || typeof rawSnapshot !== 'string') {
+            return null;
+        }
+        try {
+            const parsed = JSON.parse(rawSnapshot);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function deriveProgressTimestamp(record = {}, snapshot = null) {
+        const candidates = [
+            snapshot?.savedAt,
+            snapshot?.quizPassedAt,
+            record?.updatedAt,
+            record?.UpdatedAt,
+            record?.lastPlayedUtc,
+            record?.LastPlayedUtc,
+            record?.lastPlayed,
+            record?.LastPlayed
+        ];
+        for (const candidate of candidates) {
+            const value = String(candidate || '').trim();
+            if (value) return value;
+        }
+        return '';
+    }
+
     // -------------------------------------------------------------------------
     // Public sync functions
     // -------------------------------------------------------------------------
@@ -251,6 +335,43 @@ const SharePointSync = (() => {
             _dispatchCloudSaveStatus('locally saved with retry pending');
             return { ok: false, queued: true };
         }
+    }
+
+    async function loadProgress(opts = {}) {
+        if (!_resolveEndpoint(CONFIG.loadProgressEndpointKey)) {
+            return { ok: false, skipped: true, error: 'Student progress endpoint is not configured.' };
+        }
+        const payload = {
+            studentCode: String(opts.studentCode || '').trim(),
+            studentId: String(opts.studentId || '').trim(),
+            classCode: String(opts.classCode || '').trim().toUpperCase(),
+            level: Number(opts.level) || 0,
+            requestedLevel: Number(opts.level) || 0
+        };
+        if (!payload.studentCode && !payload.studentId) {
+            return { ok: false, skipped: true, error: 'Student code or student ID is required.' };
+        }
+
+        const result = await _post(CONFIG.loadProgressEndpointKey, payload).then(
+            (response) => ({ success: true, response }),
+            (error) => ({ success: false, error })
+        );
+        if (!result.success) {
+            return { ok: false, error: result.error?.message || String(result.error || 'Unable to load student progress.') };
+        }
+
+        const rawData = result.response?.data || null;
+        const record = extractProgressRecord(rawData, payload);
+        const snapshot = extractProgressSnapshot(record);
+        const updatedAt = deriveProgressTimestamp(record, snapshot);
+        return {
+            ok: !!snapshot,
+            skipped: !snapshot,
+            record,
+            snapshot,
+            updatedAt,
+            error: snapshot ? '' : 'Student progress response did not include a restorable progression snapshot.'
+        };
     }
 
     /**
@@ -323,8 +444,11 @@ const SharePointSync = (() => {
         configure,
         buildProfilePayload,
         buildProgressPayload,
+        extractProgressRecord,
+        extractProgressSnapshot,
         syncProfile,
         syncProgress,
+        loadProgress,
         retryQueue,
         queueLength,
         getCloudSaveStatus

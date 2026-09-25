@@ -42,6 +42,9 @@ const CheckpointDashboard = (() => {
             if (!Array.isArray(records)) return [];
 
             return records.filter(r => {
+                if (typeof dashboard !== 'undefined' && !dashboard.canTeacherAccessClass(r.classCode || r.gameState?.classCode || '')) {
+                    return false;
+                }
                 const gs = r.gameState || {};
                 const progressionState = gs.progressionStateByLevel?.[String(level)]
                     || (Number(gs.assignedLevel || r.level) === Number(level)
@@ -51,7 +54,10 @@ const CheckpointDashboard = (() => {
                             quizScore: gs.quizScore
                         }
                         : null);
-                return progressionState?.checkpointStatus === 'quiz_passed';
+                return progressionState?.checkpointStatus === 'quiz_passed'
+                    || progressionState?.approvalStatus === 'approved'
+                    || progressionState?.approvalStatus === 'retake_requested'
+                    || progressionState?.approvalStatus === 'rejected';
             });
         } catch (_) {
             return [];

@@ -475,6 +475,137 @@ test('sharepoint sync builds lower-case save payload and migrates legacy queue i
     assert.equal(sync.queueLength(), 0);
 });
 
+test('sharepoint sync can extract a restorable remote progression snapshot', async () => {
+    global.localStorage = createStorage();
+    global.WA_GOLD_RUSH_FLOW_ENDPOINTS = {
+        getStudentProgress: 'https://example.com/get-progress'
+    };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        callFlow: async () => ({
+            success: true,
+            status: 200,
+            data: {
+                value: [{
+                    StudentCode: 'SC-1',
+                    ClassCode: '6B',
+                    ProgressJson: JSON.stringify({
+                        schemaVersion: 2,
+                        savedAt: '2026-09-25T09:00:00.000Z',
+                        assignedLevel: 3,
+                        round: 8,
+                        cash: 1234.56,
+                        netWorth: 2345.67,
+                        player: { studentCode: 'SC-1', studentId: '1001' },
+                        ownedMines: { southern_cross: { owned: true } },
+                        machinery: [],
+                        roundHistory: [],
+                        investmentPlans: {},
+                        progressionStateByLevel: { '2': { checkpointStatus: 'quiz_passed', approvalStatus: 'approved' } }
+                    })
+                }]
+            }
+        }),
+        resolveFlowEndpoint: (key) => global.WA_GOLD_RUSH_FLOW_ENDPOINTS[key] || ''
+    };
+    delete require.cache[require.resolve('../shared/sharepoint-sync.js')];
+    const sync = require('../shared/sharepoint-sync.js');
+    const result = await sync.loadProgress({ studentCode: 'SC-1', classCode: '6B', level: 3 });
+    assert.equal(result.ok, true);
+    assert.equal(result.snapshot.assignedLevel, 3);
+    assert.equal(result.snapshot.player.studentCode, 'SC-1');
+    assert.equal(result.updatedAt, '2026-09-25T09:00:00.000Z');
+});
+
+test('level access guard requires approved teacher review after quiz pass', () => {
+    global.localStorage = createStorage({
+        level2_autosave: JSON.stringify({
+            gameState: {
+                assignedLevel: 2,
+                progressionStateByLevel: {
+                    '2': {
+                        checkpointStatus: 'quiz_passed',
+                        approvalStatus: 'pending'
+                    }
+                }
+            }
+        })
+    });
+    delete require.cache[require.resolve('../levels/level-2-tycoon/level-access-guard.js')];
+    const source = fs.readFileSync(require.resolve('../levels/level-2-tycoon/level-access-guard.js'), 'utf8');
+    const context = {
+        localStorage: global.localStorage,
+        URLSearchParams,
+        window: { location: { search: '', pathname: '/levels/level-2-tycoon/index.html?level=3' } },
+        document: { body: { appendChild() {} }, createElement: () => ({ style: {}, appendChild() {}, textContent: '' }) },
+        setTimeout() {},
+    };
+    vm.runInNewContext(`${source}\nthis.LevelAccessGuard = LevelAccessGuard;`, context);
+    const guard = new context.LevelAccessGuard(3);
+    assert.equal(guard.isLevelAccessible(), false);
+
+    global.localStorage.setItem('level2_autosave', JSON.stringify({
+        gameState: {
+            assignedLevel: 2,
+            progressionStateByLevel: {
+                '2': {
+                    checkpointStatus: 'quiz_passed',
+                    approvalStatus: 'approved'
+                }
+            }
+        }
+    }));
+    assert.equal(guard.isLevelAccessible(), true);
+});
+
+test('dashboard student CRUD rejects duplicate identities and leaderboards filter per level', () => {
+    global.localStorage = createStorage();
+    global.sessionStorage = createStorage({
+        wa_gold_rush_teacher_session: JSON.stringify({
+            ok: true,
+            teacherEmail: 'teacher@example.com',
+            classCode: '6B',
+            classCodes: ['6B'],
+            role: 'teacher',
+            authenticatedAt: new Date().toISOString()
+        })
+    });
+    delete require.cache[require.resolve('../teacher/dashboard-state.js')];
+    const TeacherDashboard = require('../teacher/dashboard-state.js');
+    const dashboard = new TeacherDashboard();
+    const first = dashboard.addStudent({
+        studentCode: 'SC-1',
+        studentId: '1001',
+        leaderboardName: 'Gold One',
+        classCode: '6B',
+        level: 2
+    });
+    assert.equal(first.success, true);
+    const duplicateCode = dashboard.addStudent({
+        studentCode: 'SC-1',
+        studentId: '1002',
+        leaderboardName: 'Gold Two',
+        classCode: '6B',
+        level: 3
+    });
+    assert.equal(duplicateCode.success, false);
+
+    dashboard.addStudent({
+        studentCode: 'SC-2',
+        studentId: '1002',
+        leaderboardName: 'Gold Two',
+        classCode: '6B',
+        level: 3
+    });
+    dashboard.students[0].gameState.netWorth = 500;
+    dashboard.students[1].gameState.netWorth = 900;
+    const level2Board = dashboard.getLevelLeaderboard(2);
+    const level3Board = dashboard.getLevelLeaderboard(3);
+    assert.equal(level2Board.top20.length, 1);
+    assert.equal(level2Board.top20[0].studentCode, 'SC-1');
+    assert.equal(level3Board.top20.length, 1);
+    assert.equal(level3Board.top20[0].studentCode, 'SC-2');
+});
+
 test('dashboard hydration adapter normalizes expected shape while disabled', () => {
     global.localStorage = createStorage();
     global.sessionStorage = createStorage();

@@ -27,6 +27,7 @@ class TeacherDashboard {
 
         this.TEACHER_DASHBOARD_KEY     = 'teacher_dashboard';
         this.TEACHER_SESSION_STORAGE_KEY = 'wa_gold_rush_teacher_session';
+        this.TEACHER_SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
         this.PERMANENT_ADMIN_ENABLED = true;
         this.PERMANENT_ADMIN_ALLOWLIST = new Set(['ben.turner@education.wa.edu.au']);
         this._dashboardHydrationInFlight = null;
@@ -184,6 +185,56 @@ class TeacherDashboard {
         };
     }
 
+    extractProgressionSnapshot(record = {}) {
+        const raw = record?.gameState
+            || record?.progressionSnapshot
+            || record?.progressionMarkersJson
+            || record?.ProgressionMarkersJson
+            || record?.ProgressJson
+            || '';
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+            return raw;
+        }
+        if (!raw || typeof raw !== 'string') {
+            return null;
+        }
+        try {
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    buildProgressFlowPayload(record = {}) {
+        const snapshot = this.extractProgressionSnapshot(record) || {};
+        const activeLevel = Number(snapshot.assignedLevel || record.level || snapshot.level) || 0;
+        const activeState = snapshot.progressionStateByLevel?.[String(activeLevel)]
+            || {};
+        const latestQuizAttempt = Array.isArray(activeState.quizAttempts) && activeState.quizAttempts.length
+            ? activeState.quizAttempts[activeState.quizAttempts.length - 1]
+            : null;
+        const checkpointStatus = activeState.checkpointStatus || snapshot.checkpointStatus || null;
+        return {
+            studentCode: String(record.studentCode || snapshot.player?.studentCode || '').trim(),
+            classCode: String(record.classCode || snapshot.player?.classCode || snapshot.classCode || '').trim().toUpperCase(),
+            level: activeLevel,
+            currentRound: Number(record.round ?? snapshot.round ?? 1) || 1,
+            currentCash: Number(record.cash ?? snapshot.cash ?? 0),
+            currentAssets: Number(record.currentAssets ?? 0),
+            netWorth: Number(record.netWorth ?? snapshot.netWorth ?? 0),
+            score: Number(record.score ?? record.netWorth ?? snapshot.netWorth ?? 0),
+            progressionMarkersJson: JSON.stringify(snapshot || {}),
+            badgesJson: JSON.stringify(record.badges || []),
+            achievementsCount: Array.isArray(activeState.quizAttempts) ? activeState.quizAttempts.length : 0,
+            sessionStatus: String(record.sessionStatus || 'teacher_review').trim(),
+            needsSupport: checkpointStatus === 'quiz_available' && latestQuizAttempt?.passed === false,
+            supportReason: checkpointStatus === 'quiz_available' && latestQuizAttempt?.passed === false
+                ? 'checkpoint_quiz_retry'
+                : ''
+        };
+    }
+
     buildTeacherFlowPayload(teacher = {}) {
         const teacherEmail = String(teacher.email || teacher.teacherEmail || '').trim().toLowerCase();
         const teacherName = String(teacher.name || teacher.teacherName || '').trim();
@@ -204,6 +255,18 @@ class TeacherDashboard {
             return { success: false, skipped: true, error: 'Student payload is incomplete.' };
         }
         return this.postFlowPayload('upsertStudentProfile', payload, options);
+    }
+
+    async syncProgressRecordToBackend(record, options = {}) {
+        const payload = this.buildProgressFlowPayload(record);
+        if (!payload.studentCode || !payload.classCode || !payload.level) {
+            return this.failureResult('Progress payload is incomplete.');
+        }
+        const result = await this.postFlowPayload('saveProgress', payload, options);
+        if (!result.success) {
+            return this.failureResult(result.error || 'Unable to sync progress.', { status: result.status });
+        }
+        return this.successResult({ response: result.data, status: result.status });
     }
 
     async unlockStudentAccount(student = {}, options = {}) {
@@ -303,6 +366,7 @@ class TeacherDashboard {
             })),
             progress: asArray(progress).map((entry) => {
                 const identity = this.normalizeDashboardStudentIdentity(entry);
+                const progressionSnapshot = this.extractProgressionSnapshot(entry);
                 return {
                     ...entry,
                     studentCode: identity.studentCode,
@@ -312,7 +376,8 @@ class TeacherDashboard {
                         || entry?.ClassCode
                         || entry?.gameState?.classCode
                         || ''
-                    ).trim().toUpperCase()
+                    ).trim().toUpperCase(),
+                    progressionSnapshot
                 };
             })
         };
@@ -396,9 +461,11 @@ class TeacherDashboard {
                     strategyLabel: String(record.strategyLabel || record.StrategyLabel || '').trim() || undefined,
                     companyName: String(record.companyName || record.CompanyName || '').trim() || undefined,
                     investmentProfile: String(record.investmentProfile || record.InvestmentProfile || '').trim() || undefined,
+                    gameState: record.progressionSnapshot || this.extractProgressionSnapshot(record) || undefined,
                     updatedAt: (
                         record.updatedAt
                         || record.UpdatedAt
+                        || record.progressionSnapshot?.savedAt
                         || record.lastPlayed
                         || record.LastPlayed
                         || existingStudent?.gameState?.lastPlayed
@@ -704,6 +771,11 @@ class TeacherDashboard {
         return !!this.getTeacherSession();
     }
 
+    isTeacherAdmin() {
+        const session = this.getTeacherSession();
+        return String(session?.role || '').trim().toLowerCase() === 'admin';
+    }
+
     isPermanentlyAuthorizedAdmin(email) {
         const normalized = String(email || '').trim().toLowerCase();
         return this.PERMANENT_ADMIN_ENABLED && this.PERMANENT_ADMIN_ALLOWLIST.has(normalized);
@@ -743,6 +815,12 @@ class TeacherDashboard {
         }
     }
 
+    isTeacherSessionStale(session = this.getTeacherSession()) {
+        const authenticatedAt = Date.parse(String(session?.authenticatedAt || '').trim());
+        if (!Number.isFinite(authenticatedAt)) return true;
+        return (Date.now() - authenticatedAt) > this.TEACHER_SESSION_MAX_AGE_MS;
+    }
+
     canTeacherAccessClass(classCode) {
         const session = this.getTeacherSession();
         if (!session) return false;
@@ -756,6 +834,13 @@ class TeacherDashboard {
             : [session.classCode];
         if (allowedClassCodes.includes('*')) return true;
         return allowedClassCodes.includes(requestedClassCode);
+    }
+
+    canManageTeacherRecord(teacher = {}) {
+        if (this.isTeacherAdmin()) return true;
+        const role = String(teacher?.role || 'teacher').trim().toLowerCase() || 'teacher';
+        if (role === 'admin') return false;
+        return this.canTeacherAccessClass(teacher?.classCode);
     }
 
     async authenticateTeacher(credentials = {}, options = {}) {
@@ -825,6 +910,26 @@ class TeacherDashboard {
             session: savedSession.session,
             response: payload
         });
+    }
+
+    async revalidateTeacherSession(options = {}) {
+        const session = this.getTeacherSession();
+        if (!session) {
+            return this.failureResult('Teacher session not found.');
+        }
+        if (!options.force && !this.isTeacherSessionStale(session)) {
+            return this.successResult({ session, skipped: true });
+        }
+        if (this.isPermanentlyAuthorizedAdmin(session.teacherEmail)) {
+            return this.successResult({ session, skipped: true });
+        }
+        if (!this.hasConfiguredFlowEndpoint('loginTeacher') || !this.readDashboardApiKey()) {
+            return this.successResult({ session, skipped: true });
+        }
+        return this.authenticateTeacher({
+            teacherEmail: session.teacherEmail,
+            classCode: session.classCode
+        }, options);
     }
 
     // =========================================================================
@@ -966,6 +1071,10 @@ class TeacherDashboard {
             }
 
             const teacher = normalized.teacher;
+            if (!this.canManageTeacherRecord(teacher)) {
+                skipped.push({ row: row._row || '?', reason: 'You are not authorized to manage that teacher record.' });
+                return;
+            }
             if (existing) {
                 existing.name = teacher.name;
                 existing.classCode = teacher.classCode;
@@ -1010,6 +1119,22 @@ class TeacherDashboard {
     // Student management
     // =========================================================================
 
+    findStudentIdentityConflict(candidate = {}, excludedStudentId = '') {
+        const candidateCode = String(candidate.studentCode || candidate.displayId || '').trim().toLowerCase();
+        const candidateStudentId = String(candidate.studentId || candidate.email || '').trim().toLowerCase();
+        const excludedId = String(excludedStudentId || '').trim();
+        return this.students.find((student) => {
+            if (excludedId && String(student.id || '').trim() === excludedId) {
+                return false;
+            }
+            const studentCode = String(student.studentCode || student.displayId || '').trim().toLowerCase();
+            const studentId = String(student.studentId || student.email || '').trim().toLowerCase();
+            if (candidateCode && studentCode && candidateCode === studentCode) return true;
+            if (candidateStudentId && studentId && candidateStudentId === studentId) return true;
+            return false;
+        }) || null;
+    }
+
     /**
      * Add a new student.
      * Supports the extended SharePoint-aligned field set:
@@ -1040,6 +1165,10 @@ class TeacherDashboard {
         }
         if (!leaderboardName) {
             return this.failureResult('Leaderboard Name is required.');
+        }
+        const conflict = this.findStudentIdentityConflict({ studentCode, studentId });
+        if (conflict) {
+            return this.failureResult('A student with that Student Code or Student ID already exists.');
         }
 
         const student = {
@@ -1265,6 +1394,9 @@ class TeacherDashboard {
         }
 
         const teacher = normalized.teacher;
+        if (!this.canManageTeacherRecord(teacher)) {
+            return this.failureResult('You are not authorized to manage that teacher record.');
+        }
         if (existingTeacher) {
             existingTeacher.name = teacher.name;
             existingTeacher.classCode = teacher.classCode;
@@ -1324,7 +1456,11 @@ class TeacherDashboard {
         });
         if (index === -1) return { success: false, error: 'Teacher not found' };
 
-        const deletedTeacher = teacherList.splice(index, 1)[0];
+        const deletedTeacher = teacherList[index];
+        if (!this.canManageTeacherRecord(deletedTeacher)) {
+            return { success: false, error: 'You are not authorized to delete that teacher record.' };
+        }
+        teacherList.splice(index, 1);
         this._saveTeacherList(teacherList);
         return { success: true, teacher: deletedTeacher };
     }
@@ -1430,6 +1566,13 @@ class TeacherDashboard {
         if (typeof updates.studentId === 'string') {
             nextStudentId = updates.studentId.trim();
         }
+        const conflict = this.findStudentIdentityConflict({
+            studentCode: nextStudentCode,
+            studentId: nextStudentId
+        }, studentId);
+        if (conflict) {
+            return this.failureResult('A student with that Student Code or Student ID already exists.');
+        }
 
         if (hasCodeUpdate) {
             const previousStudentCode = String(student.studentCode || '').trim();
@@ -1505,7 +1648,8 @@ class TeacherDashboard {
         if (index !== -1) {
             const deleted = this.students.splice(index, 1)[0];
             this.saveToLocalStorage();
-            return { success: true, message: `Deleted ${deleted.name || deleted.studentName}` };
+            this.removeStudentArtifacts(deleted);
+            return { success: true, student: deleted, message: `Deleted ${deleted.name || deleted.studentName}` };
         }
         return { success: false, error: 'Student not found' };
     }
@@ -1521,6 +1665,7 @@ class TeacherDashboard {
     getLevelLeaderboard(level) {
         const levelNum = Number(level) || 0;
         const relevant = this.students
+            .filter(s => (Number(s.level) || 0) === levelNum)
             .map(s => ({
                 leaderboardName: s.leaderboardName || s.studentCode || 'Unknown',
                 studentCode:     s.studentCode     || s.displayId || '',
@@ -1606,15 +1751,27 @@ class TeacherDashboard {
     // =========================================================================
 
     syncFromPlayerRecord(record) {
-        const incomingDisplayId = String(record.studentId || record.studentCode || '').trim();
-        if (!incomingDisplayId) return null;
+        const incomingStudentCode = String(record.studentCode || '').trim().toLowerCase();
+        const incomingStudentId = String(record.studentId || '').trim().toLowerCase();
+        if (!incomingStudentCode && !incomingStudentId) return null;
 
-        let student = this.students.find(s =>
-            String(s.studentCode || s.displayId || s.id || '')
-                .trim().toLowerCase() === incomingDisplayId.toLowerCase()
-        );
+        let student = null;
+        if (incomingStudentCode) {
+            student = this.students.find(s =>
+                String(s.studentCode || s.displayId || s.id || '')
+                    .trim().toLowerCase() === incomingStudentCode
+            ) || null;
+        }
+        if (!student && incomingStudentId) {
+            student = this.students.find(s =>
+                String(s.studentId || s.email || '')
+                    .trim().toLowerCase() === incomingStudentId
+            ) || null;
+        }
 
         if (!student) return null;
+
+        const snapshot = this.extractProgressionSnapshot(record) || record.gameState || {};
 
         if (record.studentName) student.studentName = record.studentName;
         if (record.leaderboardName) student.leaderboardName = record.leaderboardName;
@@ -1633,17 +1790,64 @@ class TeacherDashboard {
             strategyLabel:       record.strategyLabel       ?? student.gameState.strategyLabel,
             companyName:         record.companyName         ?? student.gameState.companyName,
             investmentProfile:   record.investmentProfile   ?? student.gameState.investmentProfile,
-            assignedLevel:       record.gameState?.assignedLevel       ?? record.level ?? student.gameState.assignedLevel,
-            checkpointStatus:    record.gameState?.checkpointStatus    ?? student.gameState.checkpointStatus,
-            approvalStatus:      record.gameState?.approvalStatus      ?? student.gameState.approvalStatus,
-            approverName:        record.gameState?.approverName        ?? student.gameState.approverName,
-            approvalTimestamp:   record.gameState?.approvalTimestamp   ?? student.gameState.approvalTimestamp,
-            quizScore:           record.gameState?.quizScore           ?? student.gameState.quizScore,
-            quizAttempts:        record.gameState?.quizAttempts        ?? student.gameState.quizAttempts,
-            progressionStateByLevel: record.gameState?.progressionStateByLevel ?? student.gameState.progressionStateByLevel,
-            lastPlayed:          record.updatedAt || new Date().toISOString()
+            assignedLevel:       snapshot.assignedLevel       ?? record.level ?? student.gameState.assignedLevel,
+            checkpointStatus:    snapshot.checkpointStatus    ?? student.gameState.checkpointStatus,
+            approvalStatus:      snapshot.approvalStatus      ?? student.gameState.approvalStatus,
+            approverName:        snapshot.approverName        ?? student.gameState.approverName,
+            approvalTimestamp:   snapshot.approvalTimestamp   ?? student.gameState.approvalTimestamp,
+            quizScore:           snapshot.quizScore           ?? student.gameState.quizScore,
+            quizAttempts:        snapshot.quizAttempts        ?? student.gameState.quizAttempts,
+            progressionStateByLevel: snapshot.progressionStateByLevel ?? student.gameState.progressionStateByLevel,
+            lastPlayed:          record.updatedAt || snapshot.savedAt || new Date().toISOString()
         };
         return student;
+    }
+
+    removeStudentArtifacts(student = {}) {
+        const matches = (value) => {
+            const candidate = String(value || '').trim().toLowerCase();
+            if (!candidate) return false;
+            const studentCode = String(student.studentCode || student.displayId || '').trim().toLowerCase();
+            const studentId = String(student.studentId || student.email || '').trim().toLowerCase();
+            return candidate === studentCode || candidate === studentId;
+        };
+
+        try {
+            const records = JSON.parse(localStorage.getItem('wa_gold_rush_class_records'));
+            if (Array.isArray(records)) {
+                localStorage.setItem('wa_gold_rush_class_records', JSON.stringify(records.filter((record) => !matches(record.studentCode) && !matches(record.studentId))));
+            }
+        } catch (_) {}
+
+        try {
+            const raw = JSON.parse(localStorage.getItem('wa_gr_checkpoint_approvals'));
+            if (raw && typeof raw === 'object') {
+                Object.keys(raw).forEach((levelKey) => {
+                    if (raw[levelKey] && typeof raw[levelKey] === 'object') {
+                        Object.keys(raw[levelKey]).forEach((studentKey) => {
+                            if (matches(studentKey)) delete raw[levelKey][studentKey];
+                        });
+                    }
+                });
+                localStorage.setItem('wa_gr_checkpoint_approvals', JSON.stringify(raw));
+            }
+        } catch (_) {}
+
+        [1, 2, 3, 4, 5, 6].forEach((level) => {
+            try {
+                localStorage.removeItem(`wa_gr_progression_quiz_${student.studentCode || student.displayId}_level_${level}`);
+            } catch (_) {}
+        });
+
+        ['level2_autosave', 'level1_autosave', 'level3_autosave', 'level4_autosave', 'level5_autosave'].forEach((key) => {
+            try {
+                const raw = JSON.parse(localStorage.getItem(key));
+                const autosaveCode = raw?.gameState?.player?.studentCode || raw?.gameState?.player?.studentId || '';
+                if (matches(autosaveCode)) {
+                    localStorage.removeItem(key);
+                }
+            } catch (_) {}
+        });
     }
 
     // =========================================================================
