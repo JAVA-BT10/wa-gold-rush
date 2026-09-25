@@ -1457,7 +1457,13 @@ class TeacherDashboard {
         if (index === -1) return { success: false, error: 'Teacher not found' };
 
         const deletedTeacher = teacherList[index];
-        if (!this.canManageTeacherRecord(deletedTeacher)) {
+        const normalizedTeacher = {
+            ...deletedTeacher,
+            classCode: String(deletedTeacher?.classCode || deletedTeacher?.ClassCode || '').trim().toUpperCase(),
+            role: String(deletedTeacher?.role || deletedTeacher?.Role || 'teacher').trim().toLowerCase() || 'teacher',
+            email: String(deletedTeacher?.email || deletedTeacher?.teacherEmail || '').trim().toLowerCase()
+        };
+        if (!this.canManageTeacherRecord(normalizedTeacher)) {
             return { success: false, error: 'You are not authorized to delete that teacher record.' };
         }
         teacherList.splice(index, 1);

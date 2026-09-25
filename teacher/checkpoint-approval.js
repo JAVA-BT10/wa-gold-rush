@@ -189,6 +189,10 @@ const CheckpointApproval = (() => {
                 const recordStudentCode = String(identity?.studentCode || '').trim().toLowerCase();
                 const recordStudentId = String(identity?.studentId || '').trim().toLowerCase();
                 const matchesStudent = recordStudentCode === normalizedTarget || recordStudentId === normalizedTarget;
+                const recordClassCode = String(record?.classCode || record?.ClassCode || record?.gameState?.classCode || '').trim().toUpperCase();
+                if (typeof dashboard !== 'undefined' && typeof dashboard.canTeacherAccessClass === 'function' && !dashboard.canTeacherAccessClass(recordClassCode)) {
+                    return false;
+                }
                 const recordLevel = Number(record?.level || record?.gameState?.assignedLevel || 0) || 0;
                 return matchesStudent && (!level || recordLevel === Number(level));
             }) || null;

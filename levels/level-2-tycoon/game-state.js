@@ -764,7 +764,7 @@ class GameState {
                 ...(snapshot.player && typeof snapshot.player === 'object' ? snapshot.player : {}),
                 companyName: String(snapshot.companyName || snapshot.player?.companyName || this.player.companyName || 'Untitled Mining Co.')
             };
-            if (Array.isArray(snapshot.ownedMines)) {
+            if (snapshot.ownedMines && typeof snapshot.ownedMines === 'object') {
                 this.ownedMines = snapshot.ownedMines;
             }
             if (Array.isArray(snapshot.machinery)) {
