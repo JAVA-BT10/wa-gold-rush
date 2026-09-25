@@ -21,11 +21,13 @@ const SharePointSync = (() => {
         // Maximum number of queued retries kept in localStorage
         maxQueueSize: 50,
         // Retry interval in milliseconds
-        retryIntervalMs: 30000
+        retryIntervalMs: 30000,
+        // Bound gameplay-triggered cloud saves so they resolve to success or retry quickly
+        progressRequestTimeoutMs: 30000
     };
 
     const QUEUE_KEY = 'wa_gr_sync_queue';
-    const QUEUE_SCHEMA_VERSION = 2;
+    const QUEUE_SCHEMA_VERSION = 3;
     let _retryTimer = null;
     let _cloudSaveStatus = 'idle';
 
@@ -39,6 +41,79 @@ const SharePointSync = (() => {
                 detail: { status }
             }));
         }
+    }
+
+    function _generateRequestId() {
+        if (typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function') {
+            return globalThis.crypto.randomUUID();
+        }
+        return `save_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+    }
+
+    function _normalizeUpper(value) {
+        return String(value || '').trim().toUpperCase();
+    }
+
+    function _normalizeLevel(value) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return 0;
+        return Math.max(0, Math.trunc(numeric));
+    }
+
+    function buildCanonicalProgressKey(opts) {
+        return [
+            _normalizeUpper(opts?.classCode),
+            _normalizeUpper(opts?.studentCode),
+            _normalizeLevel(opts?.level)
+        ].join('|');
+    }
+
+    function _resolveClientVersion() {
+        const runtimeConfig = globalThis.WA_GOLD_RUSH_RUNTIME_CONFIG || {};
+        const runtimeVersion = String(runtimeConfig.version || '').trim();
+        const runtimeTarget = String(runtimeConfig.buildTarget || '').trim();
+        const packageVersion = typeof process !== 'undefined'
+            ? String(process.env?.npm_package_version || '').trim()
+            : '';
+        if (packageVersion) return packageVersion;
+        if (runtimeVersion && runtimeTarget) return `${runtimeTarget}:${runtimeVersion}`;
+        if (runtimeVersion) return runtimeVersion;
+        if (runtimeTarget) return runtimeTarget;
+        return 'local-dev';
+    }
+
+    function _createProgressTelemetry(opts) {
+        return {
+            saveRequestId: String(opts?.saveRequestId || '').trim() || _generateRequestId(),
+            clientTimestampUtc: String(opts?.clientTimestampUtc || '').trim() || new Date().toISOString(),
+            clientVersion: String(opts?.clientVersion || '').trim() || _resolveClientVersion()
+        };
+    }
+
+    function _getProgressTelemetry(payload) {
+        return {
+            saveRequestId: String(payload?.saveRequestId || '').trim(),
+            progressKey: String(payload?.progressKey || '').trim(),
+            clientTimestampUtc: String(payload?.clientTimestampUtc || '').trim(),
+            clientVersion: String(payload?.clientVersion || '').trim()
+        };
+    }
+
+    function _logProgress(event, payload, extra = {}) {
+        console.info(`[SharePointSync] Progress ${event}`, {
+            telemetry: _getProgressTelemetry(payload),
+            studentCode: String(payload?.studentCode || '').trim(),
+            classCode: String(payload?.classCode || '').trim().toUpperCase(),
+            level: _normalizeLevel(payload?.level),
+            ...extra
+        });
+    }
+
+    function _createPostError(message, outcome = 'failure', result = null) {
+        const error = new Error(String(message || 'Flow request failed.'));
+        error.syncOutcome = outcome;
+        error.result = result;
+        return error;
     }
 
     function _normalizeQueueItem(item) {
@@ -78,8 +153,16 @@ const SharePointSync = (() => {
                 achievementsCount: Number(payload.achievementsCount || 0),
                 sessionStatus: String(payload.sessionStatus || 'active'),
                 needsSupport: payload.needsSupport === true,
-                supportReason: String(payload.supportReason || '')
+                supportReason: String(payload.supportReason || ''),
+                progressKey: String(payload.progressKey || '').trim(),
+                saveRequestId: String(payload.saveRequestId || '').trim(),
+                clientTimestampUtc: String(payload.clientTimestampUtc || payload.timestampUtc || item.queuedAt || new Date().toISOString()),
+                clientVersion: String(payload.clientVersion || '').trim()
             };
+        }
+
+        if (type === 'progress') {
+            payload = buildProgressPayload(payload);
         }
 
         if (type === 'progress' && !payload.studentCode) return null;
@@ -93,13 +176,30 @@ const SharePointSync = (() => {
         };
     }
 
+    function _coalesceQueue(queue) {
+        const normalized = [];
+        const progressIndexes = new Map();
+        for (const rawItem of Array.isArray(queue) ? queue : []) {
+            const item = _normalizeQueueItem(rawItem);
+            if (!item) continue;
+            if (item.type === 'progress' && item.payload?.progressKey) {
+                const existingIndex = progressIndexes.get(item.payload.progressKey);
+                if (typeof existingIndex === 'number') {
+                    normalized[existingIndex] = item;
+                    continue;
+                }
+                progressIndexes.set(item.payload.progressKey, normalized.length);
+            }
+            normalized.push(item);
+        }
+        return normalized;
+    }
+
     function _loadQueue() {
         try {
             const q = JSON.parse(localStorage.getItem(QUEUE_KEY));
             if (!Array.isArray(q)) return [];
-            const normalized = q
-                .map(_normalizeQueueItem)
-                .filter(Boolean);
+            const normalized = _coalesceQueue(q);
             if (normalized.length !== q.length || q.some(item => item?.payloadSchemaVersion !== QUEUE_SCHEMA_VERSION)) {
                 _saveQueue(normalized);
             }
@@ -109,20 +209,38 @@ const SharePointSync = (() => {
 
     function _saveQueue(queue) {
         try {
-            localStorage.setItem(QUEUE_KEY, JSON.stringify(queue.slice(-CONFIG.maxQueueSize)));
+            const normalized = _coalesceQueue(queue).slice(-CONFIG.maxQueueSize);
+            localStorage.setItem(QUEUE_KEY, JSON.stringify(normalized));
         } catch (_) {}
     }
 
     function _enqueue(type, payload) {
         const queue = _loadQueue();
-        queue.push({
+        const queueItem = {
             type,
             payload,
             queuedAt: new Date().toISOString(),
             attempts: 0,
             payloadSchemaVersion: QUEUE_SCHEMA_VERSION
-        });
+        };
+        let coalesced = false;
+        if (type === 'progress' && payload?.progressKey) {
+            const existingIndex = queue.findIndex(item => item.type === 'progress' && item.payload?.progressKey === payload.progressKey);
+            if (existingIndex >= 0) {
+                queue[existingIndex] = queueItem;
+                coalesced = true;
+            } else {
+                queue.push(queueItem);
+            }
+        } else {
+            queue.push(queueItem);
+        }
         _saveQueue(queue);
+        return {
+            queuedItem: queueItem,
+            coalesced,
+            queueLength: _loadQueue().length
+        };
     }
 
     function _resolveEndpoint(endpointKey) {
@@ -133,23 +251,72 @@ const SharePointSync = (() => {
         return String(globalThis.WA_GOLD_RUSH_FLOW_ENDPOINTS?.[endpointKey] || '').trim();
     }
 
-    async function _post(endpointKey, payload) {
+    async function _post(endpointKey, payload, options = {}) {
         const callFlow = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.callFlow;
         if (typeof callFlow !== 'function') {
             throw new Error('Power Automate flow helper is unavailable.');
         }
-        const result = await callFlow(endpointKey, payload, {
-            apiKey: CONFIG.apiKey,
-            requireApiKey: true,
-            cache: 'no-store'
-        });
-        if (!result.success) throw new Error(result.error || `HTTP ${result.status || 0}`);
-        return result;
+        const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 0;
+        const canAbort = timeoutMs > 0 && typeof AbortController !== 'undefined';
+        const abortController = canAbort ? new AbortController() : null;
+        let timeoutId = null;
+        let timedOut = false;
+        try {
+            const requestPromise = callFlow(endpointKey, payload, {
+                apiKey: CONFIG.apiKey,
+                requireApiKey: true,
+                cache: 'no-store',
+                ...(abortController ? { signal: abortController.signal } : {})
+            });
+            const result = timeoutMs > 0 && !abortController
+                ? await Promise.race([
+                    requestPromise,
+                    new Promise((_, reject) => {
+                        timeoutId = setTimeout(() => {
+                            timedOut = true;
+                            reject(_createPostError(`Timed out after ${timeoutMs}ms`, 'unknown'));
+                        }, timeoutMs);
+                    })
+                ])
+                : await (() => {
+                    if (abortController) {
+                        timeoutId = setTimeout(() => {
+                            timedOut = true;
+                            abortController.abort();
+                        }, timeoutMs);
+                    }
+                    return requestPromise;
+                })();
+            if (timedOut) {
+                throw _createPostError(`Timed out after ${timeoutMs}ms`, 'unknown', result);
+            }
+            if (!result.success) {
+                const errorMessage = result.error || `HTTP ${result.status || 0}`;
+                const unknownOutcome = result.status === 504
+                    || result?.data?.ok === true
+                    || /timed?\s*out|timeout|abort/i.test(String(errorMessage));
+                throw _createPostError(errorMessage, unknownOutcome ? 'unknown' : 'failure', result);
+            }
+            return result;
+        } catch (error) {
+            if (timedOut && error?.syncOutcome !== 'unknown') {
+                throw _createPostError(`Timed out after ${timeoutMs}ms`, 'unknown');
+            }
+            if (error?.syncOutcome) {
+                throw error;
+            }
+            throw _createPostError(error?.message || error, /timed?\s*out|timeout|abort/i.test(String(error?.message || error)) ? 'unknown' : 'failure');
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
+        }
     }
 
     function _startRetryLoop() {
         if (_retryTimer) return;
         _retryTimer = setInterval(retryQueue, CONFIG.retryIntervalMs);
+        if (typeof _retryTimer?.unref === 'function') {
+            _retryTimer.unref();
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -177,12 +344,18 @@ const SharePointSync = (() => {
 
     /**
      * Build a level progress/result upsert payload.
+     * progressKey is diagnostic-only — the Power Automate flow must recompute
+     * the canonical key server-side and must not trust the client value.
      */
     function buildProgressPayload(opts) {
+        const telemetry = _createProgressTelemetry(opts);
+        const classCode = String(opts.classCode || '').trim().toUpperCase();
+        const studentCode = String(opts.studentCode || '').trim();
+        const level = _normalizeLevel(opts.level);
         return {
-            studentCode: String(opts.studentCode || '').trim(),
-            classCode: String(opts.classCode || '').trim().toUpperCase(),
-            level: Number(opts.level) || 0,
+            studentCode,
+            classCode,
+            level,
             currentRound: Number(opts.currentRound) || 1,
             currentCash: Number(opts.currentCash ?? 0),
             currentAssets: Number(opts.currentAssets ?? 0),
@@ -197,7 +370,15 @@ const SharePointSync = (() => {
             achievementsCount: Number(opts.achievementsCount || 0),
             sessionStatus: String(opts.sessionStatus || 'active'),
             needsSupport: opts.needsSupport === true,
-            supportReason: String(opts.supportReason || '').trim()
+            supportReason: String(opts.supportReason || '').trim(),
+            progressKey: buildCanonicalProgressKey({
+                classCode,
+                studentCode,
+                level
+            }),
+            saveRequestId: telemetry.saveRequestId,
+            clientTimestampUtc: telemetry.clientTimestampUtc,
+            clientVersion: telemetry.clientVersion
         };
     }
 
@@ -240,16 +421,40 @@ const SharePointSync = (() => {
             return { queued: false, skipped: true };
         }
         _dispatchCloudSaveStatus('saving');
+        _logProgress('save attempt', payload);
         try {
-            await _post(CONFIG.progressEndpointKey, payload);
+            const result = await _post(CONFIG.progressEndpointKey, payload, {
+                timeoutMs: CONFIG.progressRequestTimeoutMs
+            });
+            _logProgress('save success', payload, {
+                httpStatus: result.status
+            });
             _dispatchCloudSaveStatus('saved to cloud');
-            return { ok: true };
+            return {
+                ok: true,
+                progressKey: payload.progressKey,
+                saveRequestId: payload.saveRequestId
+            };
         } catch (err) {
-            console.warn('[SharePointSync] Progress sync failed, queuing:', err.message);
-            _enqueue('progress', payload);
+            const unknownOutcome = err?.syncOutcome === 'unknown';
+            _logProgress(unknownOutcome ? 'timeout/unknown outcome' : 'save failure', payload, {
+                error: err?.message || 'Progress sync failed.'
+            });
+            const queued = _enqueue('progress', payload);
+            _logProgress('queueing', payload, {
+                coalesced: queued.coalesced,
+                queueLength: queued.queueLength,
+                verificationPending: unknownOutcome
+            });
             _startRetryLoop();
-            _dispatchCloudSaveStatus('locally saved with retry pending');
-            return { ok: false, queued: true };
+            _dispatchCloudSaveStatus(unknownOutcome ? 'verification pending' : 'locally saved with retry pending');
+            return {
+                ok: false,
+                queued: true,
+                unknownOutcome,
+                progressKey: payload.progressKey,
+                saveRequestId: payload.saveRequestId
+            };
         }
     }
 
@@ -266,10 +471,31 @@ const SharePointSync = (() => {
             const url = _resolveEndpoint(endpointKey);
             if (!url) { remaining.push(item); continue; }
             try {
-                await _post(endpointKey, item.payload);
-            } catch (_) {
+                if (item.type === 'progress') {
+                    _logProgress('retry', item.payload, {
+                        attempts: Number(item.attempts || 0) + 1
+                    });
+                }
+                await _post(endpointKey, item.payload, item.type === 'progress'
+                    ? { timeoutMs: CONFIG.progressRequestTimeoutMs }
+                    : {});
+                if (item.type === 'progress') {
+                    _logProgress('retry success', item.payload, {
+                        attempts: Number(item.attempts || 0) + 1
+                    });
+                }
+            } catch (error) {
                 item.attempts = (item.attempts || 0) + 1;
-                if (item.attempts < 10) remaining.push(item);
+                if (item.attempts < 10) {
+                    remaining.push(item);
+                }
+                if (item.type === 'progress') {
+                    _logProgress(item.attempts >= 10 ? 'final failure' : 'retry queueing', item.payload, {
+                        attempts: item.attempts,
+                        error: error?.message || 'Retry failed.',
+                        verificationPending: error?.syncOutcome === 'unknown'
+                    });
+                }
                 if (item.attempts >= 10) {
                     _dispatchCloudSaveStatus('cloud save failed');
                 }
@@ -322,6 +548,7 @@ const SharePointSync = (() => {
     return {
         configure,
         buildProfilePayload,
+        buildCanonicalProgressKey,
         buildProgressPayload,
         syncProfile,
         syncProgress,

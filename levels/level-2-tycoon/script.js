@@ -19,6 +19,64 @@ let gameState = null;
 let currentMineForInvestment = null;
 let pendingPurchase = null;
 let cloudSaveStatusListenerBound = false;
+let progressSaveScheduler = null;
+
+function createProgressSaveScheduler(options = {}) {
+    const activeSaves = new Map();
+    const pendingSaves = new Map();
+    const resolveProgressKey = typeof options.resolveProgressKey === 'function'
+        ? options.resolveProgressKey
+        : ((payload) => String(payload?.progressKey || '').trim());
+    const dispatchSave = typeof options.dispatchSave === 'function'
+        ? options.dispatchSave
+        : (() => Promise.resolve({ skipped: true }));
+
+    function scheduleNext(progressKey) {
+        const nextPayload = pendingSaves.get(progressKey);
+        if (!nextPayload) return;
+        pendingSaves.delete(progressKey);
+        startSave(nextPayload);
+    }
+
+    function startSave(payload) {
+        const progressKey = resolveProgressKey(payload);
+        if (!progressKey) {
+            return Promise.resolve(dispatchSave(payload));
+        }
+        const savePromise = Promise.resolve(dispatchSave(payload))
+            .catch((error) => {
+                console.warn('[Level2] Progress save dispatch error', {
+                    progressKey,
+                    error: error?.message || error
+                });
+                return { ok: false, error: error?.message || String(error || 'Progress save dispatch failed.') };
+            })
+            .finally(() => {
+                activeSaves.delete(progressKey);
+                scheduleNext(progressKey);
+            });
+        activeSaves.set(progressKey, {
+            payload,
+            promise: savePromise
+        });
+        return savePromise;
+    }
+
+    return {
+        schedule(payload) {
+            const progressKey = resolveProgressKey(payload);
+            if (!progressKey) {
+                return Promise.resolve(dispatchSave(payload));
+            }
+            const activeSave = activeSaves.get(progressKey);
+            if (activeSave) {
+                pendingSaves.set(progressKey, payload);
+                return activeSave.promise;
+            }
+            return startSave(payload);
+        }
+    };
+}
 
 function getAssignedLevelFromUrl() {
     const params = new URLSearchParams(window.location.search);
@@ -1101,6 +1159,23 @@ function updateCloudSaveStatusLabel(status) {
     statusEl.textContent = `Cloud save status: ${String(status || 'idle')}`;
 }
 
+function getProgressSaveScheduler() {
+    if (!progressSaveScheduler) {
+        progressSaveScheduler = createProgressSaveScheduler({
+            resolveProgressKey(payload) {
+                return String(payload?.progressKey || '').trim();
+            },
+            dispatchSave(payload) {
+                if (typeof SharePointSync === 'undefined' || typeof SharePointSync.syncProgress !== 'function') {
+                    return Promise.resolve({ skipped: true });
+                }
+                return SharePointSync.syncProgress(payload);
+            }
+        });
+    }
+    return progressSaveScheduler;
+}
+
 function updateCompetitionStatus() {
     const competition = applyCompetitionSessionToIdentity(false);
     const statusEl = document.getElementById('competition-status');
@@ -1324,22 +1399,40 @@ function syncPlayerRecord() {
         const currentCash = Number(gameState.cash);
         const currentAssets = Number((gameState.getMineValue() + gameState.getMachineryValue()).toFixed(2));
         const needsSupport = checkpointStatus === 'quiz_available' && latestQuizAttempt?.passed === false;
-        SharePointSync.syncProgress({
-            studentCode,
-            classCode: competition.session?.classCode || gameState.player.classCode || '',
-            level: gameState.assignedLevel,
-            currentRound: gameState.round,
-            currentCash,
-            currentAssets,
-            netWorth,
-            score: netWorth,
-            progressionMarkersJson: JSON.stringify(progressionSnapshot),
-            badgesJson: JSON.stringify([]),
-            achievementsCount: Array.isArray(progressionState.quizAttempts) ? progressionState.quizAttempts.length : 0,
-            sessionStatus: competition.isLoggedIn ? 'authenticated' : 'local_only',
-            needsSupport,
-            supportReason: needsSupport ? 'checkpoint_quiz_retry' : ''
-        });
+        const progressPayload = typeof SharePointSync.buildProgressPayload === 'function'
+            ? SharePointSync.buildProgressPayload({
+                studentCode,
+                classCode: competition.session?.classCode || gameState.player.classCode || '',
+                level: gameState.assignedLevel,
+                currentRound: gameState.round,
+                currentCash,
+                currentAssets,
+                netWorth,
+                score: netWorth,
+                progressionMarkersJson: JSON.stringify(progressionSnapshot),
+                badgesJson: JSON.stringify([]),
+                achievementsCount: Array.isArray(progressionState.quizAttempts) ? progressionState.quizAttempts.length : 0,
+                sessionStatus: competition.isLoggedIn ? 'authenticated' : 'local_only',
+                needsSupport,
+                supportReason: needsSupport ? 'checkpoint_quiz_retry' : ''
+            })
+            : {
+                studentCode,
+                classCode: competition.session?.classCode || gameState.player.classCode || '',
+                level: gameState.assignedLevel,
+                currentRound: gameState.round,
+                currentCash,
+                currentAssets,
+                netWorth,
+                score: netWorth,
+                progressionMarkersJson: JSON.stringify(progressionSnapshot),
+                badgesJson: JSON.stringify([]),
+                achievementsCount: Array.isArray(progressionState.quizAttempts) ? progressionState.quizAttempts.length : 0,
+                sessionStatus: competition.isLoggedIn ? 'authenticated' : 'local_only',
+                needsSupport,
+                supportReason: needsSupport ? 'checkpoint_quiz_retry' : ''
+            };
+        getProgressSaveScheduler().schedule(progressPayload);
     }
 }
 

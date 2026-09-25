@@ -23,6 +23,11 @@ function loadStudentAuth() {
     return require('../shared/student-auth-client.js');
 }
 
+function loadSharePointSync() {
+    delete require.cache[require.resolve('../shared/sharepoint-sync.js')];
+    return require('../shared/sharepoint-sync.js');
+}
+
 function getHomePageInlineScript(html) {
     const scriptMatches = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)];
     assert.ok(scriptMatches.length > 0, 'Expected inline scripts in index.html');
@@ -30,6 +35,51 @@ function getHomePageInlineScript(html) {
     assert.match(inlineScript, /function syncStudentPinMode/);
     assert.match(inlineScript, /handleStudentPinChange/);
     return inlineScript;
+}
+
+function buildLevelProgressHarness() {
+    const script = fs.readFileSync(require.resolve('../levels/level-2-tycoon/script.js'), 'utf8');
+    const context = {
+        console,
+        document: {
+            addEventListener() {},
+            getElementById() { return null; },
+            querySelector() { return null; },
+            querySelectorAll() { return []; }
+        },
+        window: {
+            location: {
+                href: 'https://example.com/levels/level-2-tycoon/index.html',
+                search: '',
+                pathname: '/levels/level-2-tycoon/index.html'
+            },
+            addEventListener() {}
+        },
+        localStorage: createStorage(),
+        URL,
+        URLSearchParams,
+        alert() {},
+        confirm() { return true; },
+        CustomEvent: function CustomEvent(type, init) {
+            this.type = type;
+            this.detail = init?.detail;
+        }
+    };
+    vm.runInNewContext(
+        [
+            script,
+            'this.createProgressSaveScheduler = createProgressSaveScheduler;'
+        ].join('\n'),
+        context
+    );
+    return {
+        createProgressSaveScheduler: context.createProgressSaveScheduler
+    };
+}
+
+async function flushMicrotasks() {
+    await Promise.resolve();
+    await Promise.resolve();
 }
 
 function renderDeployedPagesArtifacts({ dashboardTemplate, homeTemplate, levelTemplate, apiKey, version }) {
@@ -422,7 +472,35 @@ test('home page keeps PIN entries when backend rejects the change', async () => 
     assert.equal(harness.elements.studentPinStatus.textContent, 'Old PIN mismatch');
 });
 
-test('sharepoint sync builds lower-case save payload and migrates legacy queue items', async () => {
+test('sharepoint sync canonicalizes progress keys and preserves telemetry when payloads are rebuilt', () => {
+    global.localStorage = createStorage();
+    const sync = loadSharePointSync();
+    const firstPayload = sync.buildProgressPayload({
+        studentCode: 'hg-nb5-018',
+        classCode: 'nb5',
+        level: '2.9',
+        currentRound: 3
+    });
+    const rebuiltPayload = sync.buildProgressPayload({
+        ...firstPayload,
+        currentRound: 4,
+        currentCash: 125
+    });
+
+    assert.equal(sync.buildCanonicalProgressKey({
+        classCode: ' nb5 ',
+        studentCode: ' hg-nb5-018 ',
+        level: '2.9'
+    }), 'NB5|HG-NB5-018|2');
+    assert.equal(firstPayload.progressKey, 'NB5|HG-NB5-018|2');
+    assert.equal(rebuiltPayload.progressKey, 'NB5|HG-NB5-018|2');
+    assert.equal(rebuiltPayload.saveRequestId, firstPayload.saveRequestId);
+    assert.equal(rebuiltPayload.clientTimestampUtc, firstPayload.clientTimestampUtc);
+    assert.equal(typeof rebuiltPayload.clientVersion, 'string');
+    assert.notEqual(rebuiltPayload.clientVersion, '');
+});
+
+test('sharepoint sync keeps telemetry when retrying legacy queue items', async () => {
     global.localStorage = createStorage({
         wa_gr_sync_queue: JSON.stringify([
             {
@@ -452,7 +530,7 @@ test('sharepoint sync builds lower-case save payload and migrates legacy queue i
         resolveFlowEndpoint: (key) => global.WA_GOLD_RUSH_FLOW_ENDPOINTS[key] || ''
     };
 
-    const sync = require('../shared/sharepoint-sync.js');
+    const sync = loadSharePointSync();
     const payload = sync.buildProgressPayload({
         studentCode: 'SC-1',
         classCode: '6b',
@@ -467,12 +545,162 @@ test('sharepoint sync builds lower-case save payload and migrates legacy queue i
     assert.equal(payload.classCode, '6B');
     assert.equal(payload.currentCash, 100.25);
     assert.match(payload.progressionMarkersJson, /schemaVersion/);
+    assert.equal(payload.progressKey, '6B|SC-1|2');
+    assert.ok(payload.saveRequestId);
 
     await sync.retryQueue();
     assert.equal(posted.length, 1);
     assert.equal(posted[0].studentCode, 'SC-1');
     assert.equal(posted[0].currentAssets, 0);
+    assert.equal(posted[0].progressKey, '|SC-1|2');
+    assert.ok(posted[0].saveRequestId);
+    assert.ok(posted[0].clientTimestampUtc);
+    assert.ok(posted[0].clientVersion);
     assert.equal(sync.queueLength(), 0);
+});
+
+test('sharepoint sync treats timed-out saves as verification pending and keeps a retry item', async () => {
+    global.localStorage = createStorage();
+    global.WA_GOLD_RUSH_FLOW_ENDPOINTS = {
+        saveProgress: 'https://example.com/save'
+    };
+    const logs = [];
+    const originalInfo = console.info;
+    console.info = (...args) => logs.push(args);
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        callFlow: async (_flowName, _payload, options = {}) => new Promise((resolve) => {
+        options.signal?.addEventListener('abort', () => {
+            resolve({
+                success: false,
+                status: 504,
+                data: { ok: true, saved: true },
+                error: 'Timed out after upstream success'
+            });
+        });
+        }),
+        resolveFlowEndpoint: (key) => global.WA_GOLD_RUSH_FLOW_ENDPOINTS[key] || ''
+    };
+
+    try {
+        const sync = loadSharePointSync();
+        sync.configure({ progressRequestTimeoutMs: 5 });
+        const result = await sync.syncProgress({
+        studentCode: 'SC-1',
+        classCode: '6B',
+        level: 2,
+        currentRound: 4
+        });
+
+        assert.equal(result.ok, false);
+        assert.equal(result.queued, true);
+        assert.equal(result.unknownOutcome, true);
+        assert.equal(sync.getCloudSaveStatus(), 'verification pending');
+        assert.equal(sync.queueLength(), 1);
+        assert.ok(logs.some(entry => String(entry[0]).includes('Progress timeout/unknown outcome')));
+        assert.ok(logs.some(entry => String(entry[0]).includes('Progress queueing')));
+    } finally {
+        console.info = originalInfo;
+    }
+});
+
+test('sharepoint sync reuses queued saveRequestId on retry and coalesces same-key queued state', async () => {
+    global.localStorage = createStorage();
+    global.WA_GOLD_RUSH_FLOW_ENDPOINTS = {
+        saveProgress: 'https://example.com/save'
+    };
+    const posted = [];
+    let attempt = 0;
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        callFlow: async (_flowName, payload) => {
+        posted.push(payload);
+        attempt += 1;
+        if (attempt === 1) {
+            return { success: false, error: 'Network down' };
+        }
+        return { success: true, status: 200, data: { ok: true } };
+        },
+        resolveFlowEndpoint: (key) => global.WA_GOLD_RUSH_FLOW_ENDPOINTS[key] || ''
+    };
+
+    const sync = loadSharePointSync();
+    const firstResult = await sync.syncProgress({
+        studentCode: 'SC-1',
+        classCode: '6B',
+        level: 2,
+        currentRound: 2
+    });
+    const queuedAfterFailure = JSON.parse(global.localStorage.getItem('wa_gr_sync_queue'));
+    assert.equal(firstResult.ok, false);
+    assert.equal(queuedAfterFailure.length, 1);
+    assert.equal(queuedAfterFailure[0].payload.saveRequestId, firstResult.saveRequestId);
+
+    await sync.retryQueue();
+
+    assert.equal(posted.length, 2);
+    assert.equal(posted[1].saveRequestId, firstResult.saveRequestId);
+    assert.equal(sync.queueLength(), 0);
+
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: false, error: 'Network down' });
+    const olderResult = await sync.syncProgress({
+        studentCode: 'SC-1',
+        classCode: '6B',
+        level: 2,
+        currentRound: 6,
+        currentCash: 100
+    });
+    const newerResult = await sync.syncProgress({
+        studentCode: 'SC-1',
+        classCode: '6B',
+        level: 2,
+        currentRound: 8,
+        currentCash: 150
+    });
+    const queuedAfterCoalesce = JSON.parse(global.localStorage.getItem('wa_gr_sync_queue'));
+
+    assert.equal(queuedAfterCoalesce.length, 1);
+    assert.equal(queuedAfterCoalesce[0].payload.progressKey, '6B|SC-1|2');
+    assert.equal(queuedAfterCoalesce[0].payload.currentRound, 8);
+    assert.equal(queuedAfterCoalesce[0].payload.currentCash, 150);
+    assert.equal(queuedAfterCoalesce[0].payload.saveRequestId, newerResult.saveRequestId);
+    assert.notEqual(olderResult.saveRequestId, newerResult.saveRequestId);
+});
+
+test('level progress scheduler coalesces overlapping saves by key while allowing independent keys', async () => {
+    const harness = buildLevelProgressHarness();
+    const dispatched = [];
+    const resolvers = [];
+    const scheduler = harness.createProgressSaveScheduler({
+        resolveProgressKey(payload) {
+        return payload.progressKey;
+        },
+        dispatchSave(payload) {
+        dispatched.push(payload);
+        return new Promise((resolve) => {
+            resolvers.push(() => resolve({ ok: true, progressKey: payload.progressKey }));
+        });
+        }
+    });
+
+    const firstPromise = scheduler.schedule({ progressKey: 'NB5|SC-1|2', currentRound: 1 });
+    scheduler.schedule({ progressKey: 'NB5|SC-1|2', currentRound: 2 });
+    scheduler.schedule({ progressKey: 'NB5|SC-1|2', currentRound: 3 });
+    const otherKeyPromise = scheduler.schedule({ progressKey: 'NB5|SC-2|2', currentRound: 1 });
+
+    assert.equal(dispatched.length, 2);
+    assert.equal(dispatched[0].currentRound, 1);
+    assert.equal(dispatched[1].progressKey, 'NB5|SC-2|2');
+
+    resolvers[0]();
+    await firstPromise;
+    await flushMicrotasks();
+
+    assert.equal(dispatched.length, 3);
+    assert.equal(dispatched[2].progressKey, 'NB5|SC-1|2');
+    assert.equal(dispatched[2].currentRound, 3);
+
+    resolvers[1]();
+    resolvers[2]();
+    await otherKeyPromise;
 });
 
 test('dashboard hydration adapter normalizes expected shape while disabled', () => {
