@@ -180,8 +180,14 @@ const CheckpointApproval = (() => {
             if (!Array.isArray(records)) return null;
             const normalizedTarget = String(studentCode || '').trim().toLowerCase();
             return records.find((record) => {
-                const recordStudentCode = String(record?.studentCode || '').trim().toLowerCase();
-                const recordStudentId = String(record?.studentId || '').trim().toLowerCase();
+                const identity = typeof dashboard !== 'undefined' && typeof dashboard.normalizeDashboardStudentIdentity === 'function'
+                    ? dashboard.normalizeDashboardStudentIdentity(record)
+                    : {
+                        studentCode: String(record?.studentCode || record?.StudentCode || record?.displayId || '').trim(),
+                        studentId: String(record?.studentId || record?.StudentID || record?.email || '').trim()
+                    };
+                const recordStudentCode = String(identity?.studentCode || '').trim().toLowerCase();
+                const recordStudentId = String(identity?.studentId || '').trim().toLowerCase();
                 const matchesStudent = recordStudentCode === normalizedTarget || recordStudentId === normalizedTarget;
                 const recordLevel = Number(record?.level || record?.gameState?.assignedLevel || 0) || 0;
                 return matchesStudent && (!level || recordLevel === Number(level));

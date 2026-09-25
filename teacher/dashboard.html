@@ -1198,6 +1198,9 @@
         });
         document.getElementById('exportCsvBtn').addEventListener('click', () => {
             const csv = withAuthorizedStudents(() => dashboard.exportAsCSV());
+            if (typeof csv !== 'string' || !csv.trim()) {
+                return;
+            }
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
