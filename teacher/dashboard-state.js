@@ -1812,12 +1812,14 @@ class TeacherDashboard {
     }
 
     removeStudentArtifacts(student = {}) {
+        const studentIdentifiers = Array.from(new Set([
+            String(student.studentCode || student.displayId || '').trim(),
+            String(student.studentId || student.email || '').trim()
+        ].filter(Boolean)));
         const matches = (value) => {
             const candidate = String(value || '').trim().toLowerCase();
             if (!candidate) return false;
-            const studentCode = String(student.studentCode || student.displayId || '').trim().toLowerCase();
-            const studentId = String(student.studentId || student.email || '').trim().toLowerCase();
-            return candidate === studentCode || candidate === studentId;
+            return studentIdentifiers.some((identifier) => candidate === identifier.toLowerCase());
         };
 
         try {
@@ -1842,9 +1844,11 @@ class TeacherDashboard {
         } catch (_) {}
 
         this.SUPPORTED_LEVELS.forEach((level) => {
-            try {
-                localStorage.removeItem(`wa_gr_progression_quiz_${student.studentCode || student.displayId}_level_${level}`);
-            } catch (_) {}
+            studentIdentifiers.forEach((identifier) => {
+                try {
+                    localStorage.removeItem(`wa_gr_progression_quiz_${identifier}_level_${level}`);
+                } catch (_) {}
+            });
         });
 
         this.AUTOSAVE_STORAGE_KEYS.forEach((key) => {
