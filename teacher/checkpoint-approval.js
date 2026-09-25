@@ -178,9 +178,11 @@ const CheckpointApproval = (() => {
             const raw = localStorage.getItem('wa_gold_rush_class_records');
             const records = raw ? JSON.parse(raw) : [];
             if (!Array.isArray(records)) return null;
+            const normalizedTarget = String(studentCode || '').trim().toLowerCase();
             return records.find((record) => {
-                const candidateCode = String(record?.studentCode || record?.studentId || '').trim().toLowerCase();
-                const matchesStudent = candidateCode === String(studentCode || '').trim().toLowerCase();
+                const recordStudentCode = String(record?.studentCode || '').trim().toLowerCase();
+                const recordStudentId = String(record?.studentId || '').trim().toLowerCase();
+                const matchesStudent = recordStudentCode === normalizedTarget || recordStudentId === normalizedTarget;
                 const recordLevel = Number(record?.level || record?.gameState?.assignedLevel || 0) || 0;
                 return matchesStudent && (!level || recordLevel === Number(level));
             }) || null;

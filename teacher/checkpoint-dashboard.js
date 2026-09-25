@@ -54,10 +54,7 @@ const CheckpointDashboard = (() => {
                             quizScore: gs.quizScore
                         }
                         : null);
-                return progressionState?.checkpointStatus === 'quiz_passed'
-                    || progressionState?.approvalStatus === 'approved'
-                    || progressionState?.approvalStatus === 'retake_requested'
-                    || progressionState?.approvalStatus === 'rejected';
+                return progressionState?.checkpointStatus === 'quiz_passed';
             });
         } catch (_) {
             return [];
