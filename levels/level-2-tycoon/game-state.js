@@ -764,13 +764,25 @@ class GameState {
                 ...(snapshot.player && typeof snapshot.player === 'object' ? snapshot.player : {}),
                 companyName: String(snapshot.companyName || snapshot.player?.companyName || this.player.companyName || 'Untitled Mining Co.')
             };
-            this.ownedMines = snapshot.ownedMines || this.ownedMines;
-            this.machinery = Array.isArray(snapshot.machinery) ? snapshot.machinery : [];
-            this.roundHistory = Array.isArray(snapshot.roundHistory) ? snapshot.roundHistory : [];
-            this.totalProfitLoss = typeof snapshot.totalProfitLoss === 'number' ? snapshot.totalProfitLoss : 0;
-            this.investmentPlans = snapshot.investmentPlans || {};
+            if (Array.isArray(snapshot.ownedMines)) {
+                this.ownedMines = snapshot.ownedMines;
+            }
+            if (Array.isArray(snapshot.machinery)) {
+                this.machinery = snapshot.machinery;
+            }
+            if (Array.isArray(snapshot.roundHistory)) {
+                this.roundHistory = snapshot.roundHistory;
+            }
+            if (typeof snapshot.totalProfitLoss === 'number') {
+                this.totalProfitLoss = snapshot.totalProfitLoss;
+            }
+            if (snapshot.investmentPlans && typeof snapshot.investmentPlans === 'object' && !Array.isArray(snapshot.investmentPlans)) {
+                this.investmentPlans = snapshot.investmentPlans;
+            }
 
-            this.progressionStateByLevel = snapshot.progressionStateByLevel || {};
+            if (snapshot.progressionStateByLevel && typeof snapshot.progressionStateByLevel === 'object' && !Array.isArray(snapshot.progressionStateByLevel)) {
+                this.progressionStateByLevel = snapshot.progressionStateByLevel;
+            }
             if (!Object.keys(this.progressionStateByLevel).length && (
                 snapshot.checkpointStatus
                 || snapshot.approvalStatus

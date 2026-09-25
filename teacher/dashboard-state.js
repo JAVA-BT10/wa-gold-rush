@@ -1647,8 +1647,8 @@ class TeacherDashboard {
         const index = this.students.findIndex(s => s.id === studentId);
         if (index !== -1) {
             const deleted = this.students.splice(index, 1)[0];
-            this.saveToLocalStorage();
             this.removeStudentArtifacts(deleted);
+            this.saveToLocalStorage();
             return { success: true, student: deleted, message: `Deleted ${deleted.name || deleted.studentName}` };
         }
         return { success: false, error: 'Student not found' };
