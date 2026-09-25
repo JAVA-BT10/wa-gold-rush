@@ -30,6 +30,8 @@ class TeacherDashboard {
         this.TEACHER_SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
         this.PERMANENT_ADMIN_ENABLED = true;
         this.PERMANENT_ADMIN_ALLOWLIST = new Set(['ben.turner@education.wa.edu.au']);
+        this.SUPPORTED_LEVELS = Object.freeze([1, 2, 3, 4, 5, 6]);
+        this.AUTOSAVE_STORAGE_KEYS = Object.freeze(['level1_autosave', 'level2_autosave', 'level3_autosave', 'level4_autosave', 'level5_autosave']);
         this._dashboardHydrationInFlight = null;
         this._lastHydrationDiagnostics = {};
         this.dashboardDiagnosticsEnabled = globalThis.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS === true;
@@ -817,7 +819,7 @@ class TeacherDashboard {
 
     isTeacherSessionStale(session = this.getTeacherSession()) {
         const authenticatedAt = Date.parse(String(session?.authenticatedAt || '').trim());
-        if (!Number.isFinite(authenticatedAt)) return true;
+        if (!Number.isFinite(authenticatedAt)) return false;
         return (Date.now() - authenticatedAt) > this.TEACHER_SESSION_MAX_AGE_MS;
     }
 
@@ -1839,13 +1841,13 @@ class TeacherDashboard {
             }
         } catch (_) {}
 
-        [1, 2, 3, 4, 5, 6].forEach((level) => {
+        this.SUPPORTED_LEVELS.forEach((level) => {
             try {
                 localStorage.removeItem(`wa_gr_progression_quiz_${student.studentCode || student.displayId}_level_${level}`);
             } catch (_) {}
         });
 
-        ['level2_autosave', 'level1_autosave', 'level3_autosave', 'level4_autosave', 'level5_autosave'].forEach((key) => {
+        this.AUTOSAVE_STORAGE_KEYS.forEach((key) => {
             try {
                 const raw = JSON.parse(localStorage.getItem(key));
                 const autosaveCode = raw?.gameState?.player?.studentCode || raw?.gameState?.player?.studentId || '';
