@@ -460,18 +460,26 @@ test('sharepoint sync builds lower-case save payload and migrates legacy queue i
         currentRound: 3,
         currentCash: 100.25,
         currentAssets: 20.75,
-        netWorth: 121,
-        score: 121,
-        progressionMarkersJson: { schemaVersion: 2 }
+        netWorth: 120.51,
+        score: 120.49,
+        progressionMarkersJson: { schemaVersion: 2 },
+        badgesJson: { earned: ['steady_hand'] }
     });
     assert.equal(payload.classCode, '6B');
-    assert.equal(payload.currentCash, 100.25);
+    assert.equal(payload.currentCash, 100);
+    assert.equal(payload.currentAssets, 21);
+    assert.equal(payload.netWorth, 121);
+    assert.equal(payload.score, 120);
     assert.match(payload.progressionMarkersJson, /schemaVersion/);
+    assert.match(payload.badgesJson, /steady_hand/);
 
     await sync.retryQueue();
     assert.equal(posted.length, 1);
     assert.equal(posted[0].studentCode, 'SC-1');
+    assert.equal(posted[0].currentCash, 0);
     assert.equal(posted[0].currentAssets, 0);
+    assert.equal(posted[0].netWorth, 999);
+    assert.equal(posted[0].score, 999);
     assert.equal(sync.queueLength(), 0);
 });
 
