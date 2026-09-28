@@ -472,9 +472,13 @@ test('home page keeps PIN entries when backend rejects the change', async () => 
     assert.equal(harness.elements.studentPinStatus.textContent, 'Old PIN mismatch');
 });
 
-test('sharepoint sync canonicalizes progress keys and preserves telemetry when payloads are rebuilt', () => {
+test('sharepoint sync loads cleanly, exposes progress sync helpers, and canonicalizes rebuilt payload keys', () => {
     global.localStorage = createStorage();
     const sync = loadSharePointSync();
+
+    assert.equal(typeof sync.syncProgress, 'function');
+    assert.equal(typeof sync.buildCanonicalProgressKey, 'function');
+
     const firstPayload = sync.buildProgressPayload({
         studentCode: 'hg-nb5-018',
         classCode: 'nb5',
