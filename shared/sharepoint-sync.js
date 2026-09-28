@@ -41,6 +41,11 @@ const SharePointSync = (() => {
         }
     }
 
+    function _toRoundedInteger(value) {
+        const num = Number(value ?? 0);
+        return Number.isFinite(num) ? Math.round(num) : 0;
+    }
+
     function _normalizeQueueItem(item) {
         if (!item || typeof item !== 'object') return null;
         const type = item.type === 'profile' ? 'profile' : (item.type === 'progress' ? 'progress' : '');
@@ -69,10 +74,10 @@ const SharePointSync = (() => {
                 classCode: String(payload.classCode || payload.ClassCode || '').trim().toUpperCase(),
                 level: Number(payload.Level || payload.level) || 0,
                 currentRound: Number(payload.Round || payload.currentRound) || 1,
-                currentCash: Number(payload.currentCash ?? payload.Cash ?? 0),
-                currentAssets: Number(payload.currentAssets ?? payload.Assets ?? 0),
-                netWorth: Number(payload.NetWorth ?? payload.netWorth ?? 0),
-                score: Number(payload.Score ?? payload.score ?? 0),
+                currentCash: _toRoundedInteger(payload.currentCash ?? payload.Cash ?? 0),
+                currentAssets: _toRoundedInteger(payload.currentAssets ?? payload.Assets ?? 0),
+                netWorth: _toRoundedInteger(payload.NetWorth ?? payload.netWorth ?? 0),
+                score: _toRoundedInteger(payload.Score ?? payload.score ?? 0),
                 progressionMarkersJson: String(payload.ProgressJson || payload.progressionMarkersJson || ''),
                 badgesJson: String(payload.BadgesJson || payload.badgesJson || ''),
                 achievementsCount: Number(payload.achievementsCount || 0),
@@ -184,10 +189,10 @@ const SharePointSync = (() => {
             classCode: String(opts.classCode || '').trim().toUpperCase(),
             level: Number(opts.level) || 0,
             currentRound: Number(opts.currentRound) || 1,
-            currentCash: Number(opts.currentCash ?? 0),
-            currentAssets: Number(opts.currentAssets ?? 0),
-            netWorth: Number(opts.netWorth ?? 0),
-            score: Number(opts.score ?? 0),
+            currentCash: _toRoundedInteger(opts.currentCash ?? 0),
+            currentAssets: _toRoundedInteger(opts.currentAssets ?? 0),
+            netWorth: _toRoundedInteger(opts.netWorth ?? 0),
+            score: _toRoundedInteger(opts.score ?? 0),
             progressionMarkersJson: opts.progressionMarkersJson
                 ? (typeof opts.progressionMarkersJson === 'string' ? opts.progressionMarkersJson : JSON.stringify(opts.progressionMarkersJson))
                 : '',
