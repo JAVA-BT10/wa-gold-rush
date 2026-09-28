@@ -48,6 +48,41 @@ const SharePointSync = (() => {
         return Number.isFinite(num) ? Math.round(num) : 0;
     }
 
+    function _normalizeLevel(value) {
+        const level = Math.floor(Number(value));
+        return Number.isFinite(level) && level > 0 ? level : 1;
+    }
+
+    function _createProgressTelemetry(payload = {}) {
+        const version = String(
+            payload.clientVersion
+            || globalThis.WA_GOLD_RUSH_RUNTIME_CONFIG?.version
+            || 'dev'
+        ).trim() || 'dev';
+        return {
+            saveRequestId: String(payload.saveRequestId || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`).trim(),
+            clientTimestampUtc: String(payload.clientTimestampUtc || new Date().toISOString()).trim(),
+            clientVersion: version
+        };
+    }
+
+    function _createPostError(message, syncOutcome = 'failure', result) {
+        const error = new Error(String(message || 'Progress sync failed.'));
+        error.syncOutcome = syncOutcome === 'unknown' ? 'unknown' : 'failure';
+        if (result !== undefined) {
+            error.result = result;
+        }
+        return error;
+    }
+
+    function _logProgress(event, payload, details = {}) {
+        console.info(`[SharePointSync] Progress ${event}`, {
+            progressKey: String(payload?.progressKey || '').trim(),
+            saveRequestId: String(payload?.saveRequestId || '').trim(),
+            ...details
+        });
+    }
+
     function _normalizeQueueItem(item) {
         if (!item || typeof item !== 'object') return null;
         const type = item.type === 'profile' ? 'profile' : (item.type === 'progress' ? 'progress' : '');
@@ -272,6 +307,14 @@ const SharePointSync = (() => {
             teacherEmailPrimary: String(opts.teacherEmailPrimary || '').trim().toLowerCase(),
             timestampUtc: new Date().toISOString()
         };
+    }
+
+    function buildCanonicalProgressKey({ classCode, studentCode, level }) {
+        return [
+            String(classCode || '').trim().toUpperCase(),
+            String(studentCode || '').trim().toUpperCase(),
+            _normalizeLevel(level)
+        ].join('|');
     }
 
     /**
