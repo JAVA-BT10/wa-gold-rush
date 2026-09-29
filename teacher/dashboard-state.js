@@ -256,33 +256,103 @@ class TeacherDashboard {
 
         const dataPayload = isObject(payload.data) ? payload.data : payload;
         const bodyPayload = isObject(dataPayload.body) ? dataPayload.body : dataPayload;
+        if (this.hasDashboardHydrationArrays(bodyPayload)) return bodyPayload;
+
+        // SharePoint/Power Automate replies are often wrapped in a `value` envelope.
+        const wrapper = bodyPayload.value ?? bodyPayload.Value;
+        if (isObject(wrapper) && this.hasDashboardHydrationArrays(wrapper)) return wrapper;
+        if (Array.isArray(wrapper)) {
+            const wrapped = wrapper.find((entry) => isObject(entry) && this.hasDashboardHydrationArrays(entry));
+            if (wrapped) return wrapped;
+        }
         return bodyPayload;
     }
 
+    // SharePoint Choice/Lookup columns arrive as { Value: 'teacher' } rather than a scalar.
+    normalizeSharePointFieldValue(value) {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            if ('Value' in value) return value.Value;
+            if ('value' in value) return value.value;
+        }
+        return value;
+    }
+
+    // Returns the first non-empty value, unwrapping SharePoint Choice objects.
+    pickDashboardFieldValue(...values) {
+        for (const value of values) {
+            const plain = String(this.normalizeSharePointFieldValue(value) ?? '').trim();
+            if (plain) return plain;
+        }
+        return '';
+    }
+
+    asDashboardHydrationArray(value) {
+        if (Array.isArray(value)) return value;
+        if (Array.isArray(value?.value)) return value.value;
+        if (Array.isArray(value?.Value)) return value.Value;
+        return [];
+    }
+
+    hasDashboardHydrationArrays(source = {}) {
+        if (!source || typeof source !== 'object') return false;
+        const isArrayLike = (value) =>
+            Array.isArray(value) || Array.isArray(value?.value) || Array.isArray(value?.Value);
+        // Teachers/progress can legitimately be absent or null, so any one of the
+        // known collections is enough to treat the reply as hydration data.
+        return isArrayLike(source.students ?? source.Students ?? source.studentRoster ?? source.StudentRoster)
+            || isArrayLike(source.teachers ?? source.Teachers ?? source.teacherRoster ?? source.TeacherRoster)
+            || isArrayLike(source.progress ?? source.Progress ?? source.studentProgress ?? source.StudentProgress);
+    }
+
     normalizeDashboardStudentIdentity(record = {}) {
-        const studentCode = String(record?.studentCode || record?.StudentCode || record?.displayId || '').trim();
-        const studentId = String(record?.studentId || record?.StudentID || record?.email || '').trim();
+        const studentCode = this.pickDashboardFieldValue(record?.studentCode, record?.StudentCode, record?.displayId);
+        const studentId = this.pickDashboardFieldValue(record?.studentId, record?.StudentID, record?.email);
         const identity = String(studentCode || studentId || '').trim();
         return {
             studentCode: studentCode || studentId,
             studentId,
-            identityKey: identity.toLowerCase()
+            identityKey: identity.toLowerCase(),
+            identityKeys: this.collectDashboardIdentityKeys(record)
         };
+    }
+
+    // Progress rows and roster students can each carry a different subset of
+    // identity columns, so match on every available field instead of just one.
+    collectDashboardIdentityKeys(record = {}) {
+        if (!record || typeof record !== 'object') return [];
+        const candidates = [
+            record.studentCode, record.StudentCode,
+            record.displayId, record.DisplayId,
+            record.studentId, record.StudentID, record.StudentId,
+            record.email, record.Email,
+            record.id
+        ];
+        const keys = [];
+        candidates.forEach((candidate) => {
+            const key = String(this.normalizeSharePointFieldValue(candidate) ?? '').trim().toLowerCase();
+            if (key && !keys.includes(key)) keys.push(key);
+        });
+        return keys;
+    }
+
+    dashboardIdentityMatches(left = {}, right = {}) {
+        const leftKeys = this.collectDashboardIdentityKeys(left);
+        if (!leftKeys.length) return false;
+        return this.collectDashboardIdentityKeys(right).some((key) => leftKeys.includes(key));
     }
 
     hasDashboardHydrationContract(payload = {}) {
         const source = this.extractDashboardHydrationPayload(payload);
         // Expected flow payload contract: arrays for students/teachers/progress.
-        // PascalCase keys are accepted for SharePoint/Flow compatibility.
-        const hasStudents = Array.isArray(source.students) || Array.isArray(source.Students);
-        const hasTeachers = Array.isArray(source.teachers) || Array.isArray(source.Teachers);
-        const hasProgress = Array.isArray(source.progress) || Array.isArray(source.Progress);
-        return hasStudents && hasTeachers && hasProgress;
+        // PascalCase keys and `value`-wrapped arrays are accepted for
+        // SharePoint/Flow compatibility, and missing collections are treated as empty.
+        return this.hasDashboardHydrationArrays(source);
     }
 
     normalizeDashboardHydrationPayload(payload = {}) {
         const source = this.extractDashboardHydrationPayload(payload);
-        const asArray = (value) => Array.isArray(value) ? value : [];
+        const asArray = (value) => this.asDashboardHydrationArray(value);
+        const pick = (...values) => this.pickDashboardFieldValue(...values);
         const students = source.students ?? source.Students ?? source.studentRoster ?? source.StudentRoster;
         const teachers = source.teachers ?? source.Teachers ?? source.teacherRoster ?? source.TeacherRoster;
         const progress = source.progress ?? source.Progress ?? source.studentProgress ?? source.StudentProgress;
@@ -292,27 +362,30 @@ class TeacherDashboard {
                 return {
                     ...student,
                     studentCode: identity.studentCode,
-                    studentId: identity.studentId || String(student?.studentId || student?.StudentID || student?.email || '').trim(),
-                    classCode: String(student?.classCode || student?.ClassCode || '').trim().toUpperCase()
+                    studentId: identity.studentId || pick(student?.studentId, student?.StudentID, student?.email),
+                    classCode: pick(student?.classCode, student?.ClassCode).toUpperCase()
                 };
             }),
             teachers: asArray(teachers).map((teacher) => ({
                 ...teacher,
-                email: String(teacher?.email || teacher?.teacherEmail || '').trim().toLowerCase(),
-                classCode: String(teacher?.classCode || teacher?.ClassCode || '').trim().toUpperCase()
+                email: pick(
+                    teacher?.email, teacher?.teacherEmail, teacher?.TeacherEmail, teacher?.Email, teacher?.Title
+                ).toLowerCase(),
+                name: pick(teacher?.name, teacher?.teacherName, teacher?.TeacherName, teacher?.Name),
+                role: pick(teacher?.role, teacher?.Role).toLowerCase(),
+                classCode: pick(teacher?.classCode, teacher?.ClassCode).toUpperCase()
             })),
             progress: asArray(progress).map((entry) => {
                 const identity = this.normalizeDashboardStudentIdentity(entry);
                 return {
                     ...entry,
                     studentCode: identity.studentCode,
-                    studentId: identity.studentId || String(entry?.studentId || entry?.StudentID || '').trim(),
-                    classCode: String(
-                        entry?.classCode
-                        || entry?.ClassCode
-                        || entry?.gameState?.classCode
-                        || ''
-                    ).trim().toUpperCase()
+                    studentId: identity.studentId || pick(entry?.studentId, entry?.StudentID),
+                    classCode: pick(
+                        entry?.classCode,
+                        entry?.ClassCode,
+                        entry?.gameState?.classCode
+                    ).toUpperCase()
                 };
             })
         };
@@ -330,9 +403,7 @@ class TeacherDashboard {
         const hydratedStudents = normalized.students.map((student) => {
             const identity = this.normalizeDashboardStudentIdentity(student);
             const studentCode = String(identity.studentCode || student.displayId || '').trim();
-            const existing = this.students.find((entry) =>
-                this.normalizeDashboardStudentIdentity(entry).identityKey === identity.identityKey
-            );
+            const existing = this.students.find((entry) => this.dashboardIdentityMatches(student, entry));
             const parsedLevel = parseInt(student.level ?? student.Level ?? student.assignedLevel, 10);
             const level = (parsedLevel >= 1 && parsedLevel <= 6)
                 ? parsedLevel
@@ -377,9 +448,7 @@ class TeacherDashboard {
                 };
                 const identity = this.normalizeDashboardStudentIdentity(record);
                 const normalizedStudentCode = String(identity.studentCode || '').trim();
-                const existingStudent = this.students.find((entry) =>
-                    this.normalizeDashboardStudentIdentity(entry).identityKey === identity.identityKey
-                );
+                const existingStudent = this.students.find((entry) => this.dashboardIdentityMatches(record, entry));
                 return {
                     ...record,
                     studentCode: normalizedStudentCode,
@@ -396,6 +465,8 @@ class TeacherDashboard {
                     strategyLabel: String(record.strategyLabel || record.StrategyLabel || '').trim() || undefined,
                     companyName: String(record.companyName || record.CompanyName || '').trim() || undefined,
                     investmentProfile: String(record.investmentProfile || record.InvestmentProfile || '').trim() || undefined,
+                    leaderboardName: this.pickDashboardFieldValue(record.leaderboardName, record.LeaderboardName) || undefined,
+                    studentName: this.pickDashboardFieldValue(record.studentName, record.StudentName) || undefined,
                     updatedAt: (
                         record.updatedAt
                         || record.UpdatedAt
@@ -420,7 +491,7 @@ class TeacherDashboard {
             });
         });
         normalized.teachers.forEach((teacher) => {
-            const email = String(teacher?.email || teacher?.teacherEmail || '').trim().toLowerCase();
+            const email = this.pickDashboardFieldValue(teacher?.email, teacher?.teacherEmail, teacher?.TeacherEmail).toLowerCase();
             if (!email) return;
             const existing = teachersByEmail.get(email) || {};
             teachersByEmail.set(email, {
@@ -428,8 +499,9 @@ class TeacherDashboard {
                 ...teacher,
                 id: String(existing.id || teacher.id || email).trim() || email,
                 email,
-                classCode: String(teacher.classCode || teacher.ClassCode || existing.classCode || '').trim().toUpperCase(),
-                role: String(teacher.role || existing.role || 'teacher').trim().toLowerCase() || 'teacher'
+                name: this.pickDashboardFieldValue(teacher.name, existing.name),
+                classCode: this.pickDashboardFieldValue(teacher.classCode, teacher.ClassCode, existing.classCode).toUpperCase(),
+                role: (this.pickDashboardFieldValue(teacher.role, existing.role) || 'teacher').toLowerCase()
             });
         });
         const mergedTeachers = Array.from(teachersByEmail.values());
@@ -1606,15 +1678,19 @@ class TeacherDashboard {
     // =========================================================================
 
     syncFromPlayerRecord(record) {
-        const incomingDisplayId = String(record.studentId || record.studentCode || '').trim();
-        if (!incomingDisplayId) return null;
+        const incomingKeys = this.collectDashboardIdentityKeys(record);
+        if (!incomingKeys.length) return null;
 
+        // Progress rows may identify a student by studentCode, StudentCode,
+        // studentId or StudentID, so match against every roster identity field.
         let student = this.students.find(s =>
-            String(s.studentCode || s.displayId || s.id || '')
-                .trim().toLowerCase() === incomingDisplayId.toLowerCase()
+            this.collectDashboardIdentityKeys(s).some(key => incomingKeys.includes(key))
         );
 
-        if (!student) return null;
+        if (!student) {
+            console.warn('[Dashboard] Unmatched progress record', incomingKeys);
+            return null;
+        }
 
         if (record.studentName) student.studentName = record.studentName;
         if (record.leaderboardName) student.leaderboardName = record.leaderboardName;
