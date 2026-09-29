@@ -1020,6 +1020,130 @@ test('dashboard hydration reuses one in-flight flow request for overlapping call
     assert.equal(secondResult.source, 'flow');
 });
 
+function setUpSharePointHydrationEnvironment(flowData) {
+    global.localStorage = createStorage({
+        teacher_dashboard: JSON.stringify({ students: [] }),
+        wa_gold_rush_teacher_list: JSON.stringify([])
+    });
+    global.sessionStorage = createStorage({
+        wa_gold_rush_teacher_session: JSON.stringify({
+            ok: true,
+            teacherEmail: 'teacher@example.com',
+            classCode: '6B',
+            classCodes: ['6B']
+        })
+    });
+    global.WA_GOLD_RUSH_DASHBOARD_CONFIG = {
+        apiKey: 'key',
+        flowEndpoints: {
+            getDashboardData: 'https://example.com/get-dashboard-data'
+        }
+    };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey: 'key' };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        getApiKey: () => 'key',
+        callFlow: async () => ({ success: true, status: 200, data: flowData })
+    };
+    const TeacherDashboard = require('../teacher/dashboard-state.js');
+    return new TeacherDashboard();
+}
+
+test('dashboard hydration accepts SharePoint value-wrapped arrays, column names, and missing teachers', async () => {
+    const dashboard = setUpSharePointHydrationEnvironment({
+        ok: true,
+        Students: {
+            value: [{
+                StudentCode: 'HG-NB5-018',
+                StudentID: '123456',
+                LeaderboardName: 'Demo',
+                StudentName: 'Demo Student',
+                ClassCode: '6b',
+                Level: 2
+            }]
+        },
+        Teachers: {
+            value: [{
+                Title: 'TEACHER@example.com',
+                TeacherName: 'Teacher One',
+                ClassCode: '6b',
+                Role: { Value: 'Admin' }
+            }]
+        },
+        // Progress identifies the student by StudentID only.
+        Progress: {
+            value: [{
+                StudentID: '123456',
+                ClassCode: '6b',
+                CurrentRound: 7,
+                CurrentCash: 980.25,
+                NetWorth: 2400.5
+            }]
+        }
+    });
+
+    const result = await dashboard.hydrateDashboardFromFlowWithFallback();
+
+    assert.equal(result.success, true);
+    assert.equal(result.source, 'flow');
+    assert.equal(result.diagnostics.fallbackTriggered, false);
+    assert.equal(dashboard.students.length, 1);
+    assert.equal(dashboard.students[0].studentCode, 'HG-NB5-018');
+    assert.equal(dashboard.students[0].leaderboardName, 'Demo');
+    assert.equal(dashboard.students[0].classCode, '6B');
+    assert.equal(dashboard.students[0].gameState.round, 7);
+    assert.equal(dashboard.students[0].gameState.cash, 980.25);
+    assert.equal(dashboard.students[0].gameState.netWorth, 2400.5);
+
+    const teacher = dashboard.getTeacher('teacher@example.com');
+    assert.equal(teacher?.email, 'teacher@example.com');
+    assert.equal(teacher?.name, 'Teacher One');
+    assert.equal(teacher?.role, 'admin');
+    assert.equal(teacher?.classCode, '6B');
+
+    const persistedTeachers = JSON.parse(global.localStorage.getItem('wa_gold_rush_teacher_list'));
+    assert.equal(persistedTeachers[0].email, 'teacher@example.com');
+    const persistedProgress = JSON.parse(global.localStorage.getItem('wa_gold_rush_class_records'));
+    assert.equal(persistedProgress[0].round, 7);
+});
+
+test('dashboard hydration consumes a top-level value envelope and tolerates omitted teachers', async () => {
+    const dashboard = setUpSharePointHydrationEnvironment({
+        value: [{
+            Students: [{ StudentCode: 'HG-NB5-018', StudentID: '123456', ClassCode: '6B' }],
+            Progress: [{ StudentCode: 'HG-NB5-018', ClassCode: '6B', CurrentRound: 3 }]
+        }]
+    });
+
+    const result = await dashboard.hydrateDashboardFromFlowWithFallback();
+
+    assert.equal(result.source, 'flow');
+    assert.equal(dashboard.students.length, 1);
+    assert.equal(dashboard.students[0].gameState.round, 3);
+    assert.deepEqual(dashboard.teachers, []);
+});
+
+test('progress records match students across every identity field', () => {
+    global.localStorage = createStorage();
+    global.sessionStorage = createStorage();
+    const TeacherDashboard = require('../teacher/dashboard-state.js');
+    const dashboard = new TeacherDashboard();
+    dashboard.students = [{
+        id: 'seed-1',
+        studentCode: 'HG-NB5-018',
+        displayId: 'HG-NB5-018',
+        studentId: '123456',
+        classCode: '6B',
+        gameState: { round: 1, cash: 200 }
+    }];
+
+    assert.equal(dashboard.syncFromPlayerRecord({ StudentID: '123456', round: 5 })?.id, 'seed-1');
+    assert.equal(dashboard.students[0].gameState.round, 5);
+    assert.equal(dashboard.syncFromPlayerRecord({ StudentCode: 'hg-nb5-018', round: 6 })?.id, 'seed-1');
+    assert.equal(dashboard.students[0].gameState.round, 6);
+    assert.equal(dashboard.syncFromPlayerRecord({ studentId: '999999', studentCode: 'OTHER-1', round: 9 }), null);
+    assert.equal(dashboard.students[0].gameState.round, 6);
+});
+
 test('dashboard html lifecycle invokes hydration for startup, login, and refresh button', () => {
     const html = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
     const runtimeConfigScriptIndex = html.indexOf('runtime-config.js?v=__WA_GGR_RUNTIME_CONFIG_VERSION__');
