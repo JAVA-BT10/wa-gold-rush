@@ -79,6 +79,12 @@ The client payload (built by `shared/sharepoint-sync.js` via `shared/progression
 | `approvalTimestamp` | `ApprovalTimestamp` | Single line of text (ISO timestamp) |
 | `progressionStateJson` | `ProgressionStateJson` | Multiple lines of text (plain) |
 
+**Teacher decisions are owned by GGR_SaveCheckpointApproval.** The student's browser never learns of a teacher decision, so its payload always carries its own local `approvalStatus` (`pending` after a pass). To stop student saves from undoing approvals, SaveProgress must follow these rules:
+
+- **Create item:** map `ApprovalStatus`, `ApproverName` and `ApprovalTimestamp` from the payload. These start as `pending`/blank.
+- **Update item:** never write `ApprovalStatus`, `ApproverName` or `ApprovalTimestamp`. Keep the existing column values.
+- **Update item when the existing `ApprovalStatus` is `retake_requested`:** keep the existing `CheckpointStatus` unless the payload's `quizPassedAt` is later than the row's `ApprovalTimestamp`, which means the student passed the retake. If the student did pass the retake, write `CheckpointStatus` and set `ApprovalStatus` back to `pending`.
+
 `GGR_GetDashboardData` must return these columns in each `Progress` row so the Teacher Dashboard checkpoint tabs can show them on any device. `ProgressionMarkersJson` already carries the same state as a fallback.
 
 ## GGR_SaveCheckpointApproval (new, optional)
