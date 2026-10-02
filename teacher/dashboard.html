@@ -88,6 +88,13 @@
             padding-left: 18px;
             line-height: 1.6;
         }
+        .hydration-summary { border-color: #c8d8ff; background: #f7faff; }
+        .hydration-summary.is-error { border-color: #f3b4b4; background: #fff4f4; }
+        .hydration-summary .hydration-counts {
+            display: flex; flex-wrap: wrap; gap: 6px 18px;
+            list-style: none; margin: 6px 0 0; padding: 0;
+        }
+        .hydration-summary button { width: auto; margin-top: 10px; }
 
         /* Access denied panel */
         #authRequiredMessage {
@@ -153,6 +160,17 @@
 
     <div class="container">
         <div id="dashboardStatus" class="status-message status-banner" role="status" aria-live="polite"></div>
+        <section id="hydrationSummary" class="card hydration-summary" aria-labelledby="hydrationSummaryTitle">
+            <p class="diag-title"><strong id="hydrationSummaryTitle">Microsoft Lists data (GGR_GetDashboardData)</strong></p>
+            <p id="hydrationSummaryText" role="status" aria-live="polite" aria-atomic="true">Not loaded yet.</p>
+            <ul class="hydration-counts">
+                <li>Students: <strong id="hydrationStudentsCount">—</strong></li>
+                <li>Teachers: <strong id="hydrationTeachersCount">—</strong></li>
+                <li>Progress records: <strong id="hydrationProgressCount">—</strong></li>
+                <li>Missing arrays: <strong id="hydrationMissingArrays">—</strong></li>
+            </ul>
+            <button id="retryHydrationBtn" class="btn" type="button" hidden>Retry loading from Microsoft Lists</button>
+        </section>
         <section id="hydrationDiagnosticsBanner" class="card hydration-diagnostics" hidden>
             <p class="muted diag-title"><strong>Hydration Status</strong></p>
             <ul>
@@ -162,6 +180,9 @@
                 <li>Flow request attempted: <strong id="diagFlowAttempted">Pending</strong></li>
                 <li>Flow request succeeded: <strong id="diagFlowSucceeded">Pending</strong></li>
                 <li>Students returned: <strong id="diagStudentsReturned">Pending</strong></li>
+                <li>Teachers returned: <strong id="diagTeachersReturned">Pending</strong></li>
+                <li>Progress records returned: <strong id="diagProgressReturned">Pending</strong></li>
+                <li>Missing arrays: <strong id="diagMissingArrays">Pending</strong></li>
             </ul>
             <p class="muted" id="diagMetaSummary" role="status" aria-live="polite" aria-atomic="true"></p>
         </section>
@@ -170,7 +191,7 @@
             <span id="teacherSessionSummary" class="muted"></span>
             <button id="teacherLogoutBtn" class="btn-danger" type="button" style="width:auto;padding:6px 10px;">Sign Out</button>
         </div>
-        <p class="muted">Manage local teacher and student records, import rosters, and monitor classroom progress with clearer feedback on every action.</p>
+        <p class="muted">Teacher, student and progress records are loaded from the Microsoft Lists through Power Automate. Changes are saved through the flows and only reported as saved once the flow confirms them.</p>
         <p><a href="../index.html">← Back to Home</a></p>
 
         <!-- Class Controls -->
@@ -179,7 +200,7 @@
             <div class="row-actions">
                 <button id="pauseClassBtn"  class="btn-danger">Pause Class Gameplay</button>
                 <button id="resumeClassBtn" class="btn-secondary">Resume Class Gameplay</button>
-                <button id="refreshBtn"     class="btn">Refresh Stats</button>
+                <button id="refreshBtn"     class="btn">Reload from Microsoft Lists</button>
             </div>
             <label class="toggle-row" for="strictModeToggle">
                 <input id="strictModeToggle" type="checkbox">
@@ -195,7 +216,7 @@
         <!-- Progression Checkpoints -->
         <section class="card">
             <h2>🎓 Progression Checkpoints</h2>
-            <p class="muted">Review and approve student quiz attempts to unlock progression to higher levels.</p>
+            <p class="muted">Students who have passed the checkpoint quiz, as recorded in GGR_StudentProgress. Data refreshes each time the dashboard loads from Microsoft Lists.</p>
             <div class="tab-bar">
                 <button class="checkpoint-tab-btn active" data-level="2">Level 2→3</button>
                 <button class="checkpoint-tab-btn" data-level="3">Level 3→4</button>
@@ -223,7 +244,7 @@
                     <input id="studentName" type="text" placeholder="Real name"></label>
                 <label>Student ID <span class="muted">(school ID)</span>
                     <input id="studentDisplayId" type="text" placeholder="e.g. 123456"></label>
-                <label>Class Code
+                <label>Class Code <span style="color:#c62828">*</span>
                     <input id="studentClassCode" type="text" placeholder="e.g. 6B"></label>
                 <label>Assigned Level
                     <select id="studentLevel">
@@ -239,6 +260,7 @@
             <ul class="helper-list">
                 <li>Use a unique Student Code so students can sign in again later.</li>
                 <li>Leaderboard Name is public; Student Name and Student ID stay in the teacher dashboard.</li>
+                <li>The student is saved to GGR_Students via GGR_UpsertStudentProfile, then the roster reloads from Microsoft Lists.</li>
             </ul>
             <div class="form-actions">
                 <button id="addStudentBtn" class="btn">Add Student to Roster</button>
@@ -251,7 +273,7 @@
             <div class="card-header">
                 <div class="card-copy">
                     <h2>Bulk Import — Students / Class Teachers</h2>
-                    <p class="muted">Paste CSV or JSON to add many roster entries at once. Student rows are added locally, and compatible teacher rows are routed through the restored teacher import path.</p>
+                    <p class="muted">Paste CSV or JSON to add many roster entries at once. Student rows are saved through GGR_UpsertStudentProfile and teacher rows through GGR_UpsertTeacher; only rows the flows confirm are counted as saved.</p>
                 </div>
             </div>
             <p class="muted">
@@ -284,7 +306,7 @@
             <div class="card-header">
                 <div class="card-copy">
                     <h2>Teacher Import</h2>
-                    <p class="muted">Add or update multiple teacher records in one go. Existing teachers are matched by email so legacy records stay compatible.</p>
+                    <p class="muted">Add or update multiple teacher records in GGR_Teachers via GGR_UpsertTeacher. Existing teachers are matched by email.</p>
                 </div>
             </div>
             <p class="muted">
@@ -305,7 +327,7 @@
             <div class="card-header">
                 <div class="card-copy">
                     <h2>🔑 Teacher / Admin List</h2>
-                    <p class="muted">Single-entry adds use the same local teacher CRUD storage as imports, so updates remain compatible with older saved records.</p>
+                    <p class="muted">Teachers and admins come from the GGR_Teachers Microsoft List. Adds and updates are saved through GGR_UpsertTeacher. To remove a teacher, deactivate or remove their row in GGR_Teachers, then reload.</p>
                 </div>
             </div>
             <div class="grid">
@@ -334,7 +356,6 @@
                         <th>Name</th>
                         <th>Class</th>
                         <th>Role</th>
-                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody id="teacherListBody"></tbody>
@@ -347,7 +368,7 @@
             <div class="card-header">
                 <div class="card-copy">
                     <h2>Student Roster</h2>
-                    <p class="muted">Edit roster details in place, then save each row. Delete only removes the local dashboard record.</p>
+                    <p class="muted">Edit roster details in place, then save each row through GGR_UpsertStudentProfile. Deactivate marks the student inactive in GGR_Students.</p>
                 </div>
             </div>
             <div class="table-wrap">
@@ -419,15 +440,18 @@
     <script src="../shared/flow-endpoints.js"></script>
     <script src="dashboard-config.js"></script>
     <script src="../shared/power-automate-headers.js"></script>
+    <script src="../shared/progression-snapshot.js"></script>
     <script src="dashboard-state.js"></script>
     <script src="../shared/investment-profile.js"></script>
     <script src="checkpoint-approval.js"></script>
     <script src="checkpoint-dashboard.js"></script>
     <script>
-        const CLASS_RECORDS_KEY = 'wa_gold_rush_class_records';
         const PAUSE_STATE_KEY   = 'wa_gold_rush_pause_state';
         const STRICT_MODE_KEY   = 'wa_gold_rush_strict_mode';
         const dashboard = new TeacherDashboard();
+        if (typeof CheckpointDashboard !== 'undefined') {
+            CheckpointDashboard.init({ dashboard, getStudents: () => getAuthorizedStudents() });
+        }
         const diagnosticsEnabled = window.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS === true;
         document.getElementById('hydrationDiagnosticsBanner').hidden = !diagnosticsEnabled;
 
@@ -506,6 +530,45 @@
             document.getElementById('leaderboardContent').innerHTML = '';
             document.getElementById('teacherListBody').innerHTML = '';
             document.getElementById('checkpointTableContainer').innerHTML = '';
+        }
+
+        function renderHydrationFailureTables(message) {
+            clearProtectedDashboardContent();
+            const safe = escHtml(message || 'Dashboard data could not be loaded from Microsoft Lists.');
+            document.getElementById('classStats').textContent = 'No data — dashboard data could not be loaded.';
+            document.getElementById('rosterBody').innerHTML = `<tr><td colspan="10">${safe}</td></tr>`;
+            document.getElementById('teacherListBody').innerHTML = `<tr><td colspan="4">${safe}</td></tr>`;
+            document.getElementById('leaderboardContent').innerHTML = `<p class="muted">${safe}</p>`;
+            document.getElementById('checkpointTableContainer').innerHTML = `<p class="muted">${safe}</p>`;
+        }
+
+        function renderHydrationSummary(result = null) {
+            const section = document.getElementById('hydrationSummary');
+            if (!section) return;
+            const setText = (id, value) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = value;
+            };
+            const retryBtn = document.getElementById('retryHydrationBtn');
+            if (!result) {
+                section.classList.remove('is-error');
+                setText('hydrationSummaryText', 'Loading from Microsoft Lists…');
+                if (retryBtn) retryBtn.hidden = true;
+                return;
+            }
+            const counts = result.counts || {};
+            const missing = Array.isArray(result.missingArrays) ? result.missingArrays : [];
+            const failed = result.success !== true;
+            section.classList.toggle('is-error', failed);
+            const error = failed && result.error && result.error !== result.statusMessage
+                ? ` Details: ${serializeErrorMessage(result.error)}`
+                : '';
+            setText('hydrationSummaryText', `${result.statusMessage || (failed ? 'Dashboard data could not be loaded.' : 'Dashboard loaded.')}${error}`);
+            setText('hydrationStudentsCount', failed ? '—' : String(counts.students ?? 0));
+            setText('hydrationTeachersCount', failed ? '—' : String(counts.teachers ?? 0));
+            setText('hydrationProgressCount', failed ? '—' : String(counts.progress ?? 0));
+            setText('hydrationMissingArrays', failed ? '—' : (missing.length ? missing.join(', ') : 'None'));
+            if (retryBtn) retryBtn.hidden = !failed;
         }
 
         function enforceTeacherDashboardAccess() {
@@ -606,9 +669,9 @@
             const studentsReturned = Number.isFinite(Number(diagnostics.studentsReturned))
                 ? String(Number(diagnostics.studentsReturned))
                 : 'Pending';
-            const fallbackReason = diagnostics.fallbackReason
-                ? `fallback=${diagnostics.fallbackReason}`
-                : (diagnostics.fallbackTriggered === false ? 'fallback=none' : 'fallback=pending');
+            const failureReason = diagnostics.failureReason
+                ? `failure=${diagnostics.failureReason}`
+                : (diagnostics.hydrationFailed === false ? 'failure=none' : 'failure=pending');
             const endpointConfigured = diagnostics.hasConfiguredFlowEndpoint === true
                 ? 'configured endpoint ready'
                 : (diagnostics.hasConfiguredFlowEndpoint === false ? 'configured endpoint missing' : 'configured endpoint pending');
@@ -621,7 +684,7 @@
             const endpointConfiguredUrl = diagnostics.configuredGetDashboardDataUrl
                 ? `configured URL: ${diagnostics.configuredGetDashboardDataUrl}`
                 : 'configured URL: unavailable';
-            const metaSummary = [endpointConfigured, fallbackReason, runtimeConfigStatus, endpointConfiguredUrl, endpointRuntime]
+            const metaSummary = [endpointConfigured, failureReason, runtimeConfigStatus, endpointConfiguredUrl, endpointRuntime]
                 .filter(Boolean)
                 .join(' | ');
 
@@ -631,6 +694,12 @@
             setText('diagFlowAttempted', yesNo(diagnostics.flowRequestAttempted));
             setText('diagFlowSucceeded', yesNo(diagnostics.flowRequestSucceeded));
             setText('diagStudentsReturned', studentsReturned);
+            const countText = (value) => Number.isFinite(Number(value)) && value !== null ? String(Number(value)) : 'Pending';
+            setText('diagTeachersReturned', countText(diagnostics.teachersReturned));
+            setText('diagProgressReturned', countText(diagnostics.progressReturned));
+            setText('diagMissingArrays', Array.isArray(diagnostics.missingArrays)
+                ? (diagnostics.missingArrays.length ? diagnostics.missingArrays.join(', ') : 'None')
+                : 'Pending');
             setText('diagMetaSummary', metaSummary);
         }
 
@@ -674,26 +743,6 @@
             return skipped.slice(0, 5).map(item => `Row ${item.row}: ${serializeErrorMessage(item.reason)}`);
         }
 
-        function getRecords() {
-            try {
-                const raw = localStorage.getItem(CLASS_RECORDS_KEY);
-                const records = JSON.parse(raw);
-                if (!Array.isArray(records)) return [];
-
-                return records.filter((record) => {
-                    const recordClassCode = String(
-                        record?.classCode || record?.gameState?.classCode || ''
-                    ).trim();
-                    return dashboard.canTeacherAccessClass(recordClassCode);
-                });
-            } catch (_) { return []; }
-        }
-
-        function syncFromRecords() {
-            getRecords().forEach(record => dashboard.syncFromPlayerRecord(record));
-            dashboard.saveToLocalStorage();
-        }
-
         function renderPauseStatus() {
             let paused = false;
             try { paused = !!JSON.parse(localStorage.getItem(PAUSE_STATE_KEY))?.paused; } catch (_) {}
@@ -715,12 +764,11 @@
         }
 
         function renderStats() {
-            syncFromRecords();
             const stats = withAuthorizedStudents(() => dashboard.calculateClassStats());
-            const records = getRecords();
             const byStrategy = {};
-            records.forEach(r => {
-                const k = r.strategyLabel || 'Unknown';
+            getAuthorizedStudents().forEach(student => {
+                if (!student?.gameState?.strategyLabel) return;
+                const k = student.gameState.strategyLabel;
                 byStrategy[k] = (byStrategy[k] || 0) + 1;
             });
             const topStrategy = Object.entries(byStrategy).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A';
@@ -818,14 +866,14 @@
                         <div class="inline-actions">
                             <button class="btn-secondary" data-action="save"   data-id="${id}">Save</button>
                             <button class="btn-secondary" data-action="unlock" data-id="${id}">Unlock</button>
-                            <button class="btn-danger"    data-action="delete" data-id="${id}">Del</button>
+                            <button class="btn-danger"    data-action="delete" data-id="${id}" aria-label="Deactivate ${lb || sc}">Deactivate</button>
                         </div>
                     </td>
                 </tr>`;
             }).join('');
         }
 
-        function saveRosterRow(studentId) {
+        async function saveRosterRow(studentId) {
             const esc = CSS.escape(studentId);
             const get = (field, tag = 'input') =>
                 document.querySelector(`${tag}[data-field="${field}"][data-id="${esc}"]`)?.value || '';
@@ -845,17 +893,16 @@
                 setStatusMessage('dashboardStatus', 'error', message);
                 return;
             }
-            const result = dashboard.updateStudent(studentId, updates);
+            const result = await dashboard.updateStudent(studentId, updates);
             if (!result.success) {
                 const error = getResultError(result, 'Unable to save student changes.');
                 setStatusMessage('rosterActionMsg', 'error', `Could not save student changes. ${error}`);
                 setStatusMessage('dashboardStatus', 'error', `Could not save student changes. ${error}`);
                 return;
             }
-            dashboard.syncStudentToBackend(result.student);
-            setStatusMessage('rosterActionMsg', 'success', `Saved changes for ${describeStudent(result.student)}.`);
-            setStatusMessage('dashboardStatus', 'success', `Saved changes for ${describeStudent(result.student)}.`);
-            refresh();
+            applyHydrationResult(result.hydration);
+            setStatusMessage('rosterActionMsg', 'success', `Saved changes for ${describeStudent(result.student)} to Microsoft Lists.`);
+            setStatusMessage('dashboardStatus', 'success', `Saved changes for ${describeStudent(result.student)} to Microsoft Lists.`);
         }
 
         async function unlockRosterRow(studentId) {
@@ -888,28 +935,19 @@
                 setStatusMessage('dashboardStatus', 'error', message);
                 return;
             }
-            if (!confirm(`Delete ${student?.leaderboardName || student?.name || 'this student'}? Cannot be undone.`)) return;
+            if (!confirm(`Deactivate ${describeStudent(student)} in GGR_Students? The student will no longer be able to sign in.`)) return;
             const deactivated = await dashboard.deactivateStudentInBackend(student);
             if (!deactivated.success) {
-                const error = getResultError(deactivated, 'Unable to deactivate this student in the backend.');
+                const error = getResultError(deactivated, 'Unable to deactivate this student in Microsoft Lists.');
                 setStatusMessage('rosterActionMsg', 'error', error);
                 setStatusMessage('dashboardStatus', 'error', error);
                 return;
             }
-            const result = dashboard.deleteStudent(studentId);
-            if (!result.success) {
-                const rollback = await dashboard.syncStudentToBackend({ ...student, active: true });
-                const rollbackMessage = rollback?.success
-                    ? ''
-                    : ' Backend reactivation rollback also failed; backend state may now be deactivated.';
-                const error = `${getResultError(result, 'Unable to delete this student.')}${rollbackMessage}`.trim();
-                setStatusMessage('rosterActionMsg', 'error', `Could not delete this student. ${error}`);
-                setStatusMessage('dashboardStatus', 'error', `Could not delete this student. ${error}`);
-                return;
-            }
-            setStatusMessage('rosterActionMsg', 'success', result.message || 'Student deleted.');
-            setStatusMessage('dashboardStatus', 'success', result.message || 'Student deleted.');
-            refresh();
+            const hydration = await dashboard.rehydrateAfterWrite();
+            applyHydrationResult(hydration);
+            const message = `Deactivated ${describeStudent(student)} in Microsoft Lists.`;
+            setStatusMessage('rosterActionMsg', 'success', message);
+            setStatusMessage('dashboardStatus', 'success', message);
         }
 
         document.getElementById('rosterBody').addEventListener('click', e => {
@@ -924,7 +962,7 @@
         });
 
         document.getElementById('addStudentBtn').addEventListener('click', () => {
-            withBusyButton('addStudentBtn', 'Adding…', () => {
+            withBusyButton('addStudentBtn', 'Saving to Microsoft Lists…', async () => {
                 const studentCode     = document.getElementById('studentCode').value.trim();
                 const leaderboardName = document.getElementById('studentLeaderboardName').value.trim();
                 const studentName     = document.getElementById('studentName').value.trim();
@@ -933,8 +971,8 @@
                 const classCode       = classCodeInput || getPrimaryAuthorizedClassCode();
                 const level           = parseInt(document.getElementById('studentLevel').value, 10);
 
-                if (!studentCode || !leaderboardName) {
-                    const message = 'Student Code and Leaderboard Name are required.';
+                if (!studentCode || !leaderboardName || !classCode) {
+                    const message = 'Student Code, Leaderboard Name and Class Code are required.';
                     setStatusMessage('studentActionMsg', 'error', message);
                     setStatusMessage('dashboardStatus', 'error', message);
                     return;
@@ -946,18 +984,16 @@
                     return;
                 }
 
-                const result = dashboard.addStudent({
+                const result = await dashboard.addStudent({
                     studentCode, leaderboardName, studentName, studentId, classCode, level
                 });
 
                 if (!result.success) {
                     const error = getResultError(result, 'Unable to add this student.');
-                    setStatusMessage('studentActionMsg', 'error', error);
-                    setStatusMessage('dashboardStatus', 'error', error);
+                    setStatusMessage('studentActionMsg', 'error', `Student was not saved. ${error}`);
+                    setStatusMessage('dashboardStatus', 'error', `Student was not saved. ${error}`);
                     return;
                 }
-
-                dashboard.syncStudentToBackend(result.student);
 
                 document.getElementById('studentCode').value = '';
                 document.getElementById('studentLeaderboardName').value = '';
@@ -966,14 +1002,21 @@
                 document.getElementById('studentClassCode').value = '';
                 document.getElementById('studentLevel').value = '2';
 
-                setStatusMessage('studentActionMsg', 'success', `Added ${describeStudent(result.student)} to the roster.`);
-                setStatusMessage('dashboardStatus', 'success', `Added ${describeStudent(result.student)} to the roster.`);
-                refresh();
+                applyHydrationResult(result.hydration);
+                setStatusMessage('studentActionMsg', 'success', `Saved ${describeStudent(result.student)} to Microsoft Lists.`);
+                setStatusMessage('dashboardStatus', 'success', `Saved ${describeStudent(result.student)} to Microsoft Lists.`);
             });
         });
 
+        function describeSyncFailures(sync = {}) {
+            return (Array.isArray(sync.failed) ? sync.failed : []).slice(0, 5).map((entry) => {
+                const label = entry?.payload?.studentCode || entry?.payload?.teacherEmail || 'Row';
+                return `${label}: ${serializeErrorMessage(entry?.error, 'not saved')}`;
+            });
+        }
+
         document.getElementById('importBtn').addEventListener('click', () => {
-            withBusyButton('importBtn', 'Importing…', () => {
+            withBusyButton('importBtn', 'Saving to Microsoft Lists…', async () => {
                 const format = document.getElementById('importFormat').value;
                 const input = document.getElementById('bulkInput').value.trim();
                 if (!input) {
@@ -984,41 +1027,34 @@
                 }
 
                 try {
-                    const result = dashboard.bulkImportStudents(input, format);
-                    const studentCount = result.added.length;
-                    const skippedCount = result.skipped.length;
-                    const teacherChanges = result.teachers.added.length + result.teachers.updated.length;
-                    const tone = studentCount || teacherChanges ? 'success' : 'info';
+                    const result = await dashboard.importRoster(input, format);
+                    const prepared = result.prepared;
+                    const savedStudents = result.students.savedCount;
+                    const failedStudents = result.students.failed.length;
+                    const savedTeachers = result.teachers.savedCount;
+                    const failedTeachers = result.teachers.failed.length;
+                    const skippedCount = prepared.skipped.length + prepared.teachers.skipped.length;
                     const summaryParts = [
-                        `${studentCount} student${studentCount === 1 ? '' : 's'} added`
+                        `${savedStudents} student${savedStudents === 1 ? '' : 's'} saved`
                     ];
-
-                    if (teacherChanges) {
-                        summaryParts.push(`${teacherChanges} class teacher${teacherChanges === 1 ? '' : 's'} processed`);
-                    }
-                    if (skippedCount) {
-                        summaryParts.push(`${skippedCount} student row${skippedCount === 1 ? '' : 's'} skipped`);
-                    }
-                    if (result.teachers.skipped.length) {
-                        const teacherSkipCount = result.teachers.skipped.length;
-                        summaryParts.push(`${teacherSkipCount} class teacher row${teacherSkipCount === 1 ? '' : 's'} skipped`);
-                    }
+                    if (savedTeachers) summaryParts.push(`${savedTeachers} class teacher${savedTeachers === 1 ? '' : 's'} saved`);
+                    if (failedStudents) summaryParts.push(`${failedStudents} student${failedStudents === 1 ? '' : 's'} not saved`);
+                    if (failedTeachers) summaryParts.push(`${failedTeachers} teacher${failedTeachers === 1 ? '' : 's'} not saved`);
+                    if (skippedCount) summaryParts.push(`${skippedCount} row${skippedCount === 1 ? '' : 's'} skipped`);
 
                     const details = [
-                        ...formatSkipDetails(result.skipped),
-                        ...formatSkipDetails(result.teachers.skipped)
+                        ...describeSyncFailures(result.students),
+                        ...describeSyncFailures(result.teachers),
+                        ...formatSkipDetails(prepared.skipped),
+                        ...formatSkipDetails(prepared.teachers.skipped)
                     ];
+                    const tone = (failedStudents || failedTeachers)
+                        ? 'error'
+                        : (savedStudents || savedTeachers ? 'success' : 'info');
 
-                    dashboard.syncStudentsToBackend(result.added);
-                    dashboard.syncTeachersToBackend([
-                        ...result.teachers.added,
-                        ...result.teachers.updated
-                    ]);
-
+                    if (result.hydration) applyHydrationResult(result.hydration);
                     setStatusMessage('importResult', tone, `Roster import finished: ${summaryParts.join(', ')}.`, details);
                     setStatusMessage('dashboardStatus', tone, `Roster import finished: ${summaryParts.join(', ')}.`);
-                    refresh();
-                    refreshTeachers();
                 } catch (error) {
                     const message = `Could not import roster data. ${serializeErrorMessage(error?.message || error, 'Check the format and try again.')}`;
                     setStatusMessage('importResult', 'error', message);
@@ -1028,7 +1064,7 @@
         });
 
         document.getElementById('teacherImportBtn').addEventListener('click', () => {
-            withBusyButton('teacherImportBtn', 'Importing…', () => {
+            withBusyButton('teacherImportBtn', 'Saving to Microsoft Lists…', async () => {
                 const input = document.getElementById('teacherImportInput').value.trim();
                 if (!input) {
                     const message = 'Paste teacher CSV data before importing.';
@@ -1037,25 +1073,24 @@
                     return;
                 }
 
-                const result = dashboard.bulkImportTeachers(input);
-                const changedCount = result.added.length + result.updated.length;
-                const skippedCount = result.skipped.length;
-                const tone = changedCount ? 'success' : 'info';
-                const summary = `Teacher import finished: ${result.added.length} added, ${result.updated.length} updated${skippedCount ? `, ${skippedCount} skipped` : ''}.`;
+                const result = await dashboard.importTeachers(input);
+                const savedCount = result.teachers.savedCount;
+                const failedCount = result.teachers.failed.length;
+                const skippedCount = result.prepared.skipped.length;
+                const tone = failedCount ? 'error' : (savedCount ? 'success' : 'info');
+                const summary = `Teacher import finished: ${savedCount} saved${failedCount ? `, ${failedCount} not saved` : ''}${skippedCount ? `, ${skippedCount} skipped` : ''}.`;
 
-                dashboard.syncTeachersToBackend([
-                    ...result.added,
-                    ...result.updated
+                if (result.hydration) applyHydrationResult(result.hydration);
+                setStatusMessage('teacherImportResult', tone, summary, [
+                    ...describeSyncFailures(result.teachers),
+                    ...formatSkipDetails(result.prepared.skipped)
                 ]);
-
-                setStatusMessage('teacherImportResult', tone, summary, formatSkipDetails(result.skipped));
                 setStatusMessage('dashboardStatus', tone, summary);
-                refreshTeachers();
             });
         });
 
         document.getElementById('addTeacherBtn').addEventListener('click', () => {
-            withBusyButton('addTeacherBtn', 'Saving…', () => {
+            withBusyButton('addTeacherBtn', 'Saving to Microsoft Lists…', async () => {
                 const email = document.getElementById('newTeacherEmail').value.trim();
                 const name = document.getElementById('newTeacherName').value.trim();
                 const classCode = document.getElementById('newTeacherClassCode').value.trim();
@@ -1074,15 +1109,13 @@
                     return;
                 }
 
-                const result = dashboard.addTeacher(email, name, classCode, role);
+                const result = await dashboard.addTeacher(email, name, classCode, role);
                 if (!result.success) {
                     const error = getResultError(result, 'Unable to add this teacher.');
-                    setStatusMessage('teacherAddMsg', 'error', error);
-                    setStatusMessage('dashboardStatus', 'error', error);
+                    setStatusMessage('teacherAddMsg', 'error', `Teacher was not saved. ${error}`);
+                    setStatusMessage('dashboardStatus', 'error', `Teacher was not saved. ${error}`);
                     return;
                 }
-
-                dashboard.syncTeacherToBackend(result.teacher);
 
                 document.getElementById('newTeacherEmail').value = '';
                 document.getElementById('newTeacherName').value = '';
@@ -1090,9 +1123,9 @@
                 document.getElementById('newTeacherRole').value = 'teacher';
 
                 const prefix = result.updated ? 'Updated' : 'Added';
-                setStatusMessage('teacherAddMsg', 'success', `${prefix} ${describeTeacher(result.teacher)}.`);
-                setStatusMessage('dashboardStatus', 'success', `${prefix} ${describeTeacher(result.teacher)}.`);
-                refreshTeachers();
+                applyHydrationResult(result.hydration);
+                setStatusMessage('teacherAddMsg', 'success', `${prefix} ${describeTeacher(result.teacher)} in Microsoft Lists.`);
+                setStatusMessage('dashboardStatus', 'success', `${prefix} ${describeTeacher(result.teacher)} in Microsoft Lists.`);
             });
         });
 
@@ -1100,42 +1133,16 @@
             const body = document.getElementById('teacherListBody');
             const teachers = getAuthorizedTeachers();
             if (!teachers.length) {
-                body.innerHTML = '<tr><td colspan="5">No teachers in your authorized classes yet.</td></tr>';
+                body.innerHTML = '<tr><td colspan="4">No teachers returned from GGR_Teachers for your authorized classes.</td></tr>';
                 return;
             }
             body.innerHTML = teachers.map(t => `<tr>
                 <td>${escHtml(t.email)}</td>
                 <td>${escHtml(t.name)}</td>
                 <td>${escHtml(t.classCode || '')}</td>
-                <td>${escHtml(t.role || 'teacher')}</td>
-                <td>
-                    <button class="btn-danger" style="width:auto;padding:6px 10px;" data-action="delete-teacher" data-id="${escHtml(t.id)}">Delete</button>
-                </td>
+                <td>${escHtml(t.role || 'teacher')}${t.active === false ? ' (inactive)' : ''}</td>
             </tr>`).join('');
         }
-
-        document.getElementById('teacherListBody').addEventListener('click', (e) => {
-            const target = e.target;
-            if (!(target instanceof HTMLElement)) return;
-            const actionButton = target.closest('[data-action="delete-teacher"]');
-            if (!(actionButton instanceof HTMLElement)) return;
-
-            const teacherId = actionButton.getAttribute('data-id');
-            const teacher = dashboard.getTeacher(teacherId);
-            if (!confirm(`Delete ${describeTeacher(teacher)}? Cannot be undone.`)) return;
-
-            const result = dashboard.deleteTeacher(teacherId);
-            if (!result || result.success !== true) {
-                const error = getResultError(result, 'Unable to delete this teacher.');
-                setStatusMessage('teacherAddMsg', 'error', error);
-                setStatusMessage('dashboardStatus', 'error', error);
-                return;
-            }
-
-            setStatusMessage('teacherAddMsg', 'success', `Deleted ${describeTeacher(result.teacher)}.`);
-            setStatusMessage('dashboardStatus', 'success', `Deleted ${describeTeacher(result.teacher)}.`);
-            refreshTeachers();
-        });
 
         document.getElementById('pauseClassBtn').addEventListener('click', () => {
             localStorage.setItem(PAUSE_STATE_KEY, JSON.stringify({ paused: true }));
@@ -1150,7 +1157,10 @@
             renderStrictModeStatus();
         });
         document.getElementById('refreshBtn').addEventListener('click', () => {
-            withBusyButton('refreshBtn', 'Refreshing…', () => refreshDashboardFromBestSource({ showStatus: true }));
+            withBusyButton('refreshBtn', 'Loading…', () => refreshDashboardFromFlow({ showStatus: true }));
+        });
+        document.getElementById('retryHydrationBtn').addEventListener('click', () => {
+            withBusyButton('retryHydrationBtn', 'Retrying…', () => refreshDashboardFromFlow({ showStatus: true }));
         });
         document.getElementById('exportCsvBtn').addEventListener('click', () => {
             const csv = dashboard.exportAsCSV();
@@ -1169,7 +1179,21 @@
             renderLeaderboardForLevel(_activeLeaderboardLevel);
         }
 
-        async function refreshDashboardFromBestSource(options = {}) {
+        function applyHydrationResult(hydration) {
+            if (!hydration) return hydration;
+            renderHydrationDiagnostics(hydration);
+            renderHydrationSummary(hydration);
+            if (hydration.success) {
+                refresh();
+                refreshTeachers();
+            } else {
+                // Fail closed: stale roster data is never left on screen.
+                renderHydrationFailureTables(hydration.statusMessage);
+            }
+            return hydration;
+        }
+
+        async function refreshDashboardFromFlow(options = {}) {
             renderHydrationDiagnostics({
                 diagnostics: {
                     startupReached: true,
@@ -1178,10 +1202,9 @@
                     studentsReturned: null
                 }
             });
-            const hydration = await dashboard.hydrateDashboardFromFlowWithFallback();
-            renderHydrationDiagnostics(hydration);
-            refresh();
-            refreshTeachers();
+            renderHydrationSummary(null);
+            const hydration = await dashboard.hydrateDashboardFromFlow();
+            applyHydrationResult(hydration);
 
             if (options.showStatus) {
                 setStatusMessage(
@@ -1228,7 +1251,7 @@
             document.getElementById('studentClassCode').value = getPrimaryAuthorizedClassCode();
             renderPauseStatus();
             renderStrictModeStatus();
-            return refreshDashboardFromBestSource({ showStatus: options.showHydrationStatus === true });
+            return refreshDashboardFromFlow({ showStatus: options.showHydrationStatus === true });
         }
 
         function init() {
@@ -1244,6 +1267,7 @@
 
         document.getElementById('teacherLogoutBtn').addEventListener('click', () => {
             dashboard.clearTeacherSession();
+            dashboard.clearDashboardData();
             document.body.classList.remove('authorized');
             clearProtectedDashboardContent();
             clearStatusMessage('dashboardStatus', 'authStatusMessage');

@@ -52,6 +52,66 @@ The client now includes `progressKey` for diagnostics only.
 4. If a legacy row is found, migrate it to the canonical key and record operation `migrated_legacy`.
 5. Return the canonical `progressKey` and original `saveRequestId` in the response.
 
+## Upsert order (fixes the duplicate `StudentCode` create failure)
+
+The flow run that failed with a duplicate `StudentCode` error was taking the `Create item` branch for a student who already had a `GGR_StudentProgress` row. The flow must be an **upsert keyed on the canonical `ProgressKey`**:
+
+1. Compose `ProgressKey` = `UPPER(ClassCode)|UPPER(StudentCode)|Level` from the request body.
+2. `Get items` on `GGR_StudentProgress` with Filter Query `ProgressKey eq '<composed key>'` (Top Count 1, newest first).
+3. If a row is returned → `Update item` on that row's ID.
+4. If no row is returned → run the legacy lookup (`StudentCode eq '<code>' and Level eq <level>`); if found → `Update item` that row and rewrite its `ProgressKey` (`migrated_legacy`).
+5. Only if both lookups return zero rows → `Create item`.
+
+Do not run `Create item` first and fall back to update on error. Also remove any "Enforce unique values" setting on the `StudentCode` column: a student has one row **per level**, so `StudentCode` is not unique. Only `ProgressKey` may be unique.
+
+## Checkpoint columns persisted by SaveProgress
+
+The client payload (built by `shared/sharepoint-sync.js` via `shared/progression-snapshot.js`) now includes the checkpoint fields for the saved level. `GGR_StudentProgress` needs these columns (add any that are missing), and both the `Update item` and `Create item` actions must map them:
+
+| Payload field | List column | Type |
+| --- | --- | --- |
+| `checkpointStatus` | `CheckpointStatus` | Single line of text (`quiz_available`, `quiz_passed`, …) |
+| `quizScore` | `QuizScore` | Number |
+| `quizPassedAt` | `QuizPassedAt` | Single line of text (ISO timestamp) |
+| `quizAttemptsJson` | `QuizAttemptsJson` | Multiple lines of text (plain) |
+| `approvalStatus` | `ApprovalStatus` | Single line of text |
+| `approverName` | `ApproverName` | Single line of text |
+| `approvalTimestamp` | `ApprovalTimestamp` | Single line of text (ISO timestamp) |
+| `progressionStateJson` | `ProgressionStateJson` | Multiple lines of text (plain) |
+
+**Teacher decisions are owned by GGR_SaveCheckpointApproval.** The student's browser never learns of a teacher decision, so its payload always carries its own local `approvalStatus` (`pending` after a pass). To stop student saves from undoing approvals, SaveProgress must follow these rules:
+
+- **Create item:** map `ApprovalStatus`, `ApproverName` and `ApprovalTimestamp` from the payload. These start as `pending`/blank.
+- **Update item:** never write `ApprovalStatus`, `ApproverName` or `ApprovalTimestamp`. Keep the existing column values.
+- **Update item when the existing `ApprovalStatus` is `retake_requested`:** keep the existing `CheckpointStatus` unless the payload's `quizPassedAt` is later than the row's `ApprovalTimestamp`, which means the student passed the retake. If the student did pass the retake, write `CheckpointStatus` and set `ApprovalStatus` back to `pending`.
+
+`GGR_GetDashboardData` must return these columns in each `Progress` row so the Teacher Dashboard checkpoint tabs can show them on any device. `ProgressionMarkersJson` already carries the same state as a fallback.
+
+## GGR_SaveCheckpointApproval (new, optional)
+
+The Teacher Dashboard approval/retake buttons call the `saveCheckpointApproval` endpoint. Until that endpoint is configured, the buttons stay disabled and show an "unavailable" message; nothing is stored in the browser.
+
+Request body:
+
+```json
+{
+  "studentCode": "HG-NB5-018",
+  "classCode": "NB5",
+  "level": 2,
+  "progressKey": "NB5|HG-NB5-018|2",
+  "approvalStatus": "approved",
+  "approverName": "Teacher Name",
+  "approverEmail": "teacher@example.com",
+  "approvalTimestamp": "2026-01-01T00:00:00.000Z"
+}
+```
+
+The flow must recompute `ProgressKey`, check that the calling teacher is assigned to `ClassCode` (or has `Role=admin` in `GGR_Teachers`), then `Update item` the matching `GGR_StudentProgress` row's `ApprovalStatus`, `ApproverName` and `ApprovalTimestamp`. For `retake_requested`, it should also set `CheckpointStatus` to `quiz_available`. Respond with `{ "ok": true }` or `{ "ok": false, "error": "..." }`.
+
+## Cross-device unlock (`getStudentProgress`)
+
+The game unlocks the next level from the saved `quiz_passed` state on the same device. To unlock on another device, add a `getStudentProgress` endpoint to the student pages' flow endpoints. It receives `{ studentCode, classCode, level }` and returns `{ ok: true, progress: [ ...GGR_StudentProgress rows... ] }`. If this endpoint is not configured, unlocks stay same-device.
+
 ## Duplicate handling
 
 If duplicates already exist:

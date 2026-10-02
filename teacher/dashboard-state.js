@@ -1,9 +1,15 @@
 /**
  * Teacher Dashboard — Student Management & Progress Tracking
  *
- * Auth model: teacher dashboard access is authenticated against the published
- * Power Automate teacher-login flow and cached in sessionStorage for the
- * current browser session.
+ * Auth model: every teacher (including admins) is authenticated against the
+ * published Power Automate teacher-login flow (GGR_Teachers list) and the
+ * session is cached in sessionStorage for the current browser session only.
+ *
+ * Data model: Microsoft Lists → Power Automate → Teacher Dashboard.
+ * Roster, teacher and progress data are hydrated only from GGR_GetDashboardData
+ * and held in memory. Writes go through the upsert flows and are confirmed
+ * before the dashboard re-hydrates. Browser storage is never treated as an
+ * authoritative source for dashboard records.
  */
 
 // ============================================================================
@@ -27,8 +33,10 @@ class TeacherDashboard {
 
         this.TEACHER_DASHBOARD_KEY     = 'teacher_dashboard';
         this.TEACHER_SESSION_STORAGE_KEY = 'wa_gold_rush_teacher_session';
-        this.PERMANENT_ADMIN_ENABLED = true;
-        this.PERMANENT_ADMIN_ALLOWLIST = new Set(['ben.turner@education.wa.edu.au']);
+        // Flow-backed progress rows from GGR_GetDashboardData (in memory only).
+        this.progress = [];
+        this.lastHydration = null;
+        this._hydrationListeners = [];
         this._dashboardHydrationInFlight = null;
         this._lastHydrationDiagnostics = {};
         this.dashboardDiagnosticsEnabled = globalThis.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS === true;
@@ -259,214 +267,400 @@ class TeacherDashboard {
         return bodyPayload;
     }
 
+    normalizeStudentCodeKey(value) {
+        return String(value || '').trim().toUpperCase();
+    }
+
     normalizeDashboardStudentIdentity(record = {}) {
+        // StudentCode is the canonical identity; StudentID is a fallback only.
         const studentCode = String(record?.studentCode || record?.StudentCode || record?.displayId || '').trim();
-        const studentId = String(record?.studentId || record?.StudentID || record?.email || '').trim();
-        const identity = String(studentCode || studentId || '').trim();
+        const studentId = String(record?.studentId || record?.StudentID || record?.StudentId || record?.email || '').trim();
         return {
-            studentCode: studentCode || studentId,
+            studentCode,
             studentId,
-            identityKey: identity.toLowerCase()
+            studentCodeKey: this.normalizeStudentCodeKey(studentCode),
+            studentIdKey: studentId.toLowerCase(),
+            identityKey: String(studentCode || studentId || '').trim().toLowerCase()
+        };
+    }
+
+    readListValue(value) {
+        if (value && typeof value === 'object' && !Array.isArray(value) && 'Value' in value) {
+            return value.Value;
+        }
+        return value;
+    }
+
+    readListText(record, keys = []) {
+        for (const key of keys) {
+            const value = this.readListValue(record?.[key]);
+            if (value !== undefined && value !== null && String(value).trim() !== '') {
+                return String(value).trim();
+            }
+        }
+        return '';
+    }
+
+    readDashboardArray(source = {}, keys = []) {
+        for (const key of keys) {
+            const value = source?.[key];
+            if (Array.isArray(value)) return value;
+            if (value && typeof value === 'object' && Array.isArray(value.value)) return value.value;
+        }
+        return null;
+    }
+
+    getDashboardArrayKeys() {
+        return {
+            students: ['students', 'Students', 'studentRoster', 'StudentRoster'],
+            teachers: ['teachers', 'Teachers', 'teacherRoster', 'TeacherRoster'],
+            progress: ['progress', 'Progress', 'studentProgress', 'StudentProgress']
+        };
+    }
+
+    inspectDashboardHydrationPayload(payload = {}) {
+        const source = this.extractDashboardHydrationPayload(payload);
+        const keys = this.getDashboardArrayKeys();
+        const present = {};
+        const missingArrays = [];
+        Object.keys(keys).forEach((name) => {
+            present[name] = Array.isArray(this.readDashboardArray(source, keys[name]));
+            if (!present[name]) missingArrays.push(name);
+        });
+        return {
+            present,
+            missingArrays,
+            hasAnyArray: missingArrays.length < Object.keys(keys).length
         };
     }
 
     hasDashboardHydrationContract(payload = {}) {
-        const source = this.extractDashboardHydrationPayload(payload);
-        // Expected flow payload contract: arrays for students/teachers/progress.
-        // PascalCase keys are accepted for SharePoint/Flow compatibility.
-        const hasStudents = Array.isArray(source.students) || Array.isArray(source.Students);
-        const hasTeachers = Array.isArray(source.teachers) || Array.isArray(source.Teachers);
-        const hasProgress = Array.isArray(source.progress) || Array.isArray(source.Progress);
-        return hasStudents && hasTeachers && hasProgress;
+        // Partial responses are accepted: any one of students/teachers/progress
+        // is enough to hydrate. Missing arrays are treated as [] and reported.
+        return this.inspectDashboardHydrationPayload(payload).hasAnyArray;
+    }
+
+    getProgressionSnapshotApi() {
+        const globalApi = globalThis.WA_GOLD_RUSH_PROGRESS_SNAPSHOT;
+        if (globalApi && typeof globalApi.extractCheckpointFields === 'function') return globalApi;
+        if (typeof require === 'function') {
+            try { return require('../shared/progression-snapshot.js'); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    extractCheckpointFields(record = {}, level) {
+        const api = this.getProgressionSnapshotApi();
+        if (api) return api.extractCheckpointFields(record, level);
+        return {
+            checkpointStatus: null,
+            quizScore: null,
+            quizPassedAt: null,
+            quizAttempts: [],
+            approvalStatus: null,
+            approverName: null,
+            approvalTimestamp: null,
+            progressionStateByLevel: {}
+        };
+    }
+
+    normalizeDashboardTeacher(teacher = {}) {
+        const email = this.readListText(teacher, ['email', 'teacherEmail', 'TeacherEmail', 'Email']).toLowerCase();
+        const name = this.readListText(teacher, ['name', 'teacherName', 'TeacherName', 'Title', 'DisplayName']);
+        const classCode = this.readListText(teacher, ['classCode', 'ClassCode']).toUpperCase();
+        const role = (this.readListText(teacher, ['role', 'Role']) || 'teacher').toLowerCase();
+        const activeRaw = this.readListValue(teacher?.active ?? teacher?.Active ?? teacher?.IsActive);
+        const active = !(activeRaw === false || /^(false|no|0|inactive)$/i.test(String(activeRaw ?? '').trim()));
+        return {
+            id: email,
+            email,
+            teacherEmail: email,
+            name,
+            teacherName: name,
+            classCode,
+            classCodes: classCode ? [classCode] : [],
+            role,
+            active
+        };
+    }
+
+    normalizeDashboardStudent(student = {}) {
+        const identity = this.normalizeDashboardStudentIdentity(student);
+        const parsedLevel = parseInt(this.readListValue(student.level ?? student.Level ?? student.assignedLevel), 10);
+        const activeRaw = this.readListValue(student?.active ?? student?.Active);
+        return {
+            ...student,
+            studentCode: identity.studentCode,
+            studentId: identity.studentId,
+            studentCodeKey: identity.studentCodeKey,
+            studentIdKey: identity.studentIdKey,
+            leaderboardName: this.readListText(student, ['leaderboardName', 'LeaderboardName', 'studentName', 'StudentName', 'Title']),
+            studentName: this.readListText(student, ['studentName', 'StudentName', 'name']),
+            classCode: this.readListText(student, ['classCode', 'ClassCode']).toUpperCase(),
+            level: (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : null,
+            active: !(activeRaw === false || /^(false|no|0|inactive)$/i.test(String(activeRaw ?? '').trim()))
+        };
+    }
+
+    normalizeDashboardProgress(record = {}) {
+        const toFinite = (value) => {
+            const unwrapped = this.readListValue(value);
+            if (unwrapped === null || unwrapped === undefined || unwrapped === '') return undefined;
+            const numeric = Number(unwrapped);
+            return Number.isFinite(numeric) ? numeric : undefined;
+        };
+        const identity = this.normalizeDashboardStudentIdentity(record);
+        const level = toFinite(record.level ?? record.Level ?? record.assignedLevel ?? record.AssignedLevel);
+        const checkpoint = this.extractCheckpointFields(record, level);
+        const optionalText = (keys) => this.readListText(record, keys) || undefined;
+        return {
+            ...record,
+            ...checkpoint,
+            studentCode: identity.studentCode,
+            studentId: identity.studentId,
+            studentCodeKey: identity.studentCodeKey,
+            studentIdKey: identity.studentIdKey,
+            classCode: String(
+                this.readListText(record, ['classCode', 'ClassCode'])
+                || record?.gameState?.classCode
+                || ''
+            ).trim().toUpperCase(),
+            progressKey: optionalText(['progressKey', 'ProgressKey']),
+            level,
+            round: toFinite(record.round ?? record.Round ?? record.currentRound ?? record.CurrentRound),
+            cash: toFinite(record.cash ?? record.Cash ?? record.currentCash ?? record.CurrentCash),
+            netWorth: toFinite(record.netWorth ?? record.NetWorth),
+            minesOwned: toFinite(record.minesOwned ?? record.MinesOwned ?? record.ownedMines ?? record.OwnedMines),
+            machineryOwned: toFinite(record.machineryOwned ?? record.MachineryOwned ?? record.machinery ?? record.Machinery),
+            totalProfitLoss: toFinite(record.totalProfitLoss ?? record.TotalProfitLoss),
+            averageRoundProfit: toFinite(record.averageRoundProfit ?? record.AverageRoundProfit),
+            strategyLabel: optionalText(['strategyLabel', 'StrategyLabel']),
+            companyName: optionalText(['companyName', 'CompanyName']),
+            investmentProfile: optionalText(['investmentProfile', 'InvestmentProfile']),
+            updatedAt: optionalText([
+                'updatedAt', 'UpdatedAt', 'lastPlayed', 'LastPlayed', 'LastPlayedUtc',
+                'clientTimestampUtc', 'ClientTimestampUtc', 'Modified'
+            ])
+        };
     }
 
     normalizeDashboardHydrationPayload(payload = {}) {
         const source = this.extractDashboardHydrationPayload(payload);
-        const asArray = (value) => Array.isArray(value) ? value : [];
-        const students = source.students ?? source.Students ?? source.studentRoster ?? source.StudentRoster;
-        const teachers = source.teachers ?? source.Teachers ?? source.teacherRoster ?? source.TeacherRoster;
-        const progress = source.progress ?? source.Progress ?? source.studentProgress ?? source.StudentProgress;
+        const keys = this.getDashboardArrayKeys();
+        const inspection = this.inspectDashboardHydrationPayload(payload);
+        const students = this.readDashboardArray(source, keys.students) || [];
+        const teachers = this.readDashboardArray(source, keys.teachers) || [];
+        const progress = this.readDashboardArray(source, keys.progress) || [];
+
+        const teachersByEmail = new Map();
+        teachers
+            .filter(entry => entry && typeof entry === 'object')
+            .map(entry => this.normalizeDashboardTeacher(entry))
+            .forEach((teacher) => {
+                if (!teacher.email) return;
+                const existing = teachersByEmail.get(teacher.email);
+                if (!existing) {
+                    teachersByEmail.set(teacher.email, teacher);
+                    return;
+                }
+                // One teacher may have several GGR_Teachers rows (one per class).
+                const classCodes = Array.from(new Set([...existing.classCodes, ...teacher.classCodes]));
+                teachersByEmail.set(teacher.email, {
+                    ...existing,
+                    name: existing.name || teacher.name,
+                    teacherName: existing.teacherName || teacher.teacherName,
+                    role: existing.role === 'admin' || teacher.role === 'admin' ? 'admin' : existing.role,
+                    active: existing.active || teacher.active,
+                    classCodes,
+                    classCode: classCodes.join(', ')
+                });
+            });
+
         return {
-            students: asArray(students).map((student) => {
-                const identity = this.normalizeDashboardStudentIdentity(student);
-                return {
-                    ...student,
-                    studentCode: identity.studentCode,
-                    studentId: identity.studentId || String(student?.studentId || student?.StudentID || student?.email || '').trim(),
-                    classCode: String(student?.classCode || student?.ClassCode || '').trim().toUpperCase()
-                };
-            }),
-            teachers: asArray(teachers).map((teacher) => ({
-                ...teacher,
-                email: String(teacher?.email || teacher?.teacherEmail || '').trim().toLowerCase(),
-                classCode: String(teacher?.classCode || teacher?.ClassCode || '').trim().toUpperCase()
-            })),
-            progress: asArray(progress).map((entry) => {
-                const identity = this.normalizeDashboardStudentIdentity(entry);
-                return {
-                    ...entry,
-                    studentCode: identity.studentCode,
-                    studentId: identity.studentId || String(entry?.studentId || entry?.StudentID || '').trim(),
-                    classCode: String(
-                        entry?.classCode
-                        || entry?.ClassCode
-                        || entry?.gameState?.classCode
-                        || ''
-                    ).trim().toUpperCase()
-                };
-            })
+            students: students
+                .filter(entry => entry && typeof entry === 'object')
+                .map(entry => this.normalizeDashboardStudent(entry)),
+            teachers: Array.from(teachersByEmail.values()),
+            progress: progress
+                .filter(entry => entry && typeof entry === 'object')
+                .map(entry => this.normalizeDashboardProgress(entry)),
+            missingArrays: inspection.missingArrays
+        };
+    }
+
+    selectLatestProgressRow(rows = []) {
+        return [...rows].sort((a, b) => {
+            const timeA = Date.parse(a.updatedAt || '') || 0;
+            const timeB = Date.parse(b.updatedAt || '') || 0;
+            if (timeA !== timeB) return timeB - timeA;
+            return (Number(b.level) || 0) - (Number(a.level) || 0);
+        })[0] || null;
+    }
+
+    buildCheckpointsByLevel(rows = []) {
+        const checkpointsByLevel = {};
+        [1, 2, 3, 4, 5, 6].forEach((level) => {
+            const ordered = [
+                ...rows.filter(row => Number(row.level) === level),
+                ...rows.filter(row => Number(row.level) !== level)
+            ];
+            for (const row of ordered) {
+                const fields = this.extractCheckpointFields(row, level);
+                if (fields.checkpointStatus || fields.quizScore !== null || fields.quizAttempts.length) {
+                    const { progressionStateByLevel, ...levelFields } = fields;
+                    checkpointsByLevel[level] = { ...levelFields, level, sourceProgressKey: row.progressKey || '' };
+                    break;
+                }
+            }
+        });
+        return checkpointsByLevel;
+    }
+
+    buildHydratedStudent(student, progressRows = []) {
+        const studentCode = String(student.studentCode || '').trim();
+        const latest = this.selectLatestProgressRow(progressRows);
+        const level = student.level || Number(latest?.level) || 1;
+        const checkpointsByLevel = this.buildCheckpointsByLevel(progressRows);
+        const currentCheckpoint = checkpointsByLevel[Number(latest?.level) || level] || {};
+        const pick = (value, fallback) => (value === undefined || value === null ? fallback : value);
+        return {
+            ...student,
+            id: studentCode || student.studentId || this.generateStudentId(),
+            displayId: studentCode,
+            studentCode,
+            name: student.studentName,
+            email: student.studentId,
+            level,
+            progressRecords: progressRows,
+            checkpointsByLevel,
+            gameState: {
+                round: pick(latest?.round, 1),
+                cash: pick(latest?.cash, 200),
+                netWorth: pick(latest?.netWorth, 300),
+                ownedMines: pick(latest?.minesOwned, 1),
+                machinery: pick(latest?.machineryOwned, 0),
+                totalProfitLoss: pick(latest?.totalProfitLoss, 0),
+                averageRoundProfit: latest?.averageRoundProfit,
+                strategyLabel: latest?.strategyLabel,
+                companyName: latest?.companyName,
+                investmentProfile: latest?.investmentProfile,
+                assignedLevel: pick(latest?.level, level),
+                checkpointStatus: currentCheckpoint.checkpointStatus || null,
+                quizScore: pick(currentCheckpoint.quizScore, null),
+                quizPassedAt: currentCheckpoint.quizPassedAt || null,
+                quizAttempts: currentCheckpoint.quizAttempts || [],
+                approvalStatus: currentCheckpoint.approvalStatus || null,
+                approverName: currentCheckpoint.approverName || null,
+                approvalTimestamp: currentCheckpoint.approvalTimestamp || null,
+                progressionStateByLevel: latest?.progressionStateByLevel || {},
+                lastPlayed: latest?.updatedAt || null
+            }
         };
     }
 
     hydrateDashboardFromNormalizedData(payload = {}, options = {}) {
+        const normalized = this.normalizeDashboardHydrationPayload(payload);
         if (options.enabled !== true) {
             return this.successResult({
                 skipped: true,
                 reason: 'dashboard_hydration_adapter_disabled',
-                data: this.normalizeDashboardHydrationPayload(payload)
+                data: normalized
             });
         }
-        const normalized = this.normalizeDashboardHydrationPayload(payload);
-        const hydratedStudents = normalized.students.map((student) => {
-            const identity = this.normalizeDashboardStudentIdentity(student);
-            const studentCode = String(identity.studentCode || student.displayId || '').trim();
-            const existing = this.students.find((entry) =>
-                this.normalizeDashboardStudentIdentity(entry).identityKey === identity.identityKey
-            );
-            const parsedLevel = parseInt(student.level ?? student.Level ?? student.assignedLevel, 10);
-            const level = (parsedLevel >= 1 && parsedLevel <= 6)
-                ? parsedLevel
-                : (existing?.level || 1);
-            const now = new Date().toISOString();
-            return {
-                ...existing,
-                ...student,
-                id: String(existing?.id || student.id || this.generateStudentId()).trim(),
-                displayId: studentCode || String(existing?.displayId || '').trim(),
-                studentCode,
-                leaderboardName: String(
-                    student.leaderboardName || student.LeaderboardName || student.studentName || student.StudentName || existing?.leaderboardName || ''
-                ).trim(),
-                studentName: String(student.studentName || student.StudentName || student.name || existing?.studentName || '').trim(),
-                name: String(student.studentName || student.StudentName || student.name || existing?.name || '').trim(),
-                studentId: String(student.studentId || student.StudentID || student.email || existing?.studentId || '').trim(),
-                email: String(student.studentId || student.StudentID || student.email || existing?.email || '').trim(),
-                classCode: String(student.classCode || student.ClassCode || existing?.classCode || '').trim().toUpperCase(),
-                level,
-                assignedDate: existing?.assignedDate || student.assignedDate || now,
-                createdAt: existing?.createdAt || student.createdAt || now,
-                gameState: {
-                    round: 1,
-                    cash: 200,
-                    netWorth: 300,
-                    ownedMines: 1,
-                    machinery: 0,
-                    totalProfitLoss: 0,
-                    lastPlayed: null,
-                    ...(existing?.gameState || {})
-                }
-            };
-        });
 
-        this.students = hydratedStudents;
-        const mappedProgressRecords = normalized.progress
-            .map((record) => {
-                const toFinite = (value) => {
-                    const numeric = Number(value);
-                    return Number.isFinite(numeric) ? numeric : undefined;
-                };
-                const identity = this.normalizeDashboardStudentIdentity(record);
-                const normalizedStudentCode = String(identity.studentCode || '').trim();
-                const existingStudent = this.students.find((entry) =>
-                    this.normalizeDashboardStudentIdentity(entry).identityKey === identity.identityKey
-                );
-                return {
-                    ...record,
-                    studentCode: normalizedStudentCode,
-                    studentId: String(identity.studentId || record.studentId || record.StudentID || '').trim(),
-                    classCode: String(record.classCode || record.ClassCode || '').trim().toUpperCase(),
-                    level: toFinite(record.level ?? record.Level ?? record.assignedLevel ?? record.AssignedLevel),
-                    round: toFinite(record.round ?? record.Round ?? record.currentRound ?? record.CurrentRound),
-                    cash: toFinite(record.cash ?? record.Cash ?? record.currentCash ?? record.CurrentCash),
-                    netWorth: toFinite(record.netWorth ?? record.NetWorth),
-                    minesOwned: toFinite(record.minesOwned ?? record.MinesOwned ?? record.ownedMines ?? record.OwnedMines),
-                    machineryOwned: toFinite(record.machineryOwned ?? record.MachineryOwned ?? record.machinery ?? record.Machinery),
-                    totalProfitLoss: toFinite(record.totalProfitLoss ?? record.TotalProfitLoss),
-                    averageRoundProfit: toFinite(record.averageRoundProfit ?? record.AverageRoundProfit),
-                    strategyLabel: String(record.strategyLabel || record.StrategyLabel || '').trim() || undefined,
-                    companyName: String(record.companyName || record.CompanyName || '').trim() || undefined,
-                    investmentProfile: String(record.investmentProfile || record.InvestmentProfile || '').trim() || undefined,
-                    updatedAt: (
-                        record.updatedAt
-                        || record.UpdatedAt
-                        || record.lastPlayed
-                        || record.LastPlayed
-                        || existingStudent?.gameState?.lastPlayed
-                        || undefined
-                    )
-                };
-            })
-        mappedProgressRecords.forEach(record => this.syncFromPlayerRecord(record));
-
-        const existingTeachers = this._loadTeacherList();
-        const teachersByEmail = new Map();
-        existingTeachers.forEach((teacher) => {
-            const email = String(teacher?.email || teacher?.id || '').trim().toLowerCase();
-            if (!email) return;
-            teachersByEmail.set(email, {
-                ...teacher,
-                id: String(teacher?.id || email).trim() || email,
-                email
-            });
-        });
-        normalized.teachers.forEach((teacher) => {
-            const email = String(teacher?.email || teacher?.teacherEmail || '').trim().toLowerCase();
-            if (!email) return;
-            const existing = teachersByEmail.get(email) || {};
-            teachersByEmail.set(email, {
-                ...existing,
-                ...teacher,
-                id: String(existing.id || teacher.id || email).trim() || email,
-                email,
-                classCode: String(teacher.classCode || teacher.ClassCode || existing.classCode || '').trim().toUpperCase(),
-                role: String(teacher.role || existing.role || 'teacher').trim().toLowerCase() || 'teacher'
-            });
-        });
-        const mergedTeachers = Array.from(teachersByEmail.values());
-        this.teachers = mergedTeachers;
-
-        if (options.persist !== false) {
-            this.saveToLocalStorage();
-            this._saveTeacherList(mergedTeachers);
-            try {
-                localStorage.setItem('wa_gold_rush_class_records', JSON.stringify(mappedProgressRecords));
-            } catch (_) {}
-        }
-
-        return this.successResult({
-            data: {
-                ...normalized,
-                progress: mappedProgressRecords
+        // Build in-memory state from the flow response only. No browser-storage
+        // roster, teacher or progress data is merged in.
+        const progressByCode = new Map();
+        const progressById = new Map();
+        normalized.progress.forEach((record) => {
+            if (record.studentCodeKey) {
+                if (!progressByCode.has(record.studentCodeKey)) progressByCode.set(record.studentCodeKey, []);
+                progressByCode.get(record.studentCodeKey).push(record);
+            } else if (record.studentIdKey) {
+                if (!progressById.has(record.studentIdKey)) progressById.set(record.studentIdKey, []);
+                progressById.get(record.studentIdKey).push(record);
             }
         });
+
+        this.students = normalized.students.map((student) => {
+            let rows = student.studentCodeKey ? (progressByCode.get(student.studentCodeKey) || []) : [];
+            if (!rows.length && student.studentIdKey) {
+                rows = progressById.get(student.studentIdKey) || [];
+            }
+            const classRows = student.classCode
+                ? rows.filter(row => !row.classCode || row.classCode === student.classCode)
+                : rows;
+            return this.buildHydratedStudent(student, classRows.length ? classRows : rows);
+        });
+        this.teachers = normalized.teachers;
+        this.progress = normalized.progress;
+        this.calculateClassStats();
+
+        return this.successResult({ data: normalized });
     }
 
-    async hydrateDashboardFromFlowWithFallback(options = {}) {
+    clearDashboardData() {
+        this.students = [];
+        this.teachers = [];
+        this.progress = [];
+        this.calculateClassStats();
+    }
+
+    onHydrated(listener) {
+        if (typeof listener !== 'function') return () => {};
+        this._hydrationListeners.push(listener);
+        return () => {
+            this._hydrationListeners = this._hydrationListeners.filter(entry => entry !== listener);
+        };
+    }
+
+    _emitHydration(result) {
+        this.lastHydration = result;
+        this._hydrationListeners.forEach((listener) => {
+            try {
+                listener(result, this);
+            } catch (error) {
+                console.error('[Dashboard] Hydration listener failed:', error);
+            }
+        });
+        return result;
+    }
+
+    getHydrationCounts() {
+        return {
+            students: this.students.length,
+            teachers: this.teachers.length,
+            progress: this.progress.length
+        };
+    }
+
+    _hydrationFailure(reason, statusMessage, extra = {}) {
+        // Fail closed: never leave stale roster data on screen after a failed read.
+        this.clearDashboardData();
+        const response = this.failureResult(extra.error || statusMessage, {
+            source: 'flow',
+            reason,
+            retryable: true,
+            statusTone: 'error',
+            statusMessage,
+            counts: this.getHydrationCounts(),
+            missingArrays: extra.missingArrays || [],
+            status: extra.status,
+            diagnostics: this.setHydrationDiagnostics({
+                hydrationFailed: true,
+                failureReason: reason
+            })
+        });
+        this.logHydrationDiagnostics('failed', response.diagnostics);
+        return response;
+    }
+
+    async hydrateDashboardFromFlow(options = {}) {
         if (this._dashboardHydrationInFlight) {
             return this._dashboardHydrationInFlight;
         }
 
         const hydrationPromise = (async () => {
-            this.loadFromLocalStorage();
-            const cachedTeachers = this._loadTeacherList();
-            this.teachers = Array.isArray(cachedTeachers) ? [...cachedTeachers] : [];
-            const cachedStudentsSnapshot = JSON.parse(JSON.stringify(this.students || []));
-            const cachedTeachersSnapshot = JSON.parse(JSON.stringify(this.teachers || []));
-            let cachedRecordsRaw = null;
-            try {
-                cachedRecordsRaw = localStorage.getItem('wa_gold_rush_class_records');
-            } catch (_) {}
-
             const teacherSession = this.getTeacherSession();
             const teacherEmail = String(
                 options.teacherEmail
@@ -495,26 +689,20 @@ class TeacherDashboard {
                 flowRequestAttempted: false,
                 flowResponseReceived: false,
                 flowRequestSucceeded: false,
-                fallbackTriggered: false,
-                fallbackReason: '',
-                studentsReturned: null
+                hydrationFailed: false,
+                failureReason: '',
+                missingArrays: [],
+                studentsReturned: null,
+                teachersReturned: null,
+                progressReturned: null
             });
             this.logHydrationDiagnostics('startup', baseDiagnostics);
 
             if (!teacherEmail) {
-                const response = this.successResult({
-                    source: 'local',
-                    fallback: true,
-                    reason: 'missing_teacher_session',
-                    statusTone: 'info',
-                    statusMessage: 'Using cached dashboard data.',
-                    diagnostics: this.setHydrationDiagnostics({
-                        fallbackTriggered: true,
-                        fallbackReason: 'missing_teacher_session'
-                    })
-                });
-                this.logHydrationDiagnostics('fallback', response.diagnostics);
-                return response;
+                return this._hydrationFailure(
+                    'missing_teacher_session',
+                    'Sign in to load dashboard data from Microsoft Lists.'
+                );
             }
 
             const result = await this.postFlowPayload('getDashboardData', { teacherEmail }, options);
@@ -525,87 +713,64 @@ class TeacherDashboard {
             });
             this.logHydrationDiagnostics('flow-response', this.getHydrationDiagnostics());
             if (!result.success) {
-                const response = this.successResult({
-                    source: 'local',
-                    fallback: true,
-                    reason: result.skipped ? 'flow_unavailable' : 'flow_failed',
-                    statusTone: 'info',
-                    statusMessage: 'Using cached dashboard data.',
-                    error: result.error || '',
-                    diagnostics: this.setHydrationDiagnostics({
-                        fallbackTriggered: true,
-                        fallbackReason: result.skipped ? 'flow_unavailable' : 'flow_failed'
-                    })
-                });
-                this.logHydrationDiagnostics('fallback', response.diagnostics);
-                return response;
+                const reason = result.skipped ? 'flow_unavailable' : 'flow_failed';
+                return this._hydrationFailure(
+                    reason,
+                    result.skipped
+                        ? 'GGR_GetDashboardData is not configured, so no dashboard data can be loaded.'
+                        : 'Could not load dashboard data from Microsoft Lists (GGR_GetDashboardData failed). No roster data is shown. Select Retry to try again.',
+                    { error: result.error || '', status: result.status }
+                );
             }
 
-            if (!this.hasDashboardHydrationContract(result.data)) {
-                const response = this.successResult({
-                    source: 'local',
-                    fallback: true,
-                    reason: 'invalid_flow_payload',
-                    statusTone: 'info',
-                    statusMessage: 'Using cached dashboard data.',
-                    diagnostics: this.setHydrationDiagnostics({
-                        fallbackTriggered: true,
-                        fallbackReason: 'invalid_flow_payload'
-                    })
-                });
-                this.logHydrationDiagnostics('fallback', response.diagnostics);
-                return response;
+            const inspection = this.inspectDashboardHydrationPayload(result.data);
+            if (!inspection.hasAnyArray) {
+                return this._hydrationFailure(
+                    'invalid_flow_payload',
+                    'GGR_GetDashboardData responded without Students, Teachers or Progress arrays. No roster data is shown.',
+                    { missingArrays: inspection.missingArrays, status: result.status }
+                );
             }
 
             let hydrated = null;
             try {
-                hydrated = this.hydrateDashboardFromNormalizedData(result.data, { enabled: true, persist: true });
-            } catch (_) {
-                hydrated = this.failureResult('Hydration failed.');
+                hydrated = this.hydrateDashboardFromNormalizedData(result.data, { enabled: true });
+            } catch (error) {
+                hydrated = this.failureResult(String(error?.message || 'Hydration failed.'));
             }
             if (!hydrated.success) {
-                this.students = cachedStudentsSnapshot;
-                this.teachers = cachedTeachersSnapshot;
-                this.saveToLocalStorage();
-                this._saveTeacherList(cachedTeachersSnapshot);
-                try {
-                    if (cachedRecordsRaw == null) {
-                        localStorage.removeItem('wa_gold_rush_class_records');
-                    } else {
-                        localStorage.setItem('wa_gold_rush_class_records', cachedRecordsRaw);
-                    }
-                } catch (_) {}
-                const response = this.successResult({
-                    source: 'local',
-                    fallback: true,
-                    reason: 'hydrate_failed',
-                    statusTone: 'info',
-                    statusMessage: 'Using cached dashboard data.',
-                    diagnostics: this.setHydrationDiagnostics({
-                        fallbackTriggered: true,
-                        fallbackReason: 'hydrate_failed'
-                    })
-                });
-                this.logHydrationDiagnostics('fallback', response.diagnostics);
-                return response;
+                return this._hydrationFailure(
+                    'hydrate_failed',
+                    'Dashboard data from GGR_GetDashboardData could not be read. No roster data is shown.',
+                    { error: hydrated.error, missingArrays: inspection.missingArrays, status: result.status }
+                );
             }
 
+            const counts = this.getHydrationCounts();
+            const missingArrays = inspection.missingArrays;
+            const summary = `Loaded from Microsoft Lists: ${counts.students} student${counts.students === 1 ? '' : 's'}, ${counts.teachers} teacher${counts.teachers === 1 ? '' : 's'}, ${counts.progress} progress record${counts.progress === 1 ? '' : 's'}.`;
             const response = this.successResult({
                 source: 'flow',
-                fallback: false,
                 status: result.status,
-                statusTone: 'success',
-                statusMessage: 'Dashboard synced from SharePoint.',
+                statusTone: missingArrays.length ? 'info' : 'success',
+                statusMessage: missingArrays.length
+                    ? `${summary} Flow response did not include: ${missingArrays.join(', ')}.`
+                    : summary,
+                counts,
+                missingArrays,
                 data: hydrated.data,
                 diagnostics: this.setHydrationDiagnostics({
-                    fallbackTriggered: false,
-                    fallbackReason: '',
-                    studentsReturned: Array.isArray(hydrated?.data?.students) ? hydrated.data.students.length : this.students.length
+                    hydrationFailed: false,
+                    failureReason: '',
+                    missingArrays,
+                    studentsReturned: counts.students,
+                    teachersReturned: counts.teachers,
+                    progressReturned: counts.progress
                 })
             });
             this.logHydrationDiagnostics('completed', response.diagnostics);
             return response;
-        })();
+        })().then(result => this._emitHydration(result));
 
         this._dashboardHydrationInFlight = hydrationPromise;
         try {
@@ -617,6 +782,16 @@ class TeacherDashboard {
         }
     }
 
+    async rehydrateAfterWrite(options = {}) {
+        // A read that started before the write may return pre-write data, so wait
+        // for it and then read again from GGR_GetDashboardData.
+        if (this._dashboardHydrationInFlight) {
+            try { await this._dashboardHydrationInFlight; } catch (_) {}
+        }
+        const { teacherEmail, endpoints, fetch: customFetch } = options;
+        return this.hydrateDashboardFromFlow({ teacherEmail, endpoints, fetch: customFetch });
+    }
+
     async syncTeacherToBackend(teacher, options = {}) {
         const payload = this.buildTeacherFlowPayload(teacher);
         if (!payload.teacherEmail || !payload.teacherName) {
@@ -625,20 +800,50 @@ class TeacherDashboard {
         return this.postFlowPayload('upsertTeacher', payload, options);
     }
 
+    async _postEachToFlow(flowName, payloads, options = {}) {
+        const results = await Promise.all(payloads.map(payload =>
+            this.postFlowPayload(flowName, payload, options)
+                .catch(error => ({ success: false, error: String(error?.message || error || 'Flow request failed.') }))
+        ));
+        const succeeded = [];
+        const failed = [];
+        results.forEach((result, index) => {
+            if (result?.success) succeeded.push(payloads[index]);
+            else failed.push({ payload: payloads[index], error: result?.error || `${flowName} did not confirm the save.` });
+        });
+        return {
+            success: failed.length === 0,
+            count: payloads.length,
+            succeeded,
+            failed,
+            fallback: flowName,
+            error: failed.length ? `${failed.length} of ${payloads.length} record(s) were not saved: ${failed[0].error}` : ''
+        };
+    }
+
+    async _postBulkToFlow(flowName, wrapperKey, payloads, options = {}) {
+        const result = await this.postFlowPayload(flowName, { [wrapperKey]: payloads }, options);
+        return {
+            ...result,
+            count: payloads.length,
+            succeeded: result.success ? payloads : [],
+            failed: result.success ? [] : payloads.map(payload => ({ payload, error: result.error || `${flowName} failed.` }))
+        };
+    }
+
     async syncStudentsToBackend(students = [], options = {}) {
         const payload = (Array.isArray(students) ? students : [])
             .map(student => this.buildStudentFlowPayload(student))
             .filter(student => student.studentCode && student.leaderboardName && student.classCode);
         if (!payload.length) {
-            return { success: true, skipped: true, count: 0 };
+            return { success: true, skipped: true, count: 0, succeeded: [], failed: [] };
         }
 
         if (this.hasConfiguredFlowEndpoint('bulkImportStudents')) {
-            return this.postFlowPayload('bulkImportStudents', { students: payload }, options);
+            return this._postBulkToFlow('bulkImportStudents', 'students', payload, options);
         }
 
-        await Promise.all(payload.map(student => this.postFlowPayload('upsertStudentProfile', student, options)));
-        return { success: true, count: payload.length, fallback: 'upsertStudentProfile' };
+        return this._postEachToFlow('upsertStudentProfile', payload, options);
     }
 
     async syncTeachersToBackend(teachers = [], options = {}) {
@@ -646,19 +851,25 @@ class TeacherDashboard {
             .map(teacher => this.buildTeacherFlowPayload(teacher))
             .filter(teacher => teacher.teacherEmail && teacher.teacherName);
         if (!payload.length) {
-            return { success: true, skipped: true, count: 0 };
+            return { success: true, skipped: true, count: 0, succeeded: [], failed: [] };
         }
 
         if (this.hasConfiguredFlowEndpoint('bulkImportTeachers')) {
-            return this.postFlowPayload('bulkImportTeachers', { teachers: payload }, options);
+            return this._postBulkToFlow('bulkImportTeachers', 'teachers', payload, options);
         }
         if (!this.hasConfiguredFlowEndpoint('upsertTeacher')) {
             console.warn('Dashboard teacher sync endpoints are not configured.');
-            return { success: false, skipped: true, error: 'Teacher sync endpoints are not configured.' };
+            return {
+                success: false,
+                skipped: true,
+                count: payload.length,
+                succeeded: [],
+                failed: payload.map(entry => ({ payload: entry, error: 'Teacher sync endpoints are not configured.' })),
+                error: 'Teacher sync endpoints are not configured.'
+            };
         }
 
-        await Promise.all(payload.map(teacher => this.postFlowPayload('upsertTeacher', teacher, options)));
-        return { success: true, count: payload.length, fallback: 'upsertTeacher' };
+        return this._postEachToFlow('upsertTeacher', payload, options);
     }
 
     normalizeClassCodeList(value) {
@@ -702,11 +913,6 @@ class TeacherDashboard {
 
     hasTeacherSession() {
         return !!this.getTeacherSession();
-    }
-
-    isPermanentlyAuthorizedAdmin(email) {
-        const normalized = String(email || '').trim().toLowerCase();
-        return this.PERMANENT_ADMIN_ENABLED && this.PERMANENT_ADMIN_ALLOWLIST.has(normalized);
     }
 
     saveTeacherSession(sessionData = {}) {
@@ -765,24 +971,8 @@ class TeacherDashboard {
             return this.failureResult('Teacher email and class code are required.');
         }
 
-        if (this.isPermanentlyAuthorizedAdmin(teacherEmail)) {
-            const savedSession = this.saveTeacherSession({
-                teacherEmail,
-                classCode: String(classCode || '').trim().toUpperCase() || 'ADMIN',
-                teacherName: 'Game Admin',
-                role: 'admin',
-                classCodes: ['*']
-            });
-            if (!savedSession.success) {
-                return savedSession;
-            }
-
-            return this.successResult({
-                session: savedSession.session,
-                response: { ok: true, mode: 'permanent_admin_bypass' }
-            });
-        }
-
+        // All teachers, including admins, authenticate against GGR_Teachers via
+        // the loginTeacher flow. There is no client-side bypass.
         const result = await this.postFlowPayload('loginTeacher', { teacherEmail, classCode }, options);
         const payload = result.data;
         if (!result.success) {
@@ -804,16 +994,16 @@ class TeacherDashboard {
             );
         }
 
-        const normalizedClassCodes = this.normalizeClassCodeList(payload.classCodes);
+        const normalizedClassCodes = this.normalizeClassCodeList(payload.classCodes ?? payload.ClassCodes);
         const primaryClassCode = this.normalizeClassCodeList([
-            payload.classCode || normalizedClassCodes[0] || classCode
+            this.readListText(payload, ['classCode', 'ClassCode']) || normalizedClassCodes[0] || classCode
         ])[0] || '';
 
         const savedSession = this.saveTeacherSession({
             teacherEmail,
             classCode: primaryClassCode,
-            teacherName: payload.teacherName,
-            role: payload.role,
+            teacherName: this.readListText(payload, ['teacherName', 'TeacherName']),
+            role: this.readListText(payload, ['role', 'Role']).toLowerCase(),
             classCodes: normalizedClassCodes
         });
 
@@ -947,18 +1137,23 @@ class TeacherDashboard {
         };
     }
 
+    /**
+     * Validate teacher rows against the flow-hydrated teacher list.
+     * Nothing is persisted here — callers must send the returned rows to
+     * GGR_UpsertTeacher (see importTeachers / importRoster) and re-hydrate.
+     */
     importTeacherRows(rawTeachers, options = {}) {
         if (!Array.isArray(rawTeachers) || !rawTeachers.length) {
             return { added: [], updated: [], skipped: [] };
         }
 
-        const currentList = this._loadTeacherList();
         const added = [];
         const updated = [];
         const skipped = [];
 
         rawTeachers.forEach((row) => {
-            const existing = currentList.find(t => t.email === String(row.teacherEmail || row.TeacherEmail || row.email || '').trim().toLowerCase());
+            const email = String(row.teacherEmail || row.TeacherEmail || row.email || '').trim().toLowerCase();
+            const existing = this.getTeacher(email);
             const normalized = this.normalizeTeacherImportRow(row, { ...options, existingTeacher: existing });
             if (!normalized.success) {
                 skipped.push({ row: row._row || '?', reason: normalized.error });
@@ -966,27 +1161,17 @@ class TeacherDashboard {
             }
 
             const teacher = normalized.teacher;
-            if (existing) {
-                existing.name = teacher.name;
-                existing.classCode = teacher.classCode;
-                existing.role = teacher.role;
-                existing.updatedAt = new Date().toISOString();
-                updated.push(existing);
-            } else {
-                const entry = {
-                    id: teacher.email,
-                    email: teacher.email,
-                    name: teacher.name,
-                    classCode: teacher.classCode,
-                    role: teacher.role,
-                    addedAt: new Date().toISOString()
-                };
-                currentList.push(entry);
-                added.push(entry);
-            }
+            const entry = {
+                id: teacher.email,
+                email: teacher.email,
+                name: teacher.name,
+                classCode: teacher.classCode,
+                role: teacher.role
+            };
+            if (existing) updated.push(entry);
+            else added.push(entry);
         });
 
-        this._saveTeacherList(currentList);
         return { added, updated, skipped };
     }
 
@@ -1011,11 +1196,11 @@ class TeacherDashboard {
     // =========================================================================
 
     /**
-     * Add a new student.
+     * Validate and build a student record (not persisted).
      * Supports the extended SharePoint-aligned field set:
      *   StudentCode, LeaderboardName, StudentID, StudentName, ClassCode
      */
-    addStudent(studentData = {}) {
+    prepareStudentRecord(studentData = {}) {
         const autoId = this.generateStudentId();
 
         // Legacy compat: map name→studentName, email→studentId if new fields absent
@@ -1031,7 +1216,7 @@ class TeacherDashboard {
         const studentId = String(
             studentData.studentId || studentData.email || ''
         ).trim();
-        const classCode = String(studentData.classCode || '').trim();
+        const classCode = String(studentData.classCode || '').trim().toUpperCase();
         const parsedLevel = parseInt(studentData.level, 10);
         const level = (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : 2;
 
@@ -1041,9 +1226,12 @@ class TeacherDashboard {
         if (!leaderboardName) {
             return this.failureResult('Leaderboard Name is required.');
         }
+        if (!classCode) {
+            return this.failureResult('Class Code is required.');
+        }
 
         const student = {
-            id: autoId,
+            id: studentCode,
             // Legacy fields kept for roster rendering compatibility
             displayId:      studentCode,
             name:           studentName,
@@ -1055,23 +1243,32 @@ class TeacherDashboard {
             studentName,
             classCode,
             level,
-            assignedDate: new Date().toISOString(),
-            gameState: {
-                round: 1,
-                cash: 200,
-                netWorth: 300,
-                ownedMines: 1,
-                machinery: 0,
-                totalProfitLoss: 0,
-                lastPlayed: null
-            },
-            createdAt: new Date().toISOString(),
-            notes: ''
+            active: true
         };
 
-        this.students.push(student);
-        this.saveToLocalStorage();
-        return this.successResult({ student, created: true });
+        return this.successResult({ student });
+    }
+
+    /**
+     * Add a student via GGR_UpsertStudentProfile. Success is only reported once
+     * the flow confirms the write; the dashboard then re-hydrates from
+     * GGR_GetDashboardData.
+     */
+    async addStudent(studentData = {}, options = {}) {
+        const prepared = this.prepareStudentRecord(studentData);
+        if (!prepared.success) return prepared;
+
+        const student = prepared.student;
+        const result = await this.syncStudentToBackend(student, options);
+        if (!result.success) {
+            return this.failureResult(
+                result.error || 'GGR_UpsertStudentProfile did not confirm the save.',
+                { student, status: result.status }
+            );
+        }
+
+        const hydration = await this.rehydrateAfterWrite(options);
+        return this.successResult({ student, created: true, confirmed: true, hydration });
     }
 
     generateStudentId() {
@@ -1088,6 +1285,9 @@ class TeacherDashboard {
      *
      * Also accepts teacher rows in mixed roster imports and returns
      * { added, skipped, teachers } where teachers is { added, updated, skipped }.
+     *
+     * This only parses and validates rows. Use importRoster() to save them
+     * through the flows and confirm the result.
      */
     bulkImportStudents(data, format = 'csv') {
         let rawStudents = [];
@@ -1205,7 +1405,7 @@ class TeacherDashboard {
                 skipped.push({ row: studentData._row || '?', reason: 'Missing StudentCode or name' });
                 return;
             }
-            const result = this.addStudent(studentData);
+            const result = this.prepareStudentRecord(studentData);
             if (!result.success) {
                 skipped.push({ row: studentData._row || '?', reason: result.error });
                 return;
@@ -1252,9 +1452,57 @@ class TeacherDashboard {
         return this.importTeacherRows(rawTeachers, { allowAdmin: true, allowPartialUpdates: true });
     }
 
-    addTeacher(email, name, classCode, role = 'teacher') {
-        const teacherList = this._loadTeacherList();
-        const existingTeacher = teacherList.find(teacher => teacher.email === String(email || '').trim().toLowerCase());
+    _summarizeSyncResult(syncResult = {}) {
+        return {
+            success: syncResult.success !== false,
+            savedCount: Array.isArray(syncResult.succeeded) ? syncResult.succeeded.length : 0,
+            failed: Array.isArray(syncResult.failed) ? syncResult.failed : [],
+            error: syncResult.error || ''
+        };
+    }
+
+    /**
+     * Parse a mixed student/teacher roster, save rows through the flows and
+     * re-hydrate. Only rows the flows confirm are reported as saved.
+     */
+    async importRoster(data, format = 'csv', options = {}) {
+        const prepared = this.bulkImportStudents(data, format);
+        const teacherRows = [...prepared.teachers.added, ...prepared.teachers.updated];
+        const studentSync = this._summarizeSyncResult(
+            prepared.added.length ? await this.syncStudentsToBackend(prepared.added, options) : {}
+        );
+        const teacherSync = this._summarizeSyncResult(
+            teacherRows.length ? await this.syncTeachersToBackend(teacherRows, options) : {}
+        );
+        const hydration = (studentSync.savedCount + teacherSync.savedCount) > 0
+            ? await this.rehydrateAfterWrite(options)
+            : null;
+        return {
+            success: studentSync.success && teacherSync.success,
+            prepared,
+            students: studentSync,
+            teachers: teacherSync,
+            hydration
+        };
+    }
+
+    async importTeachers(data, options = {}) {
+        const prepared = this.bulkImportTeachers(data);
+        const rows = [...prepared.added, ...prepared.updated];
+        const teacherSync = this._summarizeSyncResult(
+            rows.length ? await this.syncTeachersToBackend(rows, options) : {}
+        );
+        const hydration = teacherSync.savedCount > 0 ? await this.rehydrateAfterWrite(options) : null;
+        return {
+            success: teacherSync.success,
+            prepared,
+            teachers: teacherSync,
+            hydration
+        };
+    }
+
+    async addTeacher(email, name, classCode, role = 'teacher', options = {}) {
+        const existingTeacher = this.getTeacher(email);
         const normalized = this.normalizeTeacherImportRow(
             { teacherEmail: email, teacherName: name, classCode, role },
             { allowAdmin: true, allowPartialUpdates: true, existingTeacher }
@@ -1264,41 +1512,28 @@ class TeacherDashboard {
             return normalized;
         }
 
-        const teacher = normalized.teacher;
-        if (existingTeacher) {
-            existingTeacher.name = teacher.name;
-            existingTeacher.classCode = teacher.classCode;
-            existingTeacher.role = teacher.role;
-            existingTeacher.updatedAt = new Date().toISOString();
-            this._saveTeacherList(teacherList);
-            return { success: true, teacher: existingTeacher, updated: true };
+        const teacher = { id: normalized.teacher.email, ...normalized.teacher };
+        const result = await this.syncTeacherToBackend(teacher, options);
+        if (!result.success) {
+            return this.failureResult(
+                result.error || 'GGR_UpsertTeacher did not confirm the save.',
+                { teacher, status: result.status }
+            );
         }
 
-        const entry = {
-            id: teacher.email,
-            email: teacher.email,
-            name: teacher.name,
-            classCode: teacher.classCode,
-            role: teacher.role,
-            addedAt: new Date().toISOString()
-        };
-        teacherList.push(entry);
-        this._saveTeacherList(teacherList);
-        return { success: true, teacher: entry, updated: false };
+        const hydration = await this.rehydrateAfterWrite(options);
+        return this.successResult({ teacher, updated: !!existingTeacher, confirmed: true, hydration });
     }
 
     getAllTeachers() {
-        if (Array.isArray(this.teachers) && this.teachers.length) {
-            return [...this.teachers];
-        }
-        return this._loadTeacherList();
+        return Array.isArray(this.teachers) ? [...this.teachers] : [];
     }
 
     getTeacher(id) {
         const lookupKey = String(id || '').trim();
         if (!lookupKey) return null;
         const emailLookupKey = lookupKey.toLowerCase();
-        return this._loadTeacherList().find((teacher) => {
+        return this.getAllTeachers().find((teacher) => {
             const teacherId = String(teacher.id || '').trim();
             return (
                 teacherId === lookupKey ||
@@ -1308,91 +1543,30 @@ class TeacherDashboard {
         }) || null;
     }
 
-    deleteTeacher(id) {
-        const lookupKey = String(id || '').trim();
-        if (!lookupKey) return { success: false, error: 'Teacher not found' };
-        const emailLookupKey = lookupKey.toLowerCase();
-
-        const teacherList = this._loadTeacherList();
-        const index = teacherList.findIndex((teacher) => {
-            const teacherId = String(teacher.id || '').trim();
-            return (
-                teacherId === lookupKey ||
-                teacherId.toLowerCase() === emailLookupKey ||
-                teacher.email === emailLookupKey
-            );
-        });
-        if (index === -1) return { success: false, error: 'Teacher not found' };
-
-        const deletedTeacher = teacherList.splice(index, 1)[0];
-        this._saveTeacherList(teacherList);
-        return { success: true, teacher: deletedTeacher };
-    }
-
-    _loadTeacherList() {
-        try {
-            const raw = localStorage.getItem('wa_gold_rush_teacher_list');
-            const arr = JSON.parse(raw);
-            if (!Array.isArray(arr)) return [];
-
-            let changed = false;
-            const normalized = arr
-                .filter(item => item && typeof item === 'object')
-                .map((teacher) => {
-                    const legacyId = String(teacher.id || '').trim();
-                    const email = String(teacher.email || legacyId || '').trim().toLowerCase();
-                    const normalizedTeacher = {
-                        ...teacher,
-                        id: legacyId || email,
-                        email,
-                        name: String(teacher.name || '').trim(),
-                        classCode: String(teacher.classCode || '').trim(),
-                        role: String(teacher.role || 'teacher').trim().toLowerCase() || 'teacher'
-                    };
-
-                    if (
-                        normalizedTeacher.id !== teacher.id ||
-                        normalizedTeacher.email !== teacher.email ||
-                        normalizedTeacher.name !== teacher.name ||
-                        normalizedTeacher.classCode !== teacher.classCode ||
-                        normalizedTeacher.role !== teacher.role
-                    ) {
-                        changed = true;
-                    }
-
-                    return normalizedTeacher;
-                });
-
-            if (normalized.length !== arr.length) {
-                changed = true;
-            }
-            if (changed) {
-                this._saveTeacherList(normalized);
-            }
-            this.teachers = normalized;
-            return normalized;
-        } catch (_) { return []; }
-    }
-
-    _saveTeacherList(list) {
-        const safeList = Array.isArray(list) ? list : [];
-        this.teachers = [...safeList];
-        try {
-            localStorage.setItem('wa_gold_rush_teacher_list', JSON.stringify(safeList));
-        } catch (_) {}
+    deleteTeacher() {
+        // There is no backend delete flow for GGR_Teachers. Removing a teacher
+        // locally would only hide them on this device, so it is not supported.
+        return this.failureResult(
+            'Teachers are managed in the GGR_Teachers Microsoft List. Set the teacher row to inactive (or remove it) in the list, then refresh the dashboard.'
+        );
     }
 
     getTeacherList() {
-        return this._loadTeacherList();
+        return this.getAllTeachers();
     }
 
     // =========================================================================
     // Student CRUD
     // =========================================================================
 
-    updateStudent(studentId, updates = {}) {
-        const student = this.students.find(s => s.id === studentId);
-        if (!student) return { success: false, error: 'Student not found' };
+    /**
+     * Update a student via GGR_UpsertStudentProfile. In-memory data is only
+     * refreshed from GGR_GetDashboardData after the flow confirms the save.
+     */
+    async updateStudent(studentId, updates = {}, options = {}) {
+        const original = this.students.find(s => s.id === studentId);
+        if (!original) return { success: false, error: 'Student not found' };
+        const student = JSON.parse(JSON.stringify(original));
 
         const hasCodeUpdate = typeof updates.displayId === 'string' || typeof updates.studentCode === 'string';
         const hasNameUpdate = typeof updates.name === 'string' || typeof updates.studentName === 'string';
@@ -1431,13 +1605,9 @@ class TeacherDashboard {
             nextStudentId = updates.studentId.trim();
         }
 
-        if (hasCodeUpdate) {
-            const previousStudentCode = String(student.studentCode || '').trim();
-            const previousDisplayId = String(student.displayId || '').trim();
-            student.studentCode = nextStudentCode;
-            if (!previousDisplayId || previousDisplayId === previousStudentCode) {
-                student.displayId = nextStudentCode;
-            }
+        if (hasCodeUpdate && this.normalizeStudentCodeKey(nextStudentCode) !== this.normalizeStudentCodeKey(original.studentCode || original.displayId)) {
+            // StudentCode is the canonical key in GGR_Students and GGR_StudentProgress.
+            return this.failureResult('Student Code is the canonical Microsoft Lists key and cannot be changed here. Deactivate this student and add a new record instead.');
         }
         if (typeof updates.leaderboardName === 'string') {
             const value = updates.leaderboardName.trim();
@@ -1455,16 +1625,27 @@ class TeacherDashboard {
             student.email = nextStudentId;
         }
         if (typeof updates.classCode === 'string') {
-            student.classCode = updates.classCode.trim();
+            student.classCode = updates.classCode.trim().toUpperCase();
         }
         if (updates.level !== undefined) {
             const v = parseInt(updates.level, 10);
             student.level = (v >= 1 && v <= 6) ? v : student.level;
         }
 
-        student.updatedAt = new Date().toISOString();
-        this.saveToLocalStorage();
-        return { success: true, student };
+        if (typeof updates.classCode === 'string' && !student.classCode) {
+            return this.failureResult('Class Code is required.');
+        }
+
+        const result = await this.syncStudentToBackend(student, options);
+        if (!result.success) {
+            return this.failureResult(
+                result.error || 'GGR_UpsertStudentProfile did not confirm the update.',
+                { student: original, status: result.status }
+            );
+        }
+
+        const hydration = await this.rehydrateAfterWrite(options);
+        return { success: true, student, confirmed: true, hydration };
     }
 
     updateStudentProgress(studentId, gameStateData) {
@@ -1475,7 +1656,6 @@ class TeacherDashboard {
                 ...gameStateData,
                 lastPlayed: new Date().toISOString()
             };
-            this.saveToLocalStorage();
             return true;
         }
         return false;
@@ -1504,8 +1684,7 @@ class TeacherDashboard {
         const index = this.students.findIndex(s => s.id === studentId);
         if (index !== -1) {
             const deleted = this.students.splice(index, 1)[0];
-            this.saveToLocalStorage();
-            return { success: true, message: `Deleted ${deleted.name || deleted.studentName}` };
+            return { success: true, message: `Removed ${deleted.name || deleted.studentName || deleted.studentCode} from this view` };
         }
         return { success: false, error: 'Student not found' };
     }
@@ -1606,13 +1785,20 @@ class TeacherDashboard {
     // =========================================================================
 
     syncFromPlayerRecord(record) {
-        const incomingDisplayId = String(record.studentId || record.studentCode || '').trim();
-        if (!incomingDisplayId) return null;
+        // StudentCode is canonical; StudentID is only used when no StudentCode is present.
+        const identity = this.normalizeDashboardStudentIdentity(record);
+        if (!identity.studentCodeKey && !identity.studentIdKey) return null;
 
-        let student = this.students.find(s =>
-            String(s.studentCode || s.displayId || s.id || '')
-                .trim().toLowerCase() === incomingDisplayId.toLowerCase()
-        );
+        let student = null;
+        if (identity.studentCodeKey) {
+            student = this.students.find(s =>
+                this.normalizeStudentCodeKey(s.studentCode || s.displayId) === identity.studentCodeKey
+            );
+        } else {
+            student = this.students.find(s =>
+                String(s.studentId || s.email || '').trim().toLowerCase() === identity.studentIdKey
+            );
+        }
 
         if (!student) return null;
 
@@ -1621,26 +1807,32 @@ class TeacherDashboard {
         if (record.companyName) student.companyName = record.companyName;
         if (record.level != null) student.level = record.level;
 
+        const previous = student.gameState || {};
+        const checkpoint = this.extractCheckpointFields(record, record.level);
+        const pick = (value, fallback) => (value === undefined || value === null ? fallback : value);
         student.gameState = {
-            ...student.gameState,
-            round:               record.round               ?? student.gameState.round,
-            cash:                record.cash                ?? student.gameState.cash,
-            netWorth:            record.netWorth            ?? student.gameState.netWorth,
-            ownedMines:          record.minesOwned          ?? student.gameState.ownedMines,
-            machinery:           record.machineryOwned      ?? student.gameState.machinery,
-            totalProfitLoss:     record.totalProfitLoss     ?? student.gameState.totalProfitLoss,
-            averageRoundProfit:  record.averageRoundProfit  ?? student.gameState.averageRoundProfit,
-            strategyLabel:       record.strategyLabel       ?? student.gameState.strategyLabel,
-            companyName:         record.companyName         ?? student.gameState.companyName,
-            investmentProfile:   record.investmentProfile   ?? student.gameState.investmentProfile,
-            assignedLevel:       record.gameState?.assignedLevel       ?? record.level ?? student.gameState.assignedLevel,
-            checkpointStatus:    record.gameState?.checkpointStatus    ?? student.gameState.checkpointStatus,
-            approvalStatus:      record.gameState?.approvalStatus      ?? student.gameState.approvalStatus,
-            approverName:        record.gameState?.approverName        ?? student.gameState.approverName,
-            approvalTimestamp:   record.gameState?.approvalTimestamp   ?? student.gameState.approvalTimestamp,
-            quizScore:           record.gameState?.quizScore           ?? student.gameState.quizScore,
-            quizAttempts:        record.gameState?.quizAttempts        ?? student.gameState.quizAttempts,
-            progressionStateByLevel: record.gameState?.progressionStateByLevel ?? student.gameState.progressionStateByLevel,
+            ...previous,
+            round:               pick(record.round, previous.round),
+            cash:                pick(record.cash, previous.cash),
+            netWorth:            pick(record.netWorth, previous.netWorth),
+            ownedMines:          pick(record.minesOwned, previous.ownedMines),
+            machinery:           pick(record.machineryOwned, previous.machinery),
+            totalProfitLoss:     pick(record.totalProfitLoss, previous.totalProfitLoss),
+            averageRoundProfit:  pick(record.averageRoundProfit, previous.averageRoundProfit),
+            strategyLabel:       pick(record.strategyLabel, previous.strategyLabel),
+            companyName:         pick(record.companyName, previous.companyName),
+            investmentProfile:   pick(record.investmentProfile, previous.investmentProfile),
+            assignedLevel:       pick(record.gameState?.assignedLevel, pick(record.level, previous.assignedLevel)),
+            checkpointStatus:    pick(checkpoint.checkpointStatus, previous.checkpointStatus),
+            quizScore:           pick(checkpoint.quizScore, previous.quizScore),
+            quizPassedAt:        pick(checkpoint.quizPassedAt, previous.quizPassedAt),
+            approvalStatus:      pick(checkpoint.approvalStatus, previous.approvalStatus),
+            approverName:        pick(checkpoint.approverName, previous.approverName),
+            approvalTimestamp:   pick(checkpoint.approvalTimestamp, previous.approvalTimestamp),
+            quizAttempts:        checkpoint.quizAttempts.length ? checkpoint.quizAttempts : previous.quizAttempts,
+            progressionStateByLevel: Object.keys(checkpoint.progressionStateByLevel || {}).length
+                ? checkpoint.progressionStateByLevel
+                : previous.progressionStateByLevel,
             lastPlayed:          record.updatedAt || new Date().toISOString()
         };
         return student;
@@ -1680,6 +1872,8 @@ class TeacherDashboard {
     // Persistence
     // =========================================================================
 
+    // Student-device mirror only (used by the game page). The Teacher Dashboard
+    // page never reads or writes these keys as roster data.
     saveToLocalStorage() {
         try {
             localStorage.setItem(this.TEACHER_DASHBOARD_KEY, JSON.stringify({

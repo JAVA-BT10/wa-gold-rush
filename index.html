@@ -417,6 +417,8 @@
     </script>
     <script src="shared/flow-endpoints.js"></script>
     <script src="shared/power-automate-headers.js"></script>
+    <script src="shared/progression-snapshot.js"></script>
+    <script src="levels/level-2-tycoon/level-access-guard.js"></script>
     <script src="shared/student-auth-client.js"></script>
     <script>
         /**
@@ -500,24 +502,32 @@
          * Check if a checkpoint is approved
          */
         function isCheckpointApproved(requiredLevel) {
-            try {
-                const raw = localStorage.getItem('level2_autosave');
-                if (!raw) return false;
-                const data = JSON.parse(raw);
-                const gs = data.gameState;
-                if (!gs) return false;
-                const levelKey = String(requiredLevel);
-                const progressionState = gs.progressionStateByLevel?.[levelKey]
-                    || (String(gs.assignedLevel || '') === levelKey
-                        ? {
-                            checkpointStatus: gs.checkpointStatus,
-                            approvalStatus: gs.approvalStatus
-                        }
-                        : null);
-                return progressionState?.checkpointStatus === 'quiz_passed';
-            } catch (_) {
-                return false;
+            // Same reader the Level 2–5 access guard uses, so the home page and
+            // the game always agree on which levels are unlocked.
+            if (typeof LevelAccessGuard !== 'undefined') {
+                return LevelAccessGuard.isCheckpointPassed(requiredLevel);
             }
+            return false;
+        }
+
+        /**
+         * When GGR_GetStudentProgress is configured, unlock levels whose
+         * checkpoint quiz was passed on another device. Otherwise unlocks remain
+         * same-device (shared level2_autosave slot).
+         */
+        async function refreshRemoteProgression() {
+            if (typeof LevelAccessGuard === 'undefined' || !LevelAccessGuard.isRemoteProgressConfigured()) return;
+            let changed = false;
+            for (const level of LEVELS) {
+                if (!level.requiresApproval || isLevelAccessible(level)) continue;
+                try {
+                    const result = await LevelAccessGuard.hydrateRemoteProgression(level.requiredCheckpointLevel);
+                    if (result.unlocked) changed = true;
+                } catch (_) {
+                    // Keep the level locked if the progress flow is unreachable.
+                }
+            }
+            if (changed) renderLevels();
         }
 
         /**
@@ -965,6 +975,7 @@ const classCodes = Array.isArray(session.classCodes)
                 return;
             }
             toggleStudentAuthUI();
+            refreshRemoteProgression();
             const returnTo = getStudentLoginTargetUrl();
             if (returnTo) {
                 window.location.href = returnTo;
@@ -1102,6 +1113,7 @@ const classCodes = Array.isArray(session.classCodes)
         document.addEventListener('DOMContentLoaded', () => {
             checkAccessError();
             renderLevels();
+            refreshRemoteProgression();
 
             const teacherDashboardBtn = document.getElementById('teacherDashboardBtn');
             if (teacherDashboardBtn) {

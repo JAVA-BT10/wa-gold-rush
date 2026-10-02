@@ -4,6 +4,9 @@
  */
 
 class LevelAccessGuard {
+    static AUTOSAVE_KEY = 'level2_autosave';
+    static STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
+
     constructor(assignedLevel = 2) {
         this.assignedLevel = Number(assignedLevel) || 2;
     }
@@ -12,14 +15,20 @@ class LevelAccessGuard {
         return this.assignedLevel > 2 ? this.assignedLevel - 1 : null;
     }
 
-    getSavedProgressionState(requiredLevel) {
+    /**
+     * Reads the per-level checkpoint state from the shared Level 2–5 autosave
+     * slot. The game (script.js → GameState.saveToLocalStorage) and the home
+     * page level cards read/write this exact shape, so all three agree.
+     */
+    static readSavedProgressionState(requiredLevel, storage) {
         try {
-            const raw = localStorage.getItem('level2_autosave');
+            const store = storage || (typeof localStorage !== 'undefined' ? localStorage : null);
+            const raw = store?.getItem(LevelAccessGuard.AUTOSAVE_KEY);
             if (!raw) return null;
             const data = JSON.parse(raw);
             const gs = data?.gameState;
             if (!gs) return null;
-            const levelKey = String(requiredLevel);
+            const levelKey = String(Number(requiredLevel));
             return gs.progressionStateByLevel?.[levelKey]
                 || (String(gs.assignedLevel || '') === levelKey
                     ? {
@@ -30,6 +39,151 @@ class LevelAccessGuard {
         } catch (_) {
             return null;
         }
+    }
+
+    static isCheckpointPassed(requiredLevel, storage) {
+        return LevelAccessGuard.readSavedProgressionState(requiredLevel, storage)?.checkpointStatus === 'quiz_passed';
+    }
+
+    /**
+     * Cross-device unlock is only possible when a GGR_GetStudentProgress flow
+     * endpoint ("getStudentProgress") is configured for the student pages.
+     * Without it, unlocks stay same-device (the saved autosave slot).
+     */
+    static isRemoteProgressConfigured(globalObj) {
+        const root = globalObj || (typeof window !== 'undefined' ? window : globalThis);
+        const api = root?.WA_GOLD_RUSH_POWER_AUTOMATE;
+        if (!api || typeof api.callFlow !== 'function' || typeof api.resolveFlowEndpoint !== 'function') {
+            return false;
+        }
+        const endpoint = api.resolveFlowEndpoint('getStudentProgress');
+        return !!endpoint && !(typeof api.isPlaceholderEndpoint === 'function' && api.isPlaceholderEndpoint(endpoint));
+    }
+
+    static readStudentSession(storage) {
+        try {
+            const store = storage || (typeof localStorage !== 'undefined' ? localStorage : null);
+            const session = JSON.parse(store?.getItem(LevelAccessGuard.STUDENT_SESSION_KEY) || 'null');
+            const studentCode = String(session?.studentCode || '').trim();
+            if (!studentCode) return null;
+            return {
+                studentCode,
+                classCode: String(session.classCode || '').trim().toUpperCase()
+            };
+        } catch (_) {
+            return null;
+        }
+    }
+
+    static extractProgressRecords(data) {
+        const body = data && typeof data === 'object' && !Array.isArray(data) && data.body && typeof data.body === 'object'
+            ? data.body
+            : data;
+        if (Array.isArray(body)) return body;
+        if (!body || typeof body !== 'object') return [];
+        for (const key of ['progress', 'Progress', 'records', 'items', 'value']) {
+            if (Array.isArray(body[key])) return body[key];
+        }
+        return [body];
+    }
+
+    /**
+     * Fetches the student's saved progress from Microsoft Lists (via the
+     * getStudentProgress flow) and, if the required level's checkpoint quiz is
+     * recorded as passed there, mirrors that state into the local autosave slot
+     * so the game, home page, and this guard all read the same saved state.
+     */
+    static async hydrateRemoteProgression(requiredLevel, options = {}) {
+        const root = options.globalObj || (typeof window !== 'undefined' ? window : globalThis);
+        const storage = options.storage || root?.localStorage;
+        const level = Number(requiredLevel);
+        if (!Number.isFinite(level)) return { unlocked: false, reason: 'invalid_level' };
+        if (!LevelAccessGuard.isRemoteProgressConfigured(root)) {
+            return { unlocked: false, reason: 'flow_unavailable' };
+        }
+        const session = LevelAccessGuard.readStudentSession(storage);
+        if (!session) return { unlocked: false, reason: 'missing_student_session' };
+        const extract = root?.WA_GOLD_RUSH_PROGRESS_SNAPSHOT?.extractCheckpointFields;
+        if (typeof extract !== 'function') return { unlocked: false, reason: 'snapshot_unavailable' };
+
+        const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 8000;
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+        let result;
+        try {
+            result = await root.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow('getStudentProgress', {
+                studentCode: session.studentCode,
+                classCode: session.classCode,
+                level
+            }, {
+                requireApiKey: true,
+                ...(controller ? { signal: controller.signal } : {})
+            });
+        } catch (error) {
+            return { unlocked: false, reason: 'flow_failed', error: error?.message || String(error) };
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+        if (!result?.success || result?.data?.ok === false) {
+            return { unlocked: false, reason: 'flow_failed', error: result?.error || 'Progress lookup failed.' };
+        }
+
+        const codeKey = session.studentCode.toUpperCase();
+        const records = LevelAccessGuard.extractProgressRecords(result.data).filter((record) => {
+            if (!record || typeof record !== 'object') return false;
+            const recordCode = String(record.studentCode || record.StudentCode || '').trim().toUpperCase();
+            return !recordCode || recordCode === codeKey;
+        });
+        const passed = records
+            .map((record) => extract(record, level))
+            .find((fields) => fields?.checkpointStatus === 'quiz_passed');
+        if (!passed) return { unlocked: false, reason: 'not_passed' };
+
+        try {
+            const raw = storage?.getItem(LevelAccessGuard.AUTOSAVE_KEY);
+            const data = raw ? JSON.parse(raw) : {};
+            const gameState = data?.gameState && typeof data.gameState === 'object' ? data.gameState : {};
+            const byLevel = gameState.progressionStateByLevel && typeof gameState.progressionStateByLevel === 'object'
+                ? gameState.progressionStateByLevel
+                : {};
+            const levelKey = String(level);
+            byLevel[levelKey] = {
+                ...(byLevel[levelKey] || {}),
+                checkpointStatus: 'quiz_passed',
+                quizScore: passed.quizScore ?? byLevel[levelKey]?.quizScore ?? null,
+                quizPassedAt: passed.quizPassedAt || byLevel[levelKey]?.quizPassedAt || null,
+                quizAttempts: Array.isArray(byLevel[levelKey]?.quizAttempts) && byLevel[levelKey].quizAttempts.length
+                    ? byLevel[levelKey].quizAttempts
+                    : (Array.isArray(passed.quizAttempts) ? passed.quizAttempts : []),
+                approvalStatus: passed.approvalStatus || byLevel[levelKey]?.approvalStatus || null,
+                approverName: passed.approverName || byLevel[levelKey]?.approverName || null,
+                approvalTimestamp: passed.approvalTimestamp || byLevel[levelKey]?.approvalTimestamp || null
+            };
+            gameState.progressionStateByLevel = byLevel;
+            storage.setItem(LevelAccessGuard.AUTOSAVE_KEY, JSON.stringify({
+                ...data,
+                timestamp: data?.timestamp || new Date().toISOString(),
+                gameState
+            }));
+        } catch (error) {
+            return { unlocked: false, reason: 'storage_failed', error: error?.message || String(error) };
+        }
+        return { unlocked: true, reason: 'flow' };
+    }
+
+    getSavedProgressionState(requiredLevel) {
+        return LevelAccessGuard.readSavedProgressionState(requiredLevel);
+    }
+
+    /**
+     * Same-device check first; if locked, try the cross-device progress flow
+     * (only when configured) before denying access.
+     */
+    async resolveAccess(options = {}) {
+        if (this.isLevelAccessible()) return true;
+        const requiredLevel = this.getRequiredCheckpointLevel();
+        const remote = await LevelAccessGuard.hydrateRemoteProgression(requiredLevel, options);
+        return remote.unlocked ? this.isLevelAccessible() : false;
     }
 
     isLevelAccessible() {
@@ -132,4 +286,8 @@ function getAssignedLevelFromPageUrl() {
     } catch (_) {
         return 2;
     }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { LevelAccessGuard, getAssignedLevelFromPageUrl };
 }

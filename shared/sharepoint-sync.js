@@ -322,11 +322,29 @@ const SharePointSync = (() => {
      * progressKey is diagnostic-only — the Power Automate flow must recompute
      * the canonical key server-side and must not trust the client value.
      */
+    function _resolveSnapshotApi() {
+        const globalApi = (typeof globalThis !== 'undefined' ? globalThis : window).WA_GOLD_RUSH_PROGRESS_SNAPSHOT;
+        if (globalApi && typeof globalApi.buildCheckpointPayloadFields === 'function') return globalApi;
+        if (typeof require === 'function') {
+            try { return require('./progression-snapshot.js'); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    function _buildCheckpointFields(opts, level) {
+        const snapshotApi = _resolveSnapshotApi();
+        if (!snapshotApi) return {};
+        return snapshotApi.buildCheckpointPayloadFields({ ...opts, level }, level);
+    }
+
     function buildProgressPayload(opts) {
         const telemetry = _createProgressTelemetry(opts);
         const classCode = String(opts.classCode || '').trim().toUpperCase();
         const studentCode = String(opts.studentCode || '').trim();
         const level = _normalizeLevel(opts.level);
+        const progressionMarkersJson = opts.progressionMarkersJson
+            ? (typeof opts.progressionMarkersJson === 'string' ? opts.progressionMarkersJson : JSON.stringify(opts.progressionMarkersJson))
+            : '';
         return {
             studentCode,
             classCode,
@@ -336,9 +354,8 @@ const SharePointSync = (() => {
             currentAssets: _toRoundedInteger(opts.currentAssets ?? 0),
             netWorth: _toRoundedInteger(opts.netWorth ?? 0),
             score: _toRoundedInteger(opts.score ?? 0),
-            progressionMarkersJson: opts.progressionMarkersJson
-                ? (typeof opts.progressionMarkersJson === 'string' ? opts.progressionMarkersJson : JSON.stringify(opts.progressionMarkersJson))
-                : '',
+            progressionMarkersJson,
+            ..._buildCheckpointFields({ ...opts, progressionMarkersJson }, level),
             badgesJson: opts.badgesJson
                 ? (typeof opts.badgesJson === 'string' ? opts.badgesJson : JSON.stringify(opts.badgesJson))
                 : '',

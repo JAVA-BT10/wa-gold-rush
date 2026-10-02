@@ -73,52 +73,17 @@ Access: `/teacher/dashboard.html`
 
 ---
 
-## ⚠️ Temporary Teacher Allowlist Mode (LOW SECURITY)
+## Teacher Dashboard data flow (Microsoft Lists → Power Automate)
 
-> **This mode is a temporary workaround only.** Use it while Microsoft Entra app registration is unavailable. Disable it once M365 sign-in is working.
+**Microsoft Lists → Power Automate → Teacher Dashboard → Student Games**
 
-### What it does
+- **Sign-in:** every teacher, including admins, signs in via the `loginTeacher` flow (`GGR_LoginTeacher`) against the `GGR_Teachers` list. Admin access comes from a `GGR_Teachers` row with `Role=admin`; there is no code-level allowlist or admin bypass. Only the signed-in session is kept in `sessionStorage`.
+- **Dashboard data:** `GGR_GetDashboardData` is the only source for the dashboard. It returns `Teachers`, `Students` and `Progress` from the Lists. If one array is missing, the dashboard still loads the others and shows which array was missing. If the flow fails, the tables are cleared and a **Retry** button appears. Cached browser data is never shown in their place.
+- **Writes:** `GGR_UpsertTeacher` and `GGR_UpsertStudentProfile` only write. They do not supply dashboard data. The dashboard reports success only after the flow confirms the write, then reloads from `GGR_GetDashboardData`. To remove a teacher, deactivate their row in `GGR_Teachers`.
+- **Checkpoints:** the checkpoint tabs show `quiz_passed` students from the `Progress` rows (`CheckpointStatus`, `QuizScore`, …). Approvals are saved through `GGR_SaveCheckpointApproval`. While that flow is not configured, the approval buttons are disabled.
+- **Still in browser storage:** class controls (pause and Strict Classroom Mode), student autosave, and the cloud-save retry queue. These are not roster data.
 
-When `TEMP_TEACHER_ALLOWLIST_MODE = true` (in `teacher/dashboard-state.js`), teachers can access the dashboard by entering their email address at a prompt. Access is granted if the email is in the allowlist; otherwise access is denied.
-
-Normal M365 teacher sessions still work transparently when this mode is on.
-
-### How to add or remove teacher emails
-
-**Option 1 — Edit the static list (code change required)**
-
-Open `teacher/dashboard-state.js` and add/remove entries in `TEMP_TEACHER_ALLOWLIST_STATIC`:
-
-```js
-const TEMP_TEACHER_ALLOWLIST_STATIC = [
-    'teacher@education.wa.edu.au',
-    'anotherteacher@school.edu',
-];
-```
-
-**Option 2 — Use localStorage (no code change, takes effect immediately)**
-
-In browser DevTools (F12 → Application → Local Storage for your site):
-
-- Key: `wa_gold_rush_teacher_allowlist`
-- Value: comma- or newline-separated emails, e.g. `alice@school.edu,bob@school.edu`
-
-Entries from localStorage are merged with the static list.
-
-### How to disable temporary mode (switch back to M365-only auth)
-
-Once your Entra app registration is set up:
-
-1. Open `teacher/dashboard-state.js`.
-2. Change `const TEMP_TEACHER_ALLOWLIST_MODE = true;` → `false`.
-3. Deploy the change.
-4. Teachers will use Microsoft 365 sign-in on the home page as normal.
-
-Do **not** delete the allowlist or the M365 code — just setting the flag to `false` restores normal production behaviour.
-
-### Security warning
-
-⚠️ In temporary allowlist mode, dashboard access is gated only by email-string matching in browser-side storage. This is **not secure** for production use — it can be bypassed by anyone with access to browser DevTools. Use it only for short-term classroom continuity while awaiting IT/Entra setup.
+Backend prerequisites and the SaveProgress upsert contract are documented in `docs/power-automate/GGR_SaveProgress-repair-spec.md`.
 
 ---
 
