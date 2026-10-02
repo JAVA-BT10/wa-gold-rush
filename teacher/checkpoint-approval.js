@@ -1,203 +1,147 @@
 /**
  * Teacher Checkpoint Approval Module
- * Provides UI and state management for checkpoint quiz review & approval
- * 
- * Integrates with TeacherDashboard to:
- * - Display student quiz attempts and scores
- * - Show question-by-question review with explanations
- * - Allow approval, rejection, or retake requests
- * - Update student approval status in localStorage
+ * Provides the review modal and approval actions for checkpoint quizzes.
+ *
+ * Source of truth:
+ * - Quiz attempts, scores and approval state come from the flow-hydrated
+ *   dashboard data (GGR_GetDashboardData → GGR_StudentProgress).
+ * - Approvals and retake requests are written only through the
+ *   GGR_SaveCheckpointApproval flow (`saveCheckpointApproval` endpoint).
+ *   If that flow is not configured, the actions are disabled and an
+ *   "unavailable" message is shown. Nothing is written to browser storage.
+ * - Reviewer identity comes from the signed-in teacher session.
  */
 
 const CheckpointApproval = (() => {
-    const APPROVAL_STORAGE_KEY = 'wa_gr_checkpoint_approvals';
+    const APPROVAL_FLOW_NAME = 'saveCheckpointApproval';
+    const UNAVAILABLE_MESSAGE = 'Checkpoint approvals are unavailable: the GGR_SaveCheckpointApproval flow is not configured. Approval decisions cannot be saved yet.';
+    const NO_DETAIL_MESSAGE = 'Detailed per-question answers are not stored in Microsoft Lists for this attempt. Only the score and status are available.';
+    let dashboardRef = null;
 
-    /**
-     * Load all approvals for a level
-     */
-    function loadApprovalsForLevel(level) {
-        try {
-            const raw = localStorage.getItem(APPROVAL_STORAGE_KEY);
-            const all = raw ? JSON.parse(raw) : {};
-            return all[`level_${level}`] || {};
-        } catch (_) {
-            return {};
-        }
+    function configure(options = {}) {
+        if (options.dashboard) dashboardRef = options.dashboard;
+    }
+
+    function resolveDashboard(dashboard) {
+        return dashboard || dashboardRef || null;
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function isApprovalFlowConfigured(dashboard) {
+        const target = resolveDashboard(dashboard);
+        return !!(target && typeof target.hasConfiguredFlowEndpoint === 'function'
+            && target.hasConfiguredFlowEndpoint(APPROVAL_FLOW_NAME));
+    }
+
+    function getReviewerIdentity(dashboard) {
+        const target = resolveDashboard(dashboard);
+        const session = target && typeof target.getTeacherSession === 'function'
+            ? target.getTeacherSession()
+            : null;
+        if (!session?.teacherEmail) return null;
+        return {
+            reviewerEmail: session.teacherEmail,
+            reviewerName: session.teacherName || session.teacherEmail,
+            reviewerRole: session.role || 'teacher'
+        };
+    }
+
+    function getLatestAttempt(checkpoint = {}) {
+        const attempts = Array.isArray(checkpoint?.quizAttempts) ? checkpoint.quizAttempts : [];
+        return attempts.length ? attempts[attempts.length - 1] : null;
+    }
+
+    function buildApprovalPayload({ student = {}, level, status, reviewer }) {
+        const classCode = String(student.classCode || '').trim().toUpperCase();
+        const studentCode = String(student.studentCode || student.displayId || '').trim();
+        const numericLevel = Number(level) || 0;
+        return {
+            studentCode,
+            classCode,
+            level: numericLevel,
+            progressKey: [classCode, studentCode.toUpperCase(), numericLevel].join('|'),
+            approvalStatus: status,
+            approverName: reviewer?.reviewerName || '',
+            approverEmail: reviewer?.reviewerEmail || '',
+            approvalTimestamp: new Date().toISOString()
+        };
     }
 
     /**
-     * Save approval for student + level
+     * Persist an approval/retake decision through GGR_SaveCheckpointApproval.
+     * Success is only reported after the flow confirms the write; the dashboard
+     * then re-hydrates so every device sees the same state.
      */
-    function saveApproval(studentCode, level, status, approverName = 'Teacher') {
-        try {
-            const raw = localStorage.getItem(APPROVAL_STORAGE_KEY);
-            const all = raw ? JSON.parse(raw) : {};
-            const key = `level_${level}`;
-            if (!all[key]) all[key] = {};
-            all[key][studentCode] = {
-                status,           // 'approved' | 'rejected' | 'retake_requested'
-                approverName,
-                timestamp: new Date().toISOString(),
-                approvedAt: new Date().toISOString()
+    async function saveApproval({ dashboard, student, level, status } = {}) {
+        const target = resolveDashboard(dashboard);
+        if (!target) {
+            return { success: false, error: 'Teacher dashboard is not ready.' };
+        }
+        if (!isApprovalFlowConfigured(target)) {
+            return { success: false, unavailable: true, error: UNAVAILABLE_MESSAGE };
+        }
+        const reviewer = getReviewerIdentity(target);
+        if (!reviewer) {
+            return { success: false, error: 'Sign in to the Teacher Dashboard before reviewing checkpoints.' };
+        }
+        if (!student || !(student.studentCode || student.displayId)) {
+            return { success: false, error: 'Student not found.' };
+        }
+        if (typeof target.canTeacherAccessClass === 'function' && !target.canTeacherAccessClass(student.classCode)) {
+            return { success: false, error: 'You are not authorized to review students in that class.' };
+        }
+        if (!['approved', 'retake_requested', 'rejected'].includes(status)) {
+            return { success: false, error: 'Unknown approval decision.' };
+        }
+
+        const payload = buildApprovalPayload({ student, level, status, reviewer });
+        const result = await target.postFlowPayload(APPROVAL_FLOW_NAME, payload);
+        if (!result?.success) {
+            return {
+                success: false,
+                error: String(result?.error || 'GGR_SaveCheckpointApproval did not confirm the decision.')
             };
-            localStorage.setItem(APPROVAL_STORAGE_KEY, JSON.stringify(all));
-            return true;
-        } catch (_) {
-            return false;
         }
+
+        const hydration = typeof target.rehydrateAfterWrite === 'function'
+            ? await target.rehydrateAfterWrite()
+            : null;
+        return { success: true, payload, hydration };
     }
 
     /**
-     * Get approval status for student + level
+     * Generate HTML for the quiz review section.
      */
-    function getApprovalStatus(studentCode, level) {
-        const approvals = loadApprovalsForLevel(level);
-        return approvals[studentCode] || null;
-    }
-
-    /**
-     * Sync approval to student's game state (localStorage)
-     * This updates the matching classroom/player records with approval info.
-     */
-    function syncApprovalToGameState(studentCode, level, approvalRecord) {
-        const levelKey = String(level);
-
-        function applyApprovalToGameStateContainer(gameState) {
-            if (!gameState || typeof gameState !== 'object') return false;
-
-            const progressionStateByLevel = (gameState.progressionStateByLevel && typeof gameState.progressionStateByLevel === 'object')
-                ? gameState.progressionStateByLevel
-                : {};
-            const levelState = {
-                checkpointStatus: null,
-                quizAttempts: [],
-                approvalStatus: null,
-                approverName: null,
-                approvalTimestamp: null,
-                quizScore: null,
-                quizPassedAt: null,
-                ...(progressionStateByLevel[levelKey] || {})
-            };
-
-            if (approvalRecord.status === 'approved') {
-                levelState.checkpointStatus = levelState.checkpointStatus || 'quiz_passed';
-                levelState.approvalStatus = 'approved';
-                levelState.approverName = approvalRecord.approverName;
-                levelState.approvalTimestamp = approvalRecord.timestamp;
-            } else if (approvalRecord.status === 'rejected') {
-                levelState.approvalStatus = 'rejected';
-                levelState.approverName = approvalRecord.approverName;
-                levelState.approvalTimestamp = approvalRecord.timestamp;
-            } else if (approvalRecord.status === 'retake_requested') {
-                levelState.approvalStatus = null;
-                levelState.approverName = approvalRecord.approverName;
-                levelState.approvalTimestamp = approvalRecord.timestamp;
-                levelState.checkpointStatus = 'quiz_available';
-            }
-
-            progressionStateByLevel[levelKey] = levelState;
-            gameState.progressionStateByLevel = progressionStateByLevel;
-            gameState.checkpointStatus = levelState.checkpointStatus;
-            gameState.quizAttempts = levelState.quizAttempts;
-            gameState.approvalStatus = levelState.approvalStatus;
-            gameState.approverName = levelState.approverName;
-            gameState.approvalTimestamp = levelState.approvalTimestamp;
-            gameState.quizScore = levelState.quizScore;
-            return true;
-        }
-
-        function matchesStudent(candidate) {
-            return String(candidate || '').trim().toLowerCase() === String(studentCode || '').trim().toLowerCase();
-        }
-
-        try {
-            let updated = false;
-
-            const recordsRaw = localStorage.getItem('wa_gold_rush_class_records');
-            if (recordsRaw) {
-                const records = JSON.parse(recordsRaw);
-                if (Array.isArray(records)) {
-                    records.forEach(record => {
-                        if (matchesStudent(record.studentCode) || matchesStudent(record.studentId)) {
-                            updated = applyApprovalToGameStateContainer(record.gameState || (record.gameState = {})) || updated;
-                        }
-                    });
-                    localStorage.setItem('wa_gold_rush_class_records', JSON.stringify(records));
-                }
-            }
-
-            const dashboardRaw = localStorage.getItem('teacher_dashboard');
-            if (dashboardRaw) {
-                const dashboard = JSON.parse(dashboardRaw);
-                if (Array.isArray(dashboard?.students)) {
-                    dashboard.students.forEach(student => {
-                        if (matchesStudent(student.studentCode) || matchesStudent(student.displayId) || matchesStudent(student.id)) {
-                            updated = applyApprovalToGameStateContainer(student.gameState || (student.gameState = {})) || updated;
-                        }
-                    });
-                    localStorage.setItem('teacher_dashboard', JSON.stringify(dashboard));
-                }
-            }
-
-            const autosaveKeys = Array.from(new Set([`level${level}_autosave`, 'level2_autosave']));
-            autosaveKeys.forEach(key => {
-                const autosaveRaw = localStorage.getItem(key);
-                if (!autosaveRaw) return;
-                const autosave = JSON.parse(autosaveRaw);
-                const autosaveCode = autosave?.gameState?.player?.studentCode || autosave?.gameState?.player?.studentId || '';
-                if (matchesStudent(autosaveCode) && applyApprovalToGameStateContainer(autosave.gameState)) {
-                    localStorage.setItem(key, JSON.stringify(autosave));
-                    updated = true;
-                }
-            });
-
-            return updated;
-        } catch (_) {
-            return false;
-        }
-    }
-
-    /**
-     * Get student's quiz attempt for a level
-     */
-    function getStudentQuizAttempt(studentCode, level) {
-        try {
-            const storageKey = `wa_gr_progression_quiz_${studentCode}_level_${level}`;
-            const raw = localStorage.getItem(storageKey);
-            if (!raw) return null;
-            const data = JSON.parse(raw);
-            if (!data.attempts || !data.attempts.length) return null;
-            return data.attempts[data.attempts.length - 1]; // Last attempt
-        } catch (_) {
-            return null;
-        }
-    }
-
-    /**
-     * Generate HTML for quiz review modal
-     */
-    function generateQuizReviewHTML(attempt) {
-        if (!attempt) {
-            return '<p style="color: #666;">No quiz attempt found.</p>';
-        }
-
-        const scoreColor = attempt.score >= 4 ? '#4caf50' : '#f44336';
-        const scoreText = attempt.score >= 4 ? 'PASSED ✅' : 'FAILED ❌';
+    function generateQuizReviewHTML(attempt, checkpoint = {}) {
+        const scoreValue = attempt?.score ?? checkpoint?.quizScore;
+        const numericScore = Number(scoreValue);
+        const hasScore = scoreValue !== null && scoreValue !== undefined && scoreValue !== '' && Number.isFinite(numericScore);
+        const passed = checkpoint?.checkpointStatus === 'quiz_passed' || (hasScore && numericScore >= 4);
+        const scoreColor = passed ? '#4caf50' : '#f44336';
+        const timestamp = attempt?.timestamp || checkpoint?.quizPassedAt;
 
         let html = `
             <div style="margin-bottom: 20px;">
                 <h4 style="margin: 0 0 10px 0; color: #1a1a1a;">Quiz Performance</h4>
                 <div style="display: flex; gap: 20px; flex-wrap: wrap;">
                     <div>
-                        <div style="font-size: 32px; font-weight: bold; color: ${scoreColor};">${attempt.score}/5</div>
+                        <div style="font-size: 32px; font-weight: bold; color: ${scoreColor};">${hasScore ? `${escapeHtml(numericScore)}/5` : '?/5'}</div>
                         <div style="font-size: 12px; color: #666; margin-top: 4px;">Score</div>
                     </div>
                     <div>
-                        <div style="font-size: 32px; font-weight: bold; color: ${scoreColor};">${scoreText}</div>
+                        <div style="font-size: 32px; font-weight: bold; color: ${scoreColor};">${passed ? 'PASSED ✅' : 'NOT PASSED ❌'}</div>
                         <div style="font-size: 12px; color: #666; margin-top: 4px;">Status</div>
                     </div>
                     <div>
-                        <div style="font-size: 12px; color: #999;">${new Date(attempt.timestamp).toLocaleString()}</div>
+                        <div style="font-size: 12px; color: #999;">${timestamp ? escapeHtml(new Date(timestamp).toLocaleString()) : 'Unknown'}</div>
                         <div style="font-size: 12px; color: #666; margin-top: 4px;">Attempt Time</div>
                     </div>
                 </div>
@@ -208,43 +152,60 @@ const CheckpointApproval = (() => {
             <h4 style="margin: 20px 0 10px 0; color: #1a1a1a;">Question Review</h4>
         `;
 
-        if (attempt.results && Array.isArray(attempt.results)) {
-            attempt.results.forEach((result, idx) => {
-                const icon = result.correct ? '✅' : '❌';
-                const bgColor = result.correct ? '#e8f5e9' : '#ffebee';
-                html += `
-                    <div style="background: ${bgColor}; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
-                        <p style="margin: 0 0 8px 0; font-weight: bold; color: #1a1a1a;">${icon} Q${idx + 1}: ${result.question}</p>
-                        <div style="margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; font-size: 13px;">
-                            <strong>Student Answer:</strong> ${result.studentAnswer || '(Not answered)'}
-                        </div>
-                        <div style="margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; font-size: 13px; color: #2e7d32;">
-                            <strong>Correct Answer:</strong> ${result.correctAnswer}
-                        </div>
-                        <div style="margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; font-size: 13px; color: #555; line-height: 1.5;">
-                            <strong>Explanation:</strong> ${result.explanation}
-                        </div>
-                        <div style="margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; font-size: 12px; color: #777; line-height: 1.5; font-style: italic;">
-                            <strong>Work-Through:</strong> ${result.workThroughExample}
-                        </div>
-                    </div>
-                `;
-            });
+        if (!attempt || !Array.isArray(attempt.results) || !attempt.results.length) {
+            html += `<p class="checkpoint-no-detail" style="color: #666;">${escapeHtml(NO_DETAIL_MESSAGE)}</p>`;
+            return html;
         }
+
+        attempt.results.forEach((result, idx) => {
+            const icon = result.correct ? '✅' : '❌';
+            const bgColor = result.correct ? '#e8f5e9' : '#ffebee';
+            html += `
+                <div style="background: ${bgColor}; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+                    <p style="margin: 0 0 8px 0; font-weight: bold; color: #1a1a1a;">${icon} Q${idx + 1}: ${escapeHtml(result.question)}</p>
+                    <div style="margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; font-size: 13px;">
+                        <strong>Student Answer:</strong> ${escapeHtml(result.studentAnswer || '(Not answered)')}
+                    </div>
+                    <div style="margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; font-size: 13px; color: #2e7d32;">
+                        <strong>Correct Answer:</strong> ${escapeHtml(result.correctAnswer)}
+                    </div>
+                    <div style="margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; font-size: 13px; color: #555; line-height: 1.5;">
+                        <strong>Explanation:</strong> ${escapeHtml(result.explanation)}
+                    </div>
+                    <div style="margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; font-size: 12px; color: #777; line-height: 1.5; font-style: italic;">
+                        <strong>Work-Through:</strong> ${escapeHtml(result.workThroughExample)}
+                    </div>
+                </div>
+            `;
+        });
 
         return html;
     }
 
     /**
-     * Show checkpoint review modal (for teachers)
+     * Show checkpoint review modal (for teachers).
+     * options: { dashboard, student, level, checkpoint, onSaved }
      */
-    function showReviewModal(studentCode, level, studentName = '') {
-        const attempt = getStudentQuizAttempt(studentCode, level);
-        const currentApproval = getApprovalStatus(studentCode, level);
+    function showReviewModal(options = {}) {
+        const dashboard = resolveDashboard(options.dashboard);
+        const student = options.student || {};
+        const level = Number(options.level) || 0;
+        const checkpoint = options.checkpoint || student.checkpointsByLevel?.[level] || {};
+        const studentName = student.leaderboardName || student.studentName || student.studentCode || 'Student';
+        const attempt = getLatestAttempt(checkpoint);
+        const approvalStatus = checkpoint.approvalStatus || '';
+        const flowConfigured = isApprovalFlowConfigured(dashboard);
+        const reviewer = getReviewerIdentity(dashboard);
+        const actionsEnabled = flowConfigured && !!reviewer;
+
+        document.getElementById('checkpointReviewModal')?.remove();
 
         const modal = document.createElement('div');
         modal.className = 'checkpoint-review-modal';
         modal.id = 'checkpointReviewModal';
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+        modal.setAttribute('aria-labelledby', 'checkpointReviewTitle');
         modal.style.cssText = `
             position: fixed;
             top: 0;
@@ -270,65 +231,89 @@ const CheckpointApproval = (() => {
             box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
         `;
 
-        const statusBadge = currentApproval ? `<span style="display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; background: ${currentApproval.status === 'approved' ? '#4caf50' : '#ff9800'}; color: white;">${currentApproval.status.toUpperCase()}</span>` : '';
+        const statusBadge = approvalStatus
+            ? `<span style="display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; background: ${approvalStatus === 'approved' ? '#4caf50' : '#ff9800'}; color: white;">${escapeHtml(String(approvalStatus).toUpperCase())}</span>`
+            : '';
+        const approverLine = checkpoint.approverName
+            ? `<p style="margin: 6px 0 0; color: #666; font-size: 13px;">Reviewed by ${escapeHtml(checkpoint.approverName)}${checkpoint.approvalTimestamp ? ` on ${escapeHtml(new Date(checkpoint.approvalTimestamp).toLocaleString())}` : ''}</p>`
+            : '';
+        const unavailableNotice = !flowConfigured
+            ? UNAVAILABLE_MESSAGE
+            : (!reviewer ? 'Sign in to the Teacher Dashboard before reviewing checkpoints.' : '');
+        const disabledAttr = actionsEnabled ? '' : 'disabled aria-disabled="true"';
+        const disabledStyle = actionsEnabled ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: 0.55;';
 
         content.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                 <div>
-                    <h2 style="margin: 0 0 4px 0; color: #1a1a1a;">Level ${level} Checkpoint Review</h2>
-                    <p style="margin: 0; color: #666; font-size: 14px;">Student: ${studentName}</p>
+                    <h2 id="checkpointReviewTitle" style="margin: 0 0 4px 0; color: #1a1a1a;">Level ${escapeHtml(level)} Checkpoint Review</h2>
+                    <p style="margin: 0; color: #666; font-size: 14px;">Student: ${escapeHtml(studentName)}</p>
                 </div>
-                <button style="background: none; border: none; font-size: 24px; cursor: pointer; color: #999;" onclick="document.getElementById('checkpointReviewModal').remove();">×</button>
+                <button type="button" class="btn-close-checkpoint" aria-label="Close checkpoint review" style="width: auto; background: none; border: none; font-size: 24px; cursor: pointer; color: #999;">×</button>
             </div>
 
             <div style="margin-bottom: 16px;">
                 ${statusBadge}
+                ${approverLine}
             </div>
 
-            ${generateQuizReviewHTML(attempt)}
+            ${generateQuizReviewHTML(attempt, checkpoint)}
 
             <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
 
+            <p class="checkpoint-approval-unavailable" role="status" aria-live="polite" style="color: #b45309; font-size: 13px; margin: 0 0 12px; ${unavailableNotice ? '' : 'display: none;'}">${escapeHtml(unavailableNotice)}</p>
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <button class="btn-approve-checkpoint" style="flex: 1; min-width: 120px; padding: 12px; background: #4caf50; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px;">
+                <button type="button" class="btn-approve-checkpoint" ${disabledAttr} style="flex: 1; min-width: 120px; padding: 12px; background: #4caf50; color: white; border: none; border-radius: 6px; font-weight: bold; font-size: 14px; ${disabledStyle}">
                     ✅ Approve for Next Level
                 </button>
-                <button class="btn-retake-checkpoint" style="flex: 1; min-width: 120px; padding: 12px; background: #ff9800; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px;">
+                <button type="button" class="btn-retake-checkpoint" ${disabledAttr} style="flex: 1; min-width: 120px; padding: 12px; background: #ff9800; color: white; border: none; border-radius: 6px; font-weight: bold; font-size: 14px; ${disabledStyle}">
                     🔄 Request Retake
                 </button>
             </div>
+            <p class="checkpoint-approval-result" role="status" aria-live="polite" style="font-size: 13px; margin: 12px 0 0;"></p>
         `;
 
         modal.appendChild(content);
         document.body.appendChild(modal);
 
-        // Attach event handlers
+        const resultEl = content.querySelector('.checkpoint-approval-result');
         const approveBtn = content.querySelector('.btn-approve-checkpoint');
         const retakeBtn = content.querySelector('.btn-retake-checkpoint');
+        content.querySelector('.btn-close-checkpoint').addEventListener('click', () => modal.remove());
 
-        approveBtn.onclick = () => {
-            const teacherName = prompt('Your name (for record):') || 'Teacher';
-            saveApproval(studentCode, level, 'approved', teacherName);
-            syncApprovalToGameState(studentCode, level, { status: 'approved', approverName: teacherName });
-            alert(`✅ Approved ${studentName} for Level ${level + 1}`);
+        const submitDecision = async (status, successMessage) => {
+            if (!actionsEnabled) return;
+            approveBtn.disabled = true;
+            retakeBtn.disabled = true;
+            resultEl.style.color = '#1d4ed8';
+            resultEl.textContent = 'Saving decision to Microsoft Lists…';
+            const result = await saveApproval({ dashboard, student, level, status });
+            if (!result.success) {
+                approveBtn.disabled = false;
+                retakeBtn.disabled = false;
+                resultEl.style.color = '#b91c1c';
+                resultEl.setAttribute('role', 'alert');
+                resultEl.textContent = `Decision was not saved. ${result.error}`;
+                return;
+            }
             modal.remove();
-            if (window.refreshCheckpointTable) window.refreshCheckpointTable();
+            if (typeof options.onSaved === 'function') options.onSaved(result, successMessage);
         };
 
-        retakeBtn.onclick = () => {
-            saveApproval(studentCode, level, 'retake_requested', 'Teacher');
-            syncApprovalToGameState(studentCode, level, { status: 'retake_requested', approverName: 'Teacher' });
-            alert(`🔄 Requested retake for ${studentName}. They can now re-attempt the quiz.`);
-            modal.remove();
-            if (window.refreshCheckpointTable) window.refreshCheckpointTable();
-        };
+        approveBtn.addEventListener('click', () => submitDecision('approved', `Approved ${studentName} for Level ${level + 1}.`));
+        retakeBtn.addEventListener('click', () => submitDecision('retake_requested', `Requested a retake for ${studentName}.`));
     }
 
     return {
-        loadApprovalsForLevel,
+        APPROVAL_FLOW_NAME,
+        UNAVAILABLE_MESSAGE,
+        NO_DETAIL_MESSAGE,
+        configure,
+        isApprovalFlowConfigured,
+        getReviewerIdentity,
+        getLatestAttempt,
+        buildApprovalPayload,
         saveApproval,
-        getApprovalStatus,
-        getStudentQuizAttempt,
         generateQuizReviewHTML,
         showReviewModal
     };

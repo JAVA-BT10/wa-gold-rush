@@ -74,6 +74,11 @@ function createProgressSaveScheduler(options = {}) {
                 return activeSave.promise;
             }
             return startSave(payload);
+        },
+        async whenIdle() {
+            while (activeSaves.size) {
+                await Promise.all(Array.from(activeSaves.values(), (entry) => entry.promise));
+            }
         }
     };
 }
@@ -135,6 +140,30 @@ function enforceCurrentLevelAccess() {
     return true;
 }
 
+/**
+ * Async variant used at page start: if the level is locked on this device,
+ * try the cross-device progress flow (when configured) so a quiz passed on
+ * another device unlocks here too. Must run before loadFromLocalStorage so the
+ * game state picks up any mirrored checkpoint.
+ */
+async function resolveCurrentLevelAccess() {
+    if (typeof LevelAccessGuard === 'undefined') return true;
+    const guard = new LevelAccessGuard(getAssignedLevelFromUrl());
+    try {
+        if (typeof guard.resolveAccess === 'function' && await guard.resolveAccess()) return true;
+    } catch (error) {
+        console.warn('[Level2] Remote progression check failed', error?.message || error);
+    }
+    return enforceCurrentLevelAccess();
+}
+
+function buildLevelUrl(level) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('level', String(level));
+    url.hash = '';
+    return url.toString();
+}
+
 function resolveConfigPath() {
     const currentPath = window.location.pathname || '';
     if (currentPath.includes('/blob/') || currentPath.includes('/tree/')) {
@@ -158,6 +187,8 @@ document.addEventListener('DOMContentLoaded', async function() {
         alert(`Failed to load game configuration from ${configPath}. Please use GitHub Pages or a local web server and try again.`);
         return;
     }
+
+    if (!(await resolveCurrentLevelAccess())) return;
 
     try {
         gameState.loadFromLocalStorage();
@@ -680,9 +711,11 @@ function displayQuizResults(result, quiz) {
         syncPlayerRecord();
         if (retakeBtn) retakeBtn.style.display = 'none';
         if (continueBtn) {
+            const nextLevel = getNextAssignedLevel();
             continueBtn.style.display = 'block';
-            continueBtn.textContent = getNextAssignedLevel() ? 'Continue Playing (next level unlocked)' : 'Continue Playing';
-            continueBtn.onclick = () => closeAllModals();
+            continueBtn.disabled = false;
+            continueBtn.textContent = nextLevel ? `Continue to Level ${nextLevel} →` : 'Continue Playing';
+            continueBtn.onclick = () => continueAfterPassedQuiz(continueBtn, nextLevel);
         }
     } else {
         gameState.updateProgressionState?.({
@@ -701,6 +734,36 @@ function displayQuizResults(result, quiz) {
         }
         if (continueBtn) continueBtn.style.display = 'none';
     }
+}
+
+/**
+ * After a passed checkpoint quiz: wait (briefly) for the cloud progress save so
+ * the quiz_passed checkpoint reaches GGR_StudentProgress, then open the next
+ * level. The local autosave already holds quiz_passed, which the access guard reads.
+ */
+async function continueAfterPassedQuiz(button, nextLevel) {
+    if (!nextLevel) {
+        closeAllModals();
+        return;
+    }
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Saving progress…';
+    }
+    gameState.saveToLocalStorage();
+    let saveTimer = null;
+    try {
+        await Promise.race([
+            getProgressSaveScheduler().whenIdle(),
+            new Promise((resolve) => { saveTimer = setTimeout(resolve, 5000); })
+        ]);
+    } catch (_) {
+        // Cloud save failures are queued for retry by SharePointSync.
+    } finally {
+        if (saveTimer) clearTimeout(saveTimer);
+    }
+    closeAllModals();
+    window.location.href = buildLevelUrl(nextLevel);
 }
 
 function updateAllUI() {

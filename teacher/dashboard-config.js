@@ -117,6 +117,11 @@ window.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints = {
             || 'https://REPLACE-WITH-GGR_GetDashboardData-URL'),
     getStudentProgress: existingFlowEndpoints.getStudentProgress
         || 'https://REPLACE-WITH-GGR_GetStudentProgress-URL',
+    // Checkpoint approval persistence. Until this flow exists the checkpoint
+    // approval buttons stay disabled (no local-only approvals).
+    saveCheckpointApproval: existingFlowEndpoints.saveCheckpointApproval
+        || sharedFlowEndpoints.saveCheckpointApproval
+        || 'https://REPLACE-WITH-GGR_SaveCheckpointApproval-URL',
     
     // TIER 4 - Analytics
     rebuildLeaderboardOnProgressChange: existingFlowEndpoints.rebuildLeaderboardOnProgressChange

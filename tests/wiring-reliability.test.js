@@ -733,42 +733,59 @@ test('dashboard hydration adapter normalizes expected shape while disabled', () 
     assert.equal(result.data.teachers[0].email, 't@example.com');
 });
 
-test('dashboard hydration loads students/teachers/progress from flow response', async () => {
-    global.localStorage = createStorage({
-        teacher_dashboard: JSON.stringify({
-            students: [{
-                id: 'seed-1',
-                studentCode: 'SC-1',
-                classCode: '6B',
-                gameState: { lastPlayed: '2026-01-01T00:00:00.000Z' }
-            }]
-        }),
-        wa_gold_rush_teacher_list: JSON.stringify([{
-            id: 'local.teacher@example.com',
-            email: 'local.teacher@example.com',
-            name: 'Local Teacher',
-            classCode: '6C',
-            role: 'teacher'
-        }])
-    });
-    global.sessionStorage = createStorage({
+function setupTeacherDashboardGlobals({ localItems = {}, session = true, apiKey = 'key', endpoints = {}, callFlow } = {}) {
+    global.localStorage = createStorage(localItems);
+    global.sessionStorage = createStorage(session ? {
         wa_gold_rush_teacher_session: JSON.stringify({
             ok: true,
             teacherEmail: 'teacher@example.com',
+            teacherName: 'Teacher One',
             classCode: '6B',
-            classCodes: ['6B']
+            classCodes: ['6B'],
+            role: 'teacher'
         })
-    });
+    } : {});
     global.WA_GOLD_RUSH_DASHBOARD_CONFIG = {
-        apiKey: 'key',
+        apiKey,
         flowEndpoints: {
-            getDashboardData: 'https://example.com/get-dashboard-data'
+            getDashboardData: 'https://example.com/get-dashboard-data',
+            ...endpoints
         }
     };
-    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey: 'key' };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey };
     global.WA_GOLD_RUSH_POWER_AUTOMATE = {
-        getApiKey: () => 'key',
-        callFlow: async (_flowName, payload) => {
+        getApiKey: () => apiKey,
+        callFlow: callFlow || (async () => {
+            throw new Error('Unexpected flow call');
+        })
+    };
+    const TeacherDashboard = require('../teacher/dashboard-state.js');
+    return new TeacherDashboard();
+}
+
+const STALE_LOCAL_DASHBOARD_ITEMS = {
+    teacher_dashboard: JSON.stringify({
+        students: [{
+            id: 'stale-1',
+            studentCode: 'STALE-1',
+            classCode: '6B',
+            gameState: { round: 9, netWorth: 9999, lastPlayed: '2020-01-01T00:00:00.000Z' }
+        }]
+    }),
+    wa_gold_rush_teacher_list: JSON.stringify([{
+        id: 'local.teacher@example.com',
+        email: 'local.teacher@example.com',
+        name: 'Local Teacher',
+        classCode: '6C',
+        role: 'teacher'
+    }]),
+    wa_gold_rush_class_records: JSON.stringify([{ studentCode: 'STALE-1', classCode: '6B', round: 9 }])
+};
+
+test('dashboard hydration loads students/teachers/progress from flow response (fresh browser)', async () => {
+    const dashboard = setupTeacherDashboardGlobals({
+        callFlow: async (flowName, payload) => {
+            assert.equal(flowName, 'getDashboardData');
             assert.equal(payload.teacherEmail, 'teacher@example.com');
             return {
                 success: true,
@@ -784,260 +801,328 @@ test('dashboard hydration loads students/teachers/progress from flow response', 
                         Level: 2
                     }],
                     Teachers: [{
-                        teacherEmail: 'teacher@example.com',
-                        teacherName: 'Teacher One',
-                        classCode: '6b',
-                        role: 'teacher'
+                        TeacherEmail: 'Teacher@Example.com',
+                        TeacherName: 'Teacher One',
+                        ClassCode: '6b',
+                        Role: { Value: 'admin' }
                     }],
                     Progress: [{
                         StudentCode: 'SC-1',
                         ClassCode: '6b',
+                        Level: 2,
                         CurrentRound: 4,
                         CurrentCash: 456.75,
-                        NetWorth: 1234.5
+                        NetWorth: 1234.5,
+                        CheckpointStatus: 'quiz_passed',
+                        QuizScore: 4
                     }]
                 }
             };
         }
-    };
-
-    const TeacherDashboard = require('../teacher/dashboard-state.js');
-    const dashboard = new TeacherDashboard();
-    const result = await dashboard.hydrateDashboardFromFlowWithFallback();
+    });
+    const result = await dashboard.hydrateDashboardFromFlow();
 
     assert.equal(result.success, true);
     assert.equal(result.source, 'flow');
+    assert.deepEqual(result.missingArrays, []);
+    assert.deepEqual(result.counts, { students: 1, teachers: 1, progress: 1 });
     assert.equal(result.diagnostics.teacherSessionFound, true);
     assert.equal(result.diagnostics.apiKeyPresent, true);
     assert.equal(result.diagnostics.hasConfiguredFlowEndpoint, true);
     assert.equal(result.diagnostics.flowRequestAttempted, true);
     assert.equal(result.diagnostics.flowRequestSucceeded, true);
     assert.equal(result.diagnostics.studentsReturned, 1);
-    assert.equal(result.diagnostics.fallbackTriggered, false);
+    assert.equal(result.diagnostics.hydrationFailed, false);
     assert.equal(dashboard.students.length, 1);
     assert.equal(dashboard.students[0].studentCode, 'SC-1');
     assert.equal(dashboard.students[0].classCode, '6B');
     assert.equal(dashboard.students[0].gameState.round, 4);
     assert.equal(dashboard.students[0].gameState.cash, 456.75);
     assert.equal(dashboard.students[0].gameState.netWorth, 1234.5);
-    assert.equal(dashboard.students[0].gameState.lastPlayed, '2026-01-01T00:00:00.000Z');
-    assert.equal(dashboard.getTeacher('teacher@example.com')?.email, 'teacher@example.com');
-    assert.equal(dashboard.getTeacher('local.teacher@example.com')?.email, 'local.teacher@example.com');
-    const persistedProgress = JSON.parse(global.localStorage.getItem('wa_gold_rush_class_records'));
-    assert.equal(persistedProgress[0].round, 4);
-    assert.equal(persistedProgress[0].cash, 456.75);
+    assert.equal(dashboard.students[0].checkpointsByLevel[2].checkpointStatus, 'quiz_passed');
+    assert.equal(dashboard.students[0].checkpointsByLevel[2].quizScore, 4);
+    const teacher = dashboard.getTeacher('teacher@example.com');
+    assert.equal(teacher?.email, 'teacher@example.com');
+    assert.equal(teacher?.name, 'Teacher One');
+    assert.equal(teacher?.role, 'admin');
+    // Hydration never writes roster/progress data into browser storage.
+    assert.equal(global.localStorage.getItem('wa_gold_rush_class_records'), null);
+    assert.equal(global.localStorage.getItem('teacher_dashboard'), null);
+    assert.equal(global.localStorage.getItem('wa_gold_rush_teacher_list'), null);
 });
 
-test('dashboard hydration falls back before flow call when teacher session is missing', async () => {
-    global.localStorage = createStorage({
-        teacher_dashboard: JSON.stringify({ students: [] }),
-        wa_gold_rush_teacher_list: JSON.stringify([])
+test('dashboard hydration accepts partial flow response when teachers array is missing', async () => {
+    const dashboard = setupTeacherDashboardGlobals({
+        callFlow: async () => ({
+            success: true,
+            status: 200,
+            data: {
+                ok: true,
+                students: [{ studentCode: 'SC-2', leaderboardName: 'Two', classCode: '6B' }],
+                progress: [{ studentCode: 'SC-2', classCode: '6B', level: 2, currentRound: 3 }]
+            }
+        })
     });
-    global.sessionStorage = createStorage();
-    global.WA_GOLD_RUSH_DASHBOARD_CONFIG = {
-        apiKey: 'key',
-        flowEndpoints: {
-            getDashboardData: 'https://example.com/get-dashboard-data'
-        }
-    };
-    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey: 'key' };
-    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
-        getApiKey: () => 'key',
+    const result = await dashboard.hydrateDashboardFromFlow();
+
+    assert.equal(result.success, true);
+    assert.deepEqual(result.missingArrays, ['teachers']);
+    assert.equal(result.diagnostics.missingArrays.includes('teachers'), true);
+    assert.equal(dashboard.students.length, 1);
+    assert.equal(dashboard.students[0].gameState.round, 3);
+    assert.equal(dashboard.teachers.length, 0);
+    assert.match(result.statusMessage, /did not include: teachers/);
+});
+
+test('dashboard hydration never merges stale local teacher/dashboard caches into flow data', async () => {
+    const dashboard = setupTeacherDashboardGlobals({
+        localItems: STALE_LOCAL_DASHBOARD_ITEMS,
+        callFlow: async () => ({
+            success: true,
+            status: 200,
+            data: {
+                ok: true,
+                students: [{ studentCode: 'SC-1', leaderboardName: 'One', classCode: '6B' }],
+                teachers: [{ teacherEmail: 'teacher@example.com', classCode: '6B', role: 'teacher' }],
+                progress: []
+            }
+        })
+    });
+    const result = await dashboard.hydrateDashboardFromFlow();
+
+    assert.equal(result.success, true);
+    assert.deepEqual(dashboard.students.map(student => student.studentCode), ['SC-1']);
+    assert.equal(dashboard.getTeacher('local.teacher@example.com'), null);
+    assert.deepEqual(dashboard.teachers.map(teacher => teacher.email), ['teacher@example.com']);
+});
+
+test('dashboard progress joins are StudentCode-first with StudentID only as fallback', () => {
+    const dashboard = setupTeacherDashboardGlobals();
+    const result = dashboard.hydrateDashboardFromNormalizedData({
+        students: [
+            { StudentCode: 'abc-1', StudentID: 'shared-id', LeaderboardName: 'A', ClassCode: '6B' },
+            { StudentCode: 'XYZ-2', StudentID: 'other-id', LeaderboardName: 'B', ClassCode: '6B' }
+        ],
+        teachers: [],
+        progress: [
+            // StudentID points at student B, but StudentCode identifies student A.
+            { StudentCode: 'ABC-1', StudentID: 'other-id', ClassCode: '6B', Level: 2, CurrentRound: 7 },
+            // No StudentCode → StudentID fallback.
+            { StudentID: 'other-id', ClassCode: '6B', Level: 2, CurrentRound: 5 }
+        ]
+    }, { enabled: true });
+
+    assert.equal(result.success, true);
+    const studentA = dashboard.students.find(student => student.studentCode === 'abc-1');
+    const studentB = dashboard.students.find(student => student.studentCode === 'XYZ-2');
+    assert.equal(studentA.gameState.round, 7);
+    assert.equal(studentB.gameState.round, 5);
+});
+
+test('dashboard hydration fails closed when teacher session is missing', async () => {
+    const dashboard = setupTeacherDashboardGlobals({
+        session: false,
+        localItems: STALE_LOCAL_DASHBOARD_ITEMS,
         callFlow: async () => {
             throw new Error('Flow should not be called when teacher session is missing');
         }
-    };
+    });
+    const result = await dashboard.hydrateDashboardFromFlow();
 
-    const TeacherDashboard = require('../teacher/dashboard-state.js');
-    const dashboard = new TeacherDashboard();
-    const result = await dashboard.hydrateDashboardFromFlowWithFallback();
-
-    assert.equal(result.success, true);
-    assert.equal(result.source, 'local');
+    assert.equal(result.success, false);
     assert.equal(result.reason, 'missing_teacher_session');
     assert.equal(result.diagnostics.teacherSessionFound, false);
     assert.equal(result.diagnostics.teacherEmailPresent, false);
     assert.equal(result.diagnostics.flowRequestAttempted, false);
-    assert.equal(result.diagnostics.flowResponseReceived, false);
-    assert.equal(result.diagnostics.flowRequestSucceeded, false);
-    assert.equal(result.diagnostics.fallbackTriggered, true);
-    assert.equal(result.diagnostics.fallbackReason, 'missing_teacher_session');
+    assert.equal(result.diagnostics.hydrationFailed, true);
+    assert.equal(result.diagnostics.failureReason, 'missing_teacher_session');
+    assert.equal(dashboard.students.length, 0);
 });
 
 test('dashboard hydration reports flow_unavailable when api key is missing', async () => {
-    global.localStorage = createStorage({
-        teacher_dashboard: JSON.stringify({ students: [] }),
-        wa_gold_rush_teacher_list: JSON.stringify([])
-    });
-    global.sessionStorage = createStorage({
-        wa_gold_rush_teacher_session: JSON.stringify({
-            ok: true,
-            teacherEmail: 'teacher@example.com',
-            classCode: '6B',
-            classCodes: ['6B']
-        })
-    });
-    global.WA_GOLD_RUSH_DASHBOARD_CONFIG = {
+    const dashboard = setupTeacherDashboardGlobals({
         apiKey: '',
-        flowEndpoints: {
-            getDashboardData: 'https://example.com/get-dashboard-data'
-        }
-    };
-    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey: '' };
-    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
-        getApiKey: () => '',
         callFlow: async () => {
             throw new Error('Flow helper should not run without API key');
         }
-    };
+    });
+    const result = await dashboard.hydrateDashboardFromFlow();
 
-    const TeacherDashboard = require('../teacher/dashboard-state.js');
-    const dashboard = new TeacherDashboard();
-    const result = await dashboard.hydrateDashboardFromFlowWithFallback();
-
-    assert.equal(result.success, true);
-    assert.equal(result.source, 'local');
+    assert.equal(result.success, false);
     assert.equal(result.reason, 'flow_unavailable');
+    assert.equal(result.retryable, true);
     assert.equal(result.diagnostics.apiKeyPresent, false);
     assert.equal(result.diagnostics.flowRequestAttempted, false);
-    assert.equal(result.diagnostics.fallbackTriggered, true);
-    assert.equal(result.diagnostics.fallbackReason, 'flow_unavailable');
+    assert.equal(result.diagnostics.failureReason, 'flow_unavailable');
 });
 
-test('dashboard hydration falls back to local cache when flow fails or payload is invalid', async () => {
-    const localStudents = [{
-        id: 'local-1',
-        studentCode: 'LOCAL-1',
-        classCode: '6B',
-        gameState: { round: 2, netWorth: 800 }
-    }];
-    global.localStorage = createStorage({
-        teacher_dashboard: JSON.stringify({ students: localStudents }),
-        wa_gold_rush_teacher_list: JSON.stringify([{ id: 'local.teacher@example.com', email: 'local.teacher@example.com', classCode: '6B', role: 'teacher' }])
-    });
-    global.sessionStorage = createStorage({
-        wa_gold_rush_teacher_session: JSON.stringify({
-            ok: true,
-            teacherEmail: 'teacher@example.com',
-            classCode: '6B',
-            classCodes: ['6B']
-        })
-    });
-    global.WA_GOLD_RUSH_DASHBOARD_CONFIG = {
-        apiKey: 'key',
-        flowEndpoints: {
-            getDashboardData: 'https://example.com/get-dashboard-data'
-        }
-    };
-    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey: 'key' };
-
-    const TeacherDashboard = require('../teacher/dashboard-state.js');
-    const dashboard = new TeacherDashboard();
-
-    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
-        getApiKey: () => 'key',
-        callFlow: async () => ({ success: false, error: 'Network down' })
-    };
-    const failedResult = await dashboard.hydrateDashboardFromFlowWithFallback();
-    assert.equal(failedResult.success, true);
-    assert.equal(failedResult.source, 'local');
-    assert.equal(failedResult.diagnostics.flowRequestAttempted, true);
-    assert.equal(failedResult.diagnostics.flowRequestSucceeded, false);
-    assert.equal(failedResult.diagnostics.fallbackReason, 'flow_failed');
-    assert.equal(dashboard.students[0].studentCode, 'LOCAL-1');
-
-    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
-        getApiKey: () => 'key',
+test('dashboard hydration clears stale data and reports errors when flow fails or payload is invalid', async () => {
+    const dashboard = setupTeacherDashboardGlobals({
+        localItems: STALE_LOCAL_DASHBOARD_ITEMS,
         callFlow: async () => ({
             success: true,
             status: 200,
-            data: { ok: true, message: 'missing arrays' }
+            data: { ok: true, students: [{ studentCode: 'SC-1', leaderboardName: 'One', classCode: '6B' }] }
         })
-    };
-    const invalidResult = await dashboard.hydrateDashboardFromFlowWithFallback();
-    assert.equal(invalidResult.success, true);
-    assert.equal(invalidResult.source, 'local');
-    assert.equal(invalidResult.diagnostics.flowRequestAttempted, true);
-    assert.equal(invalidResult.diagnostics.flowRequestSucceeded, true);
-    assert.equal(invalidResult.diagnostics.fallbackReason, 'invalid_flow_payload');
-    assert.equal(dashboard.students[0].studentCode, 'LOCAL-1');
+    });
+    const firstResult = await dashboard.hydrateDashboardFromFlow();
+    assert.equal(firstResult.success, true);
+    assert.equal(dashboard.students.length, 1);
+
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: false, error: 'Network down' });
+    const failedResult = await dashboard.hydrateDashboardFromFlow();
+    assert.equal(failedResult.success, false);
+    assert.equal(failedResult.reason, 'flow_failed');
+    assert.equal(failedResult.statusTone, 'error');
+    assert.equal(failedResult.retryable, true);
+    assert.equal(failedResult.diagnostics.flowRequestAttempted, true);
+    assert.equal(failedResult.diagnostics.flowRequestSucceeded, false);
+    assert.equal(dashboard.students.length, 0);
+    assert.equal(dashboard.teachers.length, 0);
+
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({
+        success: true,
+        status: 200,
+        data: { ok: true, message: 'missing arrays' }
+    });
+    const invalidResult = await dashboard.hydrateDashboardFromFlow();
+    assert.equal(invalidResult.success, false);
+    assert.equal(invalidResult.reason, 'invalid_flow_payload');
+    assert.deepEqual(invalidResult.missingArrays.sort(), ['progress', 'students', 'teachers']);
+    assert.equal(dashboard.students.length, 0);
 });
 
-test('dashboard hydration reuses one in-flight flow request for overlapping calls', async () => {
-    global.localStorage = createStorage({
-        teacher_dashboard: JSON.stringify({ students: [] }),
-        wa_gold_rush_teacher_list: JSON.stringify([])
-    });
-    global.sessionStorage = createStorage({
-        wa_gold_rush_teacher_session: JSON.stringify({
-            ok: true,
-            teacherEmail: 'teacher@example.com',
-            classCode: '6B',
-            classCodes: ['6B']
-        })
-    });
-    global.WA_GOLD_RUSH_DASHBOARD_CONFIG = {
-        apiKey: 'key',
-        flowEndpoints: {
-            getDashboardData: 'https://example.com/get-dashboard-data'
-        }
-    };
-    global.WA_GOLD_RUSH_POWER_AUTOMATE_CONFIG = { apiKey: 'key' };
-
+test('dashboard hydration reuses one in-flight flow request and notifies onHydrated listeners', async () => {
     let flowCalls = 0;
     let resolveFlow;
     const flowResponse = new Promise((resolve) => {
         resolveFlow = resolve;
     });
-    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
-        getApiKey: () => 'key',
+    const dashboard = setupTeacherDashboardGlobals({
         callFlow: async () => {
             flowCalls += 1;
             return flowResponse;
         }
-    };
-
-    const TeacherDashboard = require('../teacher/dashboard-state.js');
-    const dashboard = new TeacherDashboard();
-    const firstHydration = dashboard.hydrateDashboardFromFlowWithFallback();
-    const secondHydration = dashboard.hydrateDashboardFromFlowWithFallback();
+    });
+    const notified = [];
+    dashboard.onHydrated(result => notified.push(result.success));
+    const firstHydration = dashboard.hydrateDashboardFromFlow();
+    const secondHydration = dashboard.hydrateDashboardFromFlow();
 
     assert.equal(flowCalls, 1);
 
     resolveFlow({
         success: true,
         status: 200,
-        data: {
-            ok: true,
-            students: [],
-            teachers: [],
-            progress: []
-        }
+        data: { ok: true, students: [], teachers: [], progress: [] }
     });
 
     const [firstResult, secondResult] = await Promise.all([firstHydration, secondHydration]);
     assert.equal(firstResult.source, 'flow');
     assert.equal(secondResult.source, 'flow');
+    assert.deepEqual(notified, [true]);
 });
 
-test('dashboard html lifecycle invokes hydration for startup, login, and refresh button', () => {
+test('teacher auth always goes through loginTeacher with no permanent admin bypass', async () => {
+    const calls = [];
+    const dashboard = setupTeacherDashboardGlobals({
+        session: false,
+        endpoints: { loginTeacher: 'https://example.com/login-teacher' },
+        callFlow: async (flowName, payload) => {
+            calls.push({ flowName, payload });
+            return {
+                success: true,
+                status: 200,
+                data: {
+                    ok: true,
+                    TeacherEmail: 'ben.turner@education.wa.edu.au',
+                    TeacherName: 'Ben Turner',
+                    Role: 'admin',
+                    ClassCodes: ['6B', '6C']
+                }
+            };
+        }
+    });
+    const source = fs.readFileSync(require.resolve('../teacher/dashboard-state.js'), 'utf8');
+    assert.doesNotMatch(source, /PERMANENT_ADMIN|isPermanentlyAuthorizedAdmin/);
+
+    const result = await dashboard.authenticateTeacher({ teacherEmail: 'Ben.Turner@education.wa.edu.au', classCode: '6B' });
+    assert.equal(result.success, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].flowName, 'loginTeacher');
+    assert.equal(calls[0].payload.teacherEmail, 'ben.turner@education.wa.edu.au');
+    assert.equal(dashboard.getTeacherSession()?.role, 'admin');
+
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: true, status: 200, data: { ok: false, error: 'Not in GGR_Teachers' } });
+    dashboard.clearTeacherSession?.();
+    global.sessionStorage = createStorage();
+    const denied = await dashboard.authenticateTeacher({ teacherEmail: 'ben.turner@education.wa.edu.au', classCode: 'ADMIN' });
+    assert.equal(denied.success, false);
+    assert.equal(dashboard.getTeacherSession(), null);
+});
+
+test('teacher dashboard writes wait for the flow and re-hydrate before reporting success', async () => {
+    const calls = [];
+    let upsertOk = false;
+    const dashboard = setupTeacherDashboardGlobals({
+        endpoints: { upsertStudentProfile: 'https://example.com/upsert-student' },
+        callFlow: async (flowName) => {
+            calls.push(flowName);
+            if (flowName === 'upsertStudentProfile') {
+                return upsertOk
+                    ? { success: true, status: 200, data: { ok: true } }
+                    : { success: false, status: 409, error: 'Duplicate' };
+            }
+            return {
+                success: true,
+                status: 200,
+                data: { ok: true, students: [{ studentCode: 'NEW-1', leaderboardName: 'New', classCode: '6B' }], teachers: [], progress: [] }
+            };
+        }
+    });
+
+    const failed = await dashboard.addStudent({ studentCode: 'NEW-1', leaderboardName: 'New', classCode: '6B' });
+    assert.equal(failed.success, false);
+    assert.deepEqual(calls, ['upsertStudentProfile']);
+    assert.equal(dashboard.students.length, 0);
+
+    upsertOk = true;
+    const saved = await dashboard.addStudent({ studentCode: 'NEW-1', leaderboardName: 'New', classCode: '6B' });
+    assert.equal(saved.success, true);
+    assert.deepEqual(calls.slice(1), ['upsertStudentProfile', 'getDashboardData']);
+    assert.equal(dashboard.students[0].studentCode, 'NEW-1');
+    assert.equal(global.localStorage.getItem('teacher_dashboard'), null);
+
+    const deleted = dashboard.deleteTeacher('teacher@example.com');
+    assert.equal(deleted.success, false);
+    assert.match(deleted.error, /GGR_Teachers/);
+});
+
+test('dashboard html lifecycle invokes flow-only hydration for startup, login, and refresh button', () => {
     const html = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
     const runtimeConfigScriptIndex = html.indexOf('runtime-config.js?v=__WA_GGR_RUNTIME_CONFIG_VERSION__');
     const dashboardConfigScriptIndex = html.indexOf('dashboard-config.js');
     assert.ok(runtimeConfigScriptIndex >= 0);
     assert.ok(dashboardConfigScriptIndex > runtimeConfigScriptIndex);
     assert.ok(
-        html.includes("withBusyButton('refreshBtn', 'Refreshing…', () => refreshDashboardFromBestSource({ showStatus: true }))")
+        html.includes("withBusyButton('refreshBtn', 'Loading…', () => refreshDashboardFromFlow({ showStatus: true }))")
     );
     assert.ok(html.includes('await initializeDashboard({ showHydrationStatus: true });'));
     assert.match(
         html,
-        /async function refreshDashboardFromBestSource\(options = \{\}\)\s*\{[\s\S]*dashboard\.hydrateDashboardFromFlowWithFallback\(\)[\s\S]*refresh\(\)[\s\S]*refreshTeachers\(\)/
+        /async function refreshDashboardFromFlow\(options = \{\}\)\s*\{[\s\S]*dashboard\.hydrateDashboardFromFlow\(\)[\s\S]*applyHydrationResult\(hydration\)/
     );
+    assert.match(
+        html,
+        /function applyHydrationResult\(hydration\)\s*\{[\s\S]*renderHydrationDiagnostics\(hydration\);[\s\S]*refresh\(\)[\s\S]*refreshTeachers\(\)[\s\S]*renderHydrationFailureTables/
+    );
+    assert.doesNotMatch(html, /hydrateDashboardFromFlowWithFallback|refreshDashboardFromBestSource|wa_gold_rush_class_records/);
+    assert.ok(html.includes('id="hydrationSummary"'));
+    assert.ok(html.includes('id="retryHydrationBtn"'));
+    assert.ok(html.includes('id="hydrationMissingArrays"'));
     assert.ok(html.includes('id="hydrationDiagnosticsBanner"'));
     assert.ok(html.includes('id="diagTeacherSessionFound"'));
     assert.ok(html.includes('id="diagMetaSummary" role="status" aria-live="polite" aria-atomic="true"'));
-    assert.ok(html.includes('renderHydrationDiagnostics(hydration);'));
     assert.ok(html.includes('window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED = window.WA_GOLD_RUSH_RUNTIME_CONFIG_SCRIPT_LOADED === true;'));
 });
 
@@ -1070,4 +1155,325 @@ test('progression snapshot builder keeps full restoration fields', () => {
     assert.deepEqual(snapshot.ownedMines.southern_cross, { owned: true });
     assert.equal(snapshot.machinery[0].id, 'truck');
     assert.equal(snapshot.progressionStateByLevel['4'].checkpointStatus, 'quiz_passed');
+});
+
+function createStubElement(id) {
+    const classes = new Set();
+    return {
+        id,
+        style: {},
+        textContent: '',
+        innerHTML: '',
+        disabled: false,
+        onclick: null,
+        classList: {
+            add: (name) => classes.add(name),
+            remove: (name) => classes.delete(name),
+            contains: (name) => classes.has(name)
+        },
+        appendChild() {},
+        setAttribute() {}
+    };
+}
+
+function buildStudentGameHarness({ level = 2, storage = createStorage(), extraGlobals = {} } = {}) {
+    const read = (path) => fs.readFileSync(require.resolve(path), 'utf8');
+    const elements = new Map();
+    const getElement = (id) => {
+        if (!elements.has(id)) elements.set(id, createStubElement(id));
+        return elements.get(id);
+    };
+    const context = {
+        console: { log() {}, info() {}, warn() {}, error() {} },
+        document: {
+            addEventListener() {},
+            getElementById: getElement,
+            createElement: () => createStubElement('dynamic'),
+            querySelector() { return null; },
+            querySelectorAll(selector) {
+                return selector === '.modal' ? [getElement('checkpointQuizModal')] : [];
+            },
+            body: { appendChild() {} }
+        },
+        location: {
+            href: `https://example.com/levels/level-2-tycoon/index.html?level=${level}`,
+            search: `?level=${level}`,
+            pathname: '/levels/level-2-tycoon/index.html'
+        },
+        addEventListener() {},
+        localStorage: storage,
+        URL,
+        URLSearchParams,
+        setTimeout,
+        clearTimeout,
+        AbortController,
+        alert() {},
+        confirm() { return true; },
+        CustomEvent: function CustomEvent(type, init) {
+            this.type = type;
+            this.detail = init?.detail;
+        },
+        ...extraGlobals
+    };
+    context.window = context;
+    vm.createContext(context);
+    vm.runInContext([
+        read('../shared/progression-snapshot.js'),
+        read('../shared/progression-quiz.js'),
+        read('../levels/level-2-tycoon/game-state.js'),
+        read('../levels/level-2-tycoon/level-access-guard.js'),
+        read('../levels/level-2-tycoon/script.js'),
+        'syncPlayerRecord = function syncPlayerRecordStub() { this.__syncCalls = (this.__syncCalls || 0) + 1; }.bind(this);',
+        'this.__setGameState = (value) => { gameState = value; };',
+        'this.__getGameState = () => gameState;',
+        'this.GameStateClass = GameState;',
+        'this.LevelAccessGuardClass = LevelAccessGuard;',
+        'this.checkProgressionGoal = checkProgressionGoal;',
+        'this.displayQuizResults = displayQuizResults;',
+        'this.resolveCurrentLevelAccess = resolveCurrentLevelAccess;'
+    ].join('\n'), context);
+
+    const config = JSON.parse(read('../shared/game-config.json'));
+    const gameState = new context.GameStateClass();
+    gameState.originalGameConfig = config;
+    gameState.gameConfig = JSON.parse(JSON.stringify(config));
+    gameState.assignedLevel = level;
+    gameState.loadFromLocalStorage();
+    gameState.assignedLevel = level;
+    gameState.applyLevelConfigAdapter();
+    context.__setGameState(gameState);
+    return { context, gameState, getElement, storage };
+}
+
+test('student checkpoint progression: goal opens quiz, pass persists quiz_passed, continue opens next level', async () => {
+    const storage = createStorage();
+    const level2 = buildStudentGameHarness({ level: 2, storage });
+    const { context, gameState, getElement } = level2;
+
+    // Reaching the goal opens the quiz modal.
+    gameState.cash = 999999;
+    context.checkProgressionGoal();
+    assert.equal(getElement('checkpointQuizModal').classList.contains('active'), true);
+    assert.equal(gameState.checkpointStatus, 'quiz_available');
+
+    // Passing the quiz persists quiz_passed for Level 2 in the shared autosave slot.
+    context.displayQuizResults({ passed: true, score: 4, totalQuestions: 5, results: [] }, {});
+    const saved = JSON.parse(storage.getItem('level2_autosave'));
+    const level2State = saved.gameState.progressionStateByLevel['2'];
+    assert.equal(level2State.checkpointStatus, 'quiz_passed');
+    assert.equal(level2State.quizScore, 4);
+    assert.ok(level2State.quizPassedAt);
+    assert.equal(level2State.quizAttempts.length, 1);
+    assert.equal(level2State.approvalStatus, 'pending');
+    assert.equal(context.__syncCalls, 1);
+
+    // Continue navigates to Level 3 instead of only closing the modal.
+    const continueBtn = getElement('quizContinueButton');
+    assert.equal(continueBtn.textContent, 'Continue to Level 3 →');
+    await continueBtn.onclick();
+    assert.match(context.location.href, /level-2-tycoon\/index\.html\?level=3$/);
+
+    // The access guard reads the same saved state the game wrote.
+    global.localStorage = storage;
+    assert.equal(new context.LevelAccessGuardClass(3).isLevelAccessible(), true);
+    assert.equal(context.LevelAccessGuardClass.isCheckpointPassed(2, storage), true);
+    assert.equal(new context.LevelAccessGuardClass(4).isLevelAccessible(), false);
+
+    // Level 3 starts with its own (not yet passed) checkpoint.
+    const level3 = buildStudentGameHarness({ level: 3, storage });
+    assert.equal(await level3.context.resolveCurrentLevelAccess(), true);
+    assert.equal(level3.gameState.checkpointStatus, null);
+    assert.equal(level3.gameState.getProgressionState(2).checkpointStatus, 'quiz_passed');
+});
+
+test('home page level cards use the same saved-state reader as the level access guard', () => {
+    const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+    assert.ok(html.includes('<script src="levels/level-2-tycoon/level-access-guard.js"></script>'));
+    assert.ok(html.includes('<script src="shared/progression-snapshot.js"></script>'));
+    assert.match(html, /function isCheckpointApproved\(requiredLevel\)\s*\{[\s\S]*LevelAccessGuard\.isCheckpointPassed\(requiredLevel\)/);
+    assert.match(html, /refreshRemoteProgression\(\);/);
+});
+
+test('cross-device unlock uses getStudentProgress only when configured', async () => {
+    const { LevelAccessGuard } = require('../levels/level-2-tycoon/level-access-guard.js');
+    const storage = createStorage({
+        wa_gold_rush_student_session: JSON.stringify({ studentCode: 'sc-1', classCode: '6b' })
+    });
+    const snapshotApi = require('../shared/progression-snapshot.js');
+
+    const unconfigured = await LevelAccessGuard.hydrateRemoteProgression(2, {
+        storage,
+        globalObj: { WA_GOLD_RUSH_PROGRESS_SNAPSHOT: snapshotApi }
+    });
+    assert.equal(unconfigured.unlocked, false);
+    assert.equal(unconfigured.reason, 'flow_unavailable');
+
+    const calls = [];
+    const globalObj = {
+        WA_GOLD_RUSH_PROGRESS_SNAPSHOT: snapshotApi,
+        WA_GOLD_RUSH_POWER_AUTOMATE: {
+            resolveFlowEndpoint: (name) => (name === 'getStudentProgress' ? 'https://example.com/get-progress' : ''),
+            isPlaceholderEndpoint: () => false,
+            callFlow: async (name, payload) => {
+                calls.push({ name, payload });
+                return {
+                    success: true,
+                    data: {
+                        ok: true,
+                        progress: [{ StudentCode: 'SC-1', ClassCode: '6B', Level: 2, CheckpointStatus: 'quiz_passed', QuizScore: 5 }]
+                    }
+                };
+            }
+        }
+    };
+    const unlocked = await LevelAccessGuard.hydrateRemoteProgression(2, { storage, globalObj });
+    assert.equal(unlocked.unlocked, true);
+    assert.equal(calls[0].name, 'getStudentProgress');
+    assert.deepEqual(calls[0].payload, { studentCode: 'sc-1', classCode: '6B', level: 2 });
+    assert.equal(LevelAccessGuard.isCheckpointPassed(2, storage), true);
+    assert.equal(JSON.parse(storage.getItem('level2_autosave')).gameState.progressionStateByLevel['2'].quizScore, 5);
+});
+
+test('level progress scheduler whenIdle waits for in-flight and queued saves', async () => {
+    const harness = buildLevelProgressHarness();
+    const resolvers = [];
+    const scheduler = harness.createProgressSaveScheduler({
+        dispatchSave(payload) {
+            return new Promise((resolve) => resolvers.push(() => resolve({ ok: true, payload })));
+        }
+    });
+    scheduler.schedule({ progressKey: 'NB5|SC-1|2', currentRound: 1 });
+    scheduler.schedule({ progressKey: 'NB5|SC-1|2', currentRound: 2 });
+    let idle = false;
+    const idlePromise = scheduler.whenIdle().then(() => { idle = true; });
+    resolvers[0]();
+    await flushMicrotasks();
+    await flushMicrotasks();
+    assert.equal(idle, false);
+    assert.equal(resolvers.length, 2);
+    resolvers[1]();
+    await idlePromise;
+    assert.equal(idle, true);
+});
+
+test('SaveProgress payload carries checkpoint fields and keeps the canonical ProgressKey', () => {
+    global.localStorage = createStorage();
+    const sync = loadSharePointSync();
+    const payload = sync.buildProgressPayload({
+        studentCode: 'sc-1',
+        classCode: '6b',
+        level: 2,
+        currentRound: 9,
+        progressionMarkersJson: {
+            schemaVersion: 2,
+            assignedLevel: 2,
+            progressionStateByLevel: {
+                2: {
+                    checkpointStatus: 'quiz_passed',
+                    quizScore: 4,
+                    quizPassedAt: '2026-01-02T03:04:05.000Z',
+                    quizAttempts: [{ score: 4, totalQuestions: 5, passed: true }],
+                    approvalStatus: 'pending'
+                }
+            }
+        }
+    });
+    assert.equal(payload.progressKey, '6B|SC-1|2');
+    assert.equal(payload.checkpointStatus, 'quiz_passed');
+    assert.equal(payload.quizScore, 4);
+    assert.equal(payload.quizPassedAt, '2026-01-02T03:04:05.000Z');
+    assert.equal(payload.approvalStatus, 'pending');
+    assert.ok('approverName' in payload);
+    assert.ok('approvalTimestamp' in payload);
+    assert.equal(Array.isArray(payload.quizAttempts), true);
+    assert.equal(JSON.parse(payload.quizAttemptsJson)[0].score, 4);
+    assert.equal(JSON.parse(payload.progressionStateJson)['2'].checkpointStatus, 'quiz_passed');
+    assert.equal(payload.progressionStateByLevel['2'].checkpointStatus, 'quiz_passed');
+});
+
+test('SaveProgress flow spec upserts by canonical ProgressKey instead of create-first', () => {
+    const spec = fs.readFileSync(require.resolve('../docs/power-automate/GGR_SaveProgress-repair-spec.md'), 'utf8');
+    assert.match(spec, /UPPER\(ClassCode\)\|UPPER\(StudentCode\)\|Level/);
+    assert.match(spec, /ProgressKey eq/);
+    assert.match(spec, /Update item/);
+    assert.match(spec, /CheckpointStatus/);
+    assert.match(spec, /Do not.*Create item.*first/i);
+});
+
+test('checkpoint dashboard coerces tab levels and renders from hydrated flow data', () => {
+    const CheckpointDashboard = require('../teacher/checkpoint-dashboard.js');
+    assert.equal(CheckpointDashboard.normalizeLevel('3'), 3);
+    assert.equal(CheckpointDashboard.normalizeLevel('3') + 1, 4);
+    assert.equal(CheckpointDashboard.normalizeLevel('bogus'), 2);
+
+    const students = [
+        { studentCode: 'SC-1', leaderboardName: 'One', classCode: '6B', checkpointsByLevel: { 3: { checkpointStatus: 'quiz_passed', quizScore: 5, quizAttempts: [] } } },
+        { studentCode: 'SC-2', leaderboardName: 'Two', classCode: '6B', checkpointsByLevel: { 3: { checkpointStatus: 'quiz_available' } } },
+        { studentCode: 'SC-3', leaderboardName: 'Three', classCode: '6B', gameState: { progressionStateByLevel: { 2: { checkpointStatus: 'quiz_passed', quizScore: 4 } } } }
+    ];
+    const level3 = CheckpointDashboard.getStudentsWithPassedCheckpoint(students, '3');
+    assert.deepEqual(level3.map(entry => entry.student.studentCode), ['SC-1']);
+    assert.equal(CheckpointDashboard.formatQuizScore(level3[0].checkpoint), '5/5');
+    const level2 = CheckpointDashboard.getStudentsWithPassedCheckpoint(students, 2);
+    assert.deepEqual(level2.map(entry => entry.student.studentCode), ['SC-3']);
+    const html = CheckpointDashboard.buildCheckpointTableHTML(level3, 3);
+    assert.match(html, /SC-1|One/);
+});
+
+test('checkpoint approval is disabled when GGR_SaveCheckpointApproval is not configured', async () => {
+    const dashboard = setupTeacherDashboardGlobals({
+        endpoints: { saveCheckpointApproval: 'https://REPLACE-WITH-GGR_SaveCheckpointApproval-URL' },
+        callFlow: async () => {
+            throw new Error('Approval flow must not be called when unconfigured');
+        }
+    });
+    const CheckpointApproval = require('../teacher/checkpoint-approval.js');
+    assert.equal(CheckpointApproval.isApprovalFlowConfigured(dashboard), false);
+    const result = await CheckpointApproval.saveApproval({
+        dashboard,
+        student: { studentCode: 'SC-1', classCode: '6B' },
+        level: 2,
+        status: 'approved'
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.unavailable, true);
+    assert.equal(result.error, CheckpointApproval.UNAVAILABLE_MESSAGE);
+
+    const reviewer = CheckpointApproval.getReviewerIdentity(dashboard);
+    assert.equal(reviewer.reviewerEmail, 'teacher@example.com');
+    assert.equal(reviewer.reviewerName, 'Teacher One');
+    assert.match(CheckpointApproval.generateQuizReviewHTML(null, {}), /not stored/);
+});
+
+test('checkpoint approval saves through the flow with session reviewer and canonical key', async () => {
+    const calls = [];
+    const dashboard = setupTeacherDashboardGlobals({
+        endpoints: { saveCheckpointApproval: 'https://example.com/save-approval' },
+        callFlow: async (flowName, payload) => {
+            calls.push({ flowName, payload });
+            if (flowName === 'saveCheckpointApproval') return { success: true, status: 200, data: { ok: true } };
+            return { success: true, status: 200, data: { ok: true, students: [], teachers: [], progress: [] } };
+        }
+    });
+    const CheckpointApproval = require('../teacher/checkpoint-approval.js');
+    const result = await CheckpointApproval.saveApproval({
+        dashboard,
+        student: { studentCode: 'sc-1', classCode: '6b' },
+        level: '2',
+        status: 'approved'
+    });
+    assert.equal(result.success, true);
+    assert.equal(calls[0].flowName, 'saveCheckpointApproval');
+    assert.equal(calls[0].payload.progressKey, '6B|SC-1|2');
+    assert.equal(calls[0].payload.approverEmail, 'teacher@example.com');
+    assert.equal(calls[0].payload.approvalStatus, 'approved');
+    assert.equal(calls[1].flowName, 'getDashboardData');
+});
+
+test('checkpoint UI files hold no localStorage approval authority or prompt-based reviewer', () => {
+    for (const file of ['../teacher/checkpoint-dashboard.js', '../teacher/checkpoint-approval.js']) {
+        const source = fs.readFileSync(require.resolve(file), 'utf8');
+        assert.doesNotMatch(source, /localStorage/, `${file} must not use localStorage`);
+        assert.doesNotMatch(source, /\bprompt\(/, `${file} must not prompt for reviewer`);
+    }
 });
