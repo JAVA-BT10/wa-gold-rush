@@ -1,13 +1,41 @@
 (function initProgressionSnapshot(globalObj) {
+    function normalizeSnapshotLevel(value) {
+        if (value === null || value === undefined || value === '') return null;
+        const level = Number(value);
+        return Number.isInteger(level) && level >= 1 && level <= 5 ? level : null;
+    }
+
+    /**
+     * Identity in the snapshot is copied verbatim from the authenticated
+     * session. Blank fields stay blank — nothing is auto-filled (for example
+     * leaderboardName is never defaulted to studentCode).
+     */
+    function normalizeSnapshotPlayer(player) {
+        const source = player && typeof player === 'object' ? player : {};
+        const text = (value) => (typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '');
+        return {
+            studentCode: text(source.studentCode),
+            leaderboardName: text(source.leaderboardName),
+            studentId: text(source.studentId),
+            studentName: text(source.studentName),
+            classCode: text(source.classCode).toUpperCase()
+        };
+    }
+
     function buildProgressionSnapshot(input = {}) {
+        // assignedLevel is kept for backwards compatibility and means the level
+        // being played; rosterAssignedLevel is the GGR_Students assignment.
+        const currentLevel = normalizeSnapshotLevel(input.currentLevel ?? input.assignedLevel);
         return {
             schemaVersion: Number(input.schemaVersion) || 1,
             savedAt: String(input.savedAt || new Date().toISOString()),
-            assignedLevel: Number(input.assignedLevel) || 0,
+            assignedLevel: currentLevel,
+            currentLevel,
+            rosterAssignedLevel: normalizeSnapshotLevel(input.rosterAssignedLevel),
             round: Number(input.round) || 1,
             cash: Number(input.cash) || 0,
             netWorth: Number(input.netWorth) || 0,
-            player: input.player || {},
+            player: normalizeSnapshotPlayer(input.player),
             companyName: String(input.companyName || ''),
             ownedMines: input.ownedMines || {},
             machinery: Array.isArray(input.machinery) ? input.machinery : [],

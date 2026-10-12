@@ -89,7 +89,7 @@ Backend prerequisites and the SaveProgress upsert contract are documented in `do
 
 ## Getting Started
 
-1. **For Students:** Click level in home page (`index.html`). Optional competition login on home enables leaderboard/class competition participation.
+1. **For Students:** Sign in on the home page (`index.html`) with Class Code, Student ID, and PIN, then choose a level.
 2. **For Teachers:** Navigate to `/teacher/dashboard.html`
 3. **For Developers:** See DEVELOPMENT.md
 
@@ -110,15 +110,14 @@ Backend prerequisites and the SaveProgress upsert contract are documented in `do
 
 ### New Login Flow
 
-Microsoft 365 / MSAL sign-in has been replaced by a lightweight **StudentCode** login:
+Student identity comes **only** from the class roster (`GGR_Students`) through the `GGR_LoginStudent` flow:
 
-1. From the Home page, students enter:
-   - **Student Code** *(required)* — their unique login key, e.g. `SC-Y6-1042`
-   - **Leaderboard Name** *(required)* — pseudonym shown publicly on leaderboards
-   - **Student ID** *(optional)* — school ID, teacher-facing only
-   - **Class Code** *(optional)* — e.g. `6B`
-2. Session is saved to `localStorage` so gameplay continues across page loads.
-3. Students can log out from the Home page at any time.
+1. From the Home page, students enter **Class Code**, **Student ID**, and **PIN**. Nothing else.
+2. `shared/student-auth-client.js` sends the class code, student ID, and a SHA-256 PIN hash to `GGR_LoginStudent`. The login succeeds only if the flow returns `ok:true` with a complete roster identity (`studentCode`, `studentId`, `studentName`, `leaderboardName`, `classCode`, `assignedLevel`).
+3. `shared/student-session.js` stores that roster identity in `localStorage` (`wa_gold_rush_student_session`, `source: "GGR_LoginStudent"`, `schemaVersion: 2`). PINs and PIN hashes are never stored. Legacy or self-created sessions are cleared, and the student must sign in again.
+4. Identity is shown read-only after login. In-game, only the company name can be edited.
+5. Every level page, quiz action, save, and level unlock requires this session. Direct navigation to a level without it redirects to the Home login with `returnTo`.
+6. Students can log out from the Home page or in-game at any time.
 
 ### Data Fields & Privacy Model
 
@@ -147,15 +146,9 @@ GitHub Pages must be configured with **Settings → Pages → Source = GitHub Ac
 
 Frontend flow calls use `WA_GOLD_RUSH_POWER_AUTOMATE.callFlow(...)`, which handles endpoint resolution, placeholder detection, `X-GGR-Key`, JSON parsing, and a consistent `{ success, status, data, error }` result.
 
-### Feature Flags
+### Progress saves
 
-```js
-window.WA_GOLD_RUSH_FEATURE_FLAGS = {
-  enableFlowStudentLogin: false
-};
-```
-
-`enableFlowStudentLogin` is intentionally default-off while `GGR_LoginStudent` response contract validation is in progress. Local login remains the active path.
+`shared/sharepoint-sync.js` only sends a save when `studentCode`, `classCode`, and the current gameplay `level` (2–5) are valid and match the signed-in session. The canonical `ProgressKey` is `UPPER(ClassCode)|UPPER(StudentCode)|Level`. Invalid or rejected saves (HTTP 4xx or `ok:false`) go to `wa_gr_sync_quarantine` and are not retried. Network errors and timeouts are retried with the same `saveRequestId`. See `docs/power-automate/GGR_SaveProgress-repair-spec.md` for the flow-side checklist.
 
 #### Power Automate: student/profile upsert flow
 Trigger: **When an HTTP request is received**  

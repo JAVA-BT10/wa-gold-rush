@@ -18,6 +18,36 @@ function createStorage(initial = {}) {
     };
 }
 
+const STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
+
+function buildRosterSession(overrides = {}) {
+    return {
+        ok: true,
+        source: 'GGR_LoginStudent',
+        schemaVersion: 2,
+        studentCode: 'SC-1',
+        studentId: '123456',
+        studentName: 'Alex Smith',
+        leaderboardName: 'Gold Miner',
+        classCode: '6B',
+        assignedLevel: 2,
+        authenticatedAt: '2026-01-01T00:00:00.000Z',
+        ...overrides
+    };
+}
+
+function createSessionStorage(initial = {}, sessionOverrides = {}) {
+    return createStorage({
+        [STUDENT_SESSION_KEY]: JSON.stringify(buildRosterSession(sessionOverrides)),
+        ...initial
+    });
+}
+
+function loadStudentSession() {
+    delete require.cache[require.resolve('../shared/student-session.js')];
+    return require('../shared/student-session.js');
+}
+
 function loadStudentAuth() {
     delete require.cache[require.resolve('../shared/student-auth-client.js')];
     return require('../shared/student-auth-client.js');
@@ -322,7 +352,7 @@ test('student auth login hashes PIN and sends expected fields', async () => {
         callFlow: async (_flowName, payload) => ({
             success: true,
             status: 200,
-            data: { ok: true, ...payload, leaderboardName: 'Gold Miner', studentCode: 'SC-1' }
+            data: { ok: true, ...payload, leaderboardName: 'Gold Miner', studentCode: 'SC-1', studentName: 'Alex Smith', assignedLevel: 2 }
         })
     };
     const auth = loadStudentAuth();
@@ -330,6 +360,9 @@ test('student auth login hashes PIN and sends expected fields', async () => {
     assert.equal(result.success, true);
     assert.equal(result.response.classCode, '6B');
     assert.equal(result.response.studentCode, 'SC-1');
+    assert.equal(result.response.assignedLevel, 2);
+    assert.equal(result.response.identityValid, true);
+    assert.equal('pinHash' in result.response, false);
 });
 
 test('student auth change pin respects backend ok=false responses', async () => {
@@ -482,7 +515,7 @@ test('sharepoint sync loads cleanly, exposes progress sync helpers, and canonica
     const firstPayload = sync.buildProgressPayload({
         studentCode: 'hg-nb5-018',
         classCode: 'nb5',
-        level: '2.9',
+        level: ' 2 ',
         currentRound: 3
     });
     const rebuiltPayload = sync.buildProgressPayload({
@@ -494,8 +527,14 @@ test('sharepoint sync loads cleanly, exposes progress sync helpers, and canonica
     assert.equal(sync.buildCanonicalProgressKey({
         classCode: ' nb5 ',
         studentCode: ' hg-nb5-018 ',
-        level: '2.9'
+        level: '2'
     }), 'NB5|HG-NB5-018|2');
+    // Fractional / blank / unsupported levels and blank identity never produce a key.
+    assert.equal(sync.buildCanonicalProgressKey({ classCode: 'nb5', studentCode: 'hg-nb5-018', level: '2.9' }), '');
+    assert.equal(sync.buildCanonicalProgressKey({ classCode: 'nb5', studentCode: 'hg-nb5-018', level: '' }), '');
+    assert.equal(sync.buildCanonicalProgressKey({ classCode: 'nb5', studentCode: 'hg-nb5-018', level: 1 }), '');
+    assert.equal(sync.buildCanonicalProgressKey({ classCode: '', studentCode: 'hg-nb5-018', level: 2 }), '');
+    assert.equal(sync.buildCanonicalProgressKey({ classCode: 'nb5', studentCode: '', level: 2 }), '');
     assert.equal(firstPayload.progressKey, 'NB5|HG-NB5-018|2');
     assert.equal(rebuiltPayload.progressKey, 'NB5|HG-NB5-018|2');
     assert.equal(rebuiltPayload.saveRequestId, firstPayload.saveRequestId);
@@ -504,18 +543,30 @@ test('sharepoint sync loads cleanly, exposes progress sync helpers, and canonica
     assert.notEqual(rebuiltPayload.clientVersion, '');
 });
 
-test('sharepoint sync keeps telemetry when retrying legacy queue items', async () => {
-    global.localStorage = createStorage({
+test('sharepoint sync keeps telemetry when retrying legacy queue items and quarantines unrepairable ones', async () => {
+    global.localStorage = createSessionStorage({
         wa_gr_sync_queue: JSON.stringify([
             {
+                // Legacy PascalCase item with a complete identity: mapped, not altered.
                 type: 'progress',
                 payload: {
                     StudentCode: 'SC-1',
+                    ClassCode: '6b',
                     Level: 2,
                     Score: 999,
                     NetWorth: 999,
                     Round: 7,
                     ProgressJson: '{"legacy":true}'
+                },
+                attempts: 0
+            },
+            {
+                // Legacy item with no ClassCode: must NOT be repaired into "|SC-1|3".
+                type: 'progress',
+                payload: {
+                    StudentCode: 'SC-1',
+                    Level: 3,
+                    Score: 5
                 },
                 attempts: 0
             }
@@ -560,19 +611,26 @@ test('sharepoint sync keeps telemetry when retrying legacy queue items', async (
     await sync.retryQueue();
     assert.equal(posted.length, 1);
     assert.equal(posted[0].studentCode, 'SC-1');
+    assert.equal(posted[0].classCode, '6B');
+    assert.equal(posted[0].level, 2);
     assert.equal(posted[0].currentCash, 0);
     assert.equal(posted[0].currentAssets, 0);
     assert.equal(posted[0].netWorth, 999);
     assert.equal(posted[0].score, 999);
-    assert.equal(posted[0].progressKey, '|SC-1|2');
+    assert.equal(posted[0].progressKey, '6B|SC-1|2');
     assert.ok(posted[0].saveRequestId);
     assert.ok(posted[0].clientTimestampUtc);
     assert.ok(posted[0].clientVersion);
+    assert.equal(posted.some(item => item.progressKey === '|SC-1|3' || item.classCode === ''), false);
     assert.equal(sync.queueLength(), 0);
+    const quarantine = sync.getQuarantine();
+    assert.equal(quarantine.length, 1);
+    assert.match(quarantine[0].reason, /invalid_identity:.*classCode/);
+    assert.equal(quarantine[0].payload.level, 3);
 });
 
 test('sharepoint sync treats timed-out saves as verification pending and keeps a retry item', async () => {
-    global.localStorage = createStorage();
+    global.localStorage = createSessionStorage();
     global.WA_GOLD_RUSH_FLOW_ENDPOINTS = {
         saveProgress: 'https://example.com/save'
     };
@@ -616,7 +674,7 @@ test('sharepoint sync treats timed-out saves as verification pending and keeps a
 });
 
 test('sharepoint sync reuses queued saveRequestId on retry and coalesces same-key queued state', async () => {
-    global.localStorage = createStorage();
+    global.localStorage = createSessionStorage();
     global.WA_GOLD_RUSH_FLOW_ENDPOINTS = {
         saveProgress: 'https://example.com/save'
     };
@@ -1218,6 +1276,7 @@ function buildStudentGameHarness({ level = 2, storage = createStorage(), extraGl
     context.window = context;
     vm.createContext(context);
     vm.runInContext([
+        read('../shared/student-session.js'),
         read('../shared/progression-snapshot.js'),
         read('../shared/progression-quiz.js'),
         read('../levels/level-2-tycoon/game-state.js'),
@@ -1230,7 +1289,11 @@ function buildStudentGameHarness({ level = 2, storage = createStorage(), extraGl
         'this.LevelAccessGuardClass = LevelAccessGuard;',
         'this.checkProgressionGoal = checkProgressionGoal;',
         'this.displayQuizResults = displayQuizResults;',
-        'this.resolveCurrentLevelAccess = resolveCurrentLevelAccess;'
+        'this.resolveCurrentLevelAccess = resolveCurrentLevelAccess;',
+        'this.applyCompetitionSessionToIdentity = applyCompetitionSessionToIdentity;',
+        'this.playRound = playRound;',
+        'this.showProgressionQuiz = showProgressionQuiz;',
+        'this.saveCompanyName = saveCompanyName;'
     ].join('\n'), context);
 
     const config = JSON.parse(read('../shared/game-config.json'));
@@ -1242,11 +1305,12 @@ function buildStudentGameHarness({ level = 2, storage = createStorage(), extraGl
     gameState.assignedLevel = level;
     gameState.applyLevelConfigAdapter();
     context.__setGameState(gameState);
+    context.applyCompetitionSessionToIdentity(false);
     return { context, gameState, getElement, storage };
 }
 
 test('student checkpoint progression: goal opens quiz, pass persists quiz_passed, continue opens next level', async () => {
-    const storage = createStorage();
+    const storage = createSessionStorage();
     const level2 = buildStudentGameHarness({ level: 2, storage });
     const { context, gameState, getElement } = level2;
 
@@ -1296,10 +1360,26 @@ test('home page level cards use the same saved-state reader as the level access 
 
 test('cross-device unlock uses getStudentProgress only when configured', async () => {
     const { LevelAccessGuard } = require('../levels/level-2-tycoon/level-access-guard.js');
-    const storage = createStorage({
+    const snapshotApi = require('../shared/progression-snapshot.js');
+    // A legacy / self-created session (no GGR_LoginStudent source) never unlocks.
+    const legacyStorage = createStorage({
         wa_gold_rush_student_session: JSON.stringify({ studentCode: 'sc-1', classCode: '6b' })
     });
-    const snapshotApi = require('../shared/progression-snapshot.js');
+    const legacyResult = await LevelAccessGuard.hydrateRemoteProgression(2, {
+        storage: legacyStorage,
+        globalObj: {
+            WA_GOLD_RUSH_PROGRESS_SNAPSHOT: snapshotApi,
+            WA_GOLD_RUSH_POWER_AUTOMATE: {
+                resolveFlowEndpoint: () => 'https://example.com/get-progress',
+                isPlaceholderEndpoint: () => false,
+                callFlow: async () => { throw new Error('must not call the flow without a roster session'); }
+            }
+        }
+    });
+    assert.equal(legacyResult.unlocked, false);
+    assert.equal(legacyResult.reason, 'missing_student_session');
+
+    const storage = createSessionStorage({}, { studentCode: 'sc-1', classCode: '6b' });
 
     const unconfigured = await LevelAccessGuard.hydrateRemoteProgression(2, {
         storage,
@@ -1476,4 +1556,426 @@ test('checkpoint UI files hold no localStorage approval authority or prompt-base
         assert.doesNotMatch(source, /localStorage/, `${file} must not use localStorage`);
         assert.doesNotMatch(source, /\bprompt\(/, `${file} must not prompt for reviewer`);
     }
+});
+
+// ---------------------------------------------------------------------------
+// Roster-backed student identity (GGR_LoginStudent is the sole identity source)
+// ---------------------------------------------------------------------------
+
+function buildHomeLoginHarness({ storage = createStorage(), loginImpl, search = '' } = {}) {
+    const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+    const elements = {};
+    const element = (id, extra = {}) => {
+        elements[id] = {
+            id,
+            value: '',
+            textContent: '',
+            innerHTML: '',
+            hidden: false,
+            disabled: false,
+            style: {},
+            appendChild() {},
+            focus() {},
+            ...extra
+        };
+        return elements[id];
+    };
+    [
+        'studentClassCodeInput', 'studentIdInput', 'studentPinInput', 'studentLoginBtn', 'studentLoginStatus',
+        'studentLoginForm', 'studentActiveSession', 'studentSessionSummary', 'studentContinueBtn', 'studentLoginHint',
+        'studentIdentityCode', 'studentIdentityLeaderboardName', 'studentIdentityName', 'studentIdentityClassCode',
+        'studentIdentityAssignedLevel', 'main-content'
+    ].forEach((id) => element(id));
+    const loginCalls = [];
+    const window = {
+        location: {
+            href: `https://example.com/index.html${search}`,
+            search,
+            pathname: '/index.html',
+            origin: 'https://example.com'
+        },
+        history: { replaceState() {} },
+        WA_GOLD_RUSH_STUDENT_SESSION: loadStudentSession(),
+        WA_GOLD_RUSH_STUDENT_AUTH: {
+            async loginStudent(payload) {
+                loginCalls.push(payload);
+                return loginImpl(payload);
+            }
+        }
+    };
+    const context = {
+        console,
+        document: {
+            baseURI: 'https://example.com/index.html',
+            addEventListener() {},
+            getElementById: (id) => elements[id] || null,
+            createElement: () => ({ appendChild() {}, set innerHTML(_) {} })
+        },
+        localStorage: storage,
+        sessionStorage: createStorage(),
+        URL,
+        URLSearchParams,
+        alert() {},
+        window
+    };
+    vm.runInNewContext(
+        [
+            getHomePageInlineScript(html),
+            'this.handleStudentLogin = handleStudentLogin;',
+            'this.getStudentSession = getStudentSession;',
+            'this.toggleStudentAuthUI = toggleStudentAuthUI;',
+            'this.isLevelAccessible = isLevelAccessible;',
+            'this.LEVELS = LEVELS;'
+        ].join('\n'),
+        context
+    );
+    return { context, elements, storage, loginCalls, window };
+}
+
+function rosterLoginResponse(overrides = {}) {
+    return {
+        success: true,
+        status: 200,
+        response: {
+            ok: true,
+            studentCode: 'HG-NB5-018',
+            studentId: '123456',
+            studentName: 'Alex Smith',
+            leaderboardName: 'Golddigger',
+            classCode: 'NB5',
+            assignedLevel: 2,
+            ...overrides
+        },
+        error: ''
+    };
+}
+
+test('student session contract rejects incomplete, malformed, and self-created identities', () => {
+    const api = loadStudentSession();
+    const complete = { ok: true, studentCode: 'HG-NB5-018', studentId: '123456', studentName: 'Alex', leaderboardName: 'Golddigger', classCode: 'nb5', assignedLevel: '3' };
+    const created = api.createSessionFromLogin(complete);
+    assert.equal(created.ok, true);
+    assert.equal(created.session.source, 'GGR_LoginStudent');
+    assert.equal(created.session.classCode, 'NB5');
+    assert.equal(created.session.assignedLevel, 3);
+
+    assert.equal(api.createSessionFromLogin({ ...complete, ok: false }).ok, false);
+    for (const field of api.IDENTITY_FIELDS) {
+        const result = api.createSessionFromLogin({ ...complete, [field]: '' });
+        assert.equal(result.ok, false, `blank ${field} must be rejected`);
+        assert.ok(result.errors.includes(field));
+    }
+    assert.equal(api.createSessionFromLogin({ ...complete, studentCode: 'Alex Smith' }).ok, false);
+    assert.equal(api.createSessionFromLogin({ ...complete, studentCode: 'HG|NB5' }).ok, false);
+    assert.equal(api.createSessionFromLogin({ ...complete, classCode: '6B|X' }).ok, false);
+    for (const level of [0, 6, 2.5, 'abc', null]) {
+        assert.equal(api.createSessionFromLogin({ ...complete, assignedLevel: level }).ok, false, `level ${level}`);
+    }
+
+    // Legacy home-page session shape (self-created, no flow source) is rejected.
+    assert.equal(api.parseSession({ ok: true, studentCode: 'HG-NB5-018', leaderboardName: 'x', classCode: 'NB5', authenticatedAt: '2026-01-01T00:00:00Z' }), null);
+    assert.equal(api.parseSession(JSON.stringify({ ...created.session, studentId: '' })), null);
+
+    // PINs / hashes are never persisted.
+    const storage = createStorage();
+    assert.equal(api.writeSession(storage, { ...created.session, pin: '1234', pinHash: 'abc' }), true);
+    const stored = JSON.parse(storage.getItem(STUDENT_SESSION_KEY));
+    assert.equal('pin' in stored, false);
+    assert.equal('pinHash' in stored, false);
+    assert.equal(api.readSession(storage).studentCode, 'HG-NB5-018');
+});
+
+test('student auth login fails when the roster response is incomplete, malformed, or mismatched', async () => {
+    const respond = (data) => {
+        global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+            callFlow: async () => ({ success: true, status: 200, data })
+        };
+        return loadStudentAuth();
+    };
+    const complete = { ok: true, studentCode: 'SC-1', studentId: '123456', studentName: 'Alex', leaderboardName: 'Gold', classCode: '6B', assignedLevel: 2 };
+
+    let result = await respond({ ...complete, leaderboardName: '' }).loginStudent({ classCode: '6b', studentId: '123456', pin: '1234' });
+    assert.equal(result.success, false);
+    assert.match(result.error, /incomplete.*leaderboardName/);
+
+    result = await respond({ ...complete, studentCode: 'not a code' }).loginStudent({ classCode: '6b', studentId: '123456', pin: '1234' });
+    assert.equal(result.success, false);
+
+    result = await respond({ ...complete, assignedLevel: undefined }).loginStudent({ classCode: '6b', studentId: '123456', pin: '1234' });
+    assert.equal(result.success, false);
+
+    result = await respond({ ...complete, studentId: '999999' }).loginStudent({ classCode: '6b', studentId: '123456', pin: '1234' });
+    assert.equal(result.success, false);
+    assert.match(result.error, /does not match/);
+
+    result = await respond({ ok: false, message: 'Invalid PIN' }).loginStudent({ classCode: '6b', studentId: '123456', pin: '1234' });
+    assert.equal(result.success, false);
+    assert.equal(result.error, 'Invalid PIN');
+
+    await assert.rejects(() => respond(complete).loginStudent({ classCode: '6b', studentId: '', pin: '1234' }), /required/);
+});
+
+test('fresh-browser home login calls loginStudent and creates a roster session only on success', async () => {
+    const harness = buildHomeLoginHarness({ loginImpl: async () => rosterLoginResponse() });
+    assert.equal(harness.context.getStudentSession(), null);
+    assert.equal(harness.context.LEVELS.some(level => harness.context.isLevelAccessible(level)), false);
+
+    harness.elements.studentClassCodeInput.value = 'nb5';
+    harness.elements.studentIdInput.value = '123456';
+    harness.elements.studentPinInput.value = '9876';
+    await harness.context.handleStudentLogin({ preventDefault() {} });
+
+    assert.equal(JSON.stringify(harness.loginCalls), JSON.stringify([{ classCode: 'NB5', studentId: '123456', pin: '9876' }]));
+    const raw = harness.storage.getItem(STUDENT_SESSION_KEY);
+    const stored = JSON.parse(raw);
+    assert.equal(stored.source, 'GGR_LoginStudent');
+    assert.equal(stored.studentCode, 'HG-NB5-018');
+    assert.equal(stored.leaderboardName, 'Golddigger');
+    assert.equal(stored.assignedLevel, 2);
+    assert.doesNotMatch(raw, /9876|"pin/i);
+    assert.equal(harness.elements.studentPinInput.value, '');
+    // Identity is shown read-only (text, not inputs) after login.
+    assert.equal(harness.elements.studentLoginForm.hidden, true);
+    assert.equal(harness.elements.studentIdentityCode.textContent, 'HG-NB5-018');
+    assert.equal(harness.elements.studentIdentityClassCode.textContent, 'NB5');
+    assert.equal(harness.context.isLevelAccessible(harness.context.LEVELS[0]), true);
+});
+
+test('home login does not create a session when the flow fails or returns an incomplete roster record', async () => {
+    const failed = buildHomeLoginHarness({ loginImpl: async () => ({ success: false, error: 'Invalid PIN', response: { ok: false } }) });
+    failed.elements.studentClassCodeInput.value = 'NB5';
+    failed.elements.studentIdInput.value = '123456';
+    failed.elements.studentPinInput.value = '9999';
+    await failed.context.handleStudentLogin({ preventDefault() {} });
+    assert.equal(failed.storage.getItem(STUDENT_SESSION_KEY), null);
+    assert.equal(failed.elements.studentLoginStatus.textContent, 'Invalid PIN');
+    assert.equal(failed.elements.studentPinInput.value, '');
+
+    // Even if a client reports success, an incomplete roster identity is rejected.
+    const incomplete = buildHomeLoginHarness({ loginImpl: async () => rosterLoginResponse({ classCode: '' }) });
+    incomplete.elements.studentClassCodeInput.value = 'NB5';
+    incomplete.elements.studentIdInput.value = '123456';
+    incomplete.elements.studentPinInput.value = '1234';
+    await incomplete.context.handleStudentLogin({ preventDefault() {} });
+    assert.equal(incomplete.storage.getItem(STUDENT_SESSION_KEY), null);
+    assert.match(incomplete.elements.studentLoginStatus.textContent, /incomplete.*classCode/);
+
+    const missingFields = buildHomeLoginHarness({ loginImpl: async () => rosterLoginResponse() });
+    await missingFields.context.handleStudentLogin({ preventDefault() {} });
+    assert.equal(missingFields.loginCalls.length, 0);
+    assert.equal(missingFields.storage.getItem(STUDENT_SESSION_KEY), null);
+});
+
+test('home page rejects legacy self-created sessions and has no local session creation bypass', () => {
+    const legacy = buildHomeLoginHarness({
+        storage: createStorage({
+            [STUDENT_SESSION_KEY]: JSON.stringify({ ok: true, studentCode: 'HG-NB5-018', leaderboardName: 'x', authenticatedAt: '2026-01-01T00:00:00Z' })
+        }),
+        loginImpl: async () => rosterLoginResponse()
+    });
+    assert.equal(legacy.context.getStudentSession(), null);
+    legacy.context.toggleStudentAuthUI();
+    assert.equal(legacy.storage.getItem(STUDENT_SESSION_KEY), null);
+    assert.match(legacy.elements.studentLoginStatus.textContent, /sign in again/);
+
+    const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+    assert.doesNotMatch(html, /buildStudentSessionFromForm|enableFlowStudentLogin|FLOW_STUDENT_LOGIN_FEATURE_FLAG/);
+    assert.doesNotMatch(html, /setStorageValue\(localStorage,\s*STUDENT_SESSION_KEY/);
+    assert.doesNotMatch(html, /id="studentCodeInput"|id="leaderboardNameInput"|id="studentNameInput"/);
+    assert.match(html, /WA_GOLD_RUSH_STUDENT_AUTH[\s\S]*loginStudent\(\{ classCode, studentId, pin \}\)/);
+    assert.match(html, /createSessionFromLogin\(result\.response\)/);
+    assert.ok(html.indexOf('shared/student-session.js') < html.indexOf('shared/student-auth-client.js'));
+});
+
+test('gameplay, quiz, and saves are blocked without an authenticated roster session', () => {
+    const storage = createStorage({
+        // Legacy self-created session: must not count as authenticated.
+        [STUDENT_SESSION_KEY]: JSON.stringify({ ok: true, studentCode: 'SC-1', leaderboardName: 'Me', classCode: '6B' })
+    });
+    const { context, gameState, getElement } = buildStudentGameHarness({ level: 2, storage });
+    assert.equal(gameState.player.studentCode, '');
+
+    const roundBefore = gameState.round;
+    gameState.investmentPlans = { southern_cross: { safe: 10, medium: 0, deep: 0 } };
+    context.playRound();
+    assert.equal(gameState.round, roundBefore);
+    assert.match(context.location.href, /index\.html\?studentLogin=1&returnTo=/);
+
+    context.location.href = 'https://example.com/levels/level-2-tycoon/index.html?level=2';
+    gameState.cash = 999999;
+    context.checkProgressionGoal();
+    context.showProgressionQuiz();
+    assert.equal(getElement('checkpointQuizModal').classList.contains('active'), false);
+    assert.notEqual(gameState.checkpointStatus, 'quiz_available');
+
+    context.displayQuizResults({ passed: true, score: 5, totalQuestions: 5, results: [] }, {});
+    assert.equal(storage.getItem('level2_autosave'), null);
+    assert.equal(context.__syncCalls, undefined);
+
+    global.localStorage = storage;
+    assert.equal(new context.LevelAccessGuardClass(2).isLevelAccessible(), false);
+
+    const levelOne = fs.readFileSync(require.resolve('../levels/level-1-basic/index.html'), 'utf8');
+    assert.ok(levelOne.includes('<script src="../../shared/student-session.js"></script>'));
+    const levelOneScript = fs.readFileSync(require.resolve('../levels/level-1-basic/script.js'), 'utf8');
+    assert.match(levelOneScript, /requireSessionOrRedirect/);
+    const levelTwo = fs.readFileSync(require.resolve('../levels/level-2-tycoon/index.html'), 'utf8');
+    assert.ok(levelTwo.indexOf('shared/student-session.js') < levelTwo.indexOf('script.js"'));
+});
+
+test('student cannot edit authoritative identity in-game; identity comes only from the session', () => {
+    const storage = createSessionStorage({
+        // Stale teacher cache must not override roster identity.
+        teacher_dashboard: JSON.stringify({ students: [{ studentCode: 'SC-1', leaderboardName: 'Hacked', classCode: 'ZZ' }] })
+    });
+    const { context, gameState, getElement } = buildStudentGameHarness({ level: 2, storage });
+    assert.equal(gameState.player.studentCode, 'SC-1');
+    assert.equal(gameState.player.leaderboardName, 'Gold Miner');
+    assert.equal(gameState.player.classCode, '6B');
+
+    getElement('studentCodeInput').value = 'SOMEONE-ELSE';
+    getElement('leaderboardNameInput').value = 'Hacker';
+    getElement('companyNameInput').value = 'Perth Prospectors';
+    vm.runInContext('updateAllUI = function () {};', context);
+    context.saveCompanyName(false);
+    assert.equal(gameState.player.studentCode, 'SC-1');
+    assert.equal(gameState.player.leaderboardName, 'Gold Miner');
+    assert.equal(gameState.player.companyName, 'Perth Prospectors');
+    assert.equal(JSON.parse(storage.getItem('level2_autosave')).gameState.player.studentCode, 'SC-1');
+
+    const levelHtml = fs.readFileSync(require.resolve('../levels/level-2-tycoon/index.html'), 'utf8');
+    for (const id of ['studentCodeInput', 'leaderboardNameInput', 'studentIdInput', 'studentNameInput']) {
+        assert.match(levelHtml, new RegExp(`id="${id}"[^>]*readonly`), `${id} must be read-only`);
+    }
+    assert.doesNotMatch(levelHtml, /id="companyNameInput"[^>]*readonly/);
+    const script = fs.readFileSync(require.resolve('../levels/level-2-tycoon/script.js'), 'utf8');
+    assert.doesNotMatch(script, /gameState\.player\.studentCode\s*=\s*studentCodeEl/);
+    assert.doesNotMatch(script, /getMatchedStudentFromSession/);
+});
+
+test('level unlock ignores another student\'s autosave on a shared device', () => {
+    const { LevelAccessGuard } = require('../levels/level-2-tycoon/level-access-guard.js');
+    const autosave = JSON.stringify({
+        gameState: {
+            player: { studentCode: 'SC-OTHER' },
+            progressionStateByLevel: { 2: { checkpointStatus: 'quiz_passed' } }
+        }
+    });
+    assert.equal(LevelAccessGuard.isCheckpointPassed(2, createSessionStorage({ level2_autosave: autosave })), false);
+    assert.equal(LevelAccessGuard.isCheckpointPassed(2, createSessionStorage({ level2_autosave: autosave }, { studentCode: 'sc-other' })), true);
+    assert.equal(LevelAccessGuard.isCheckpointPassed(2, createStorage({ level2_autosave: autosave })), false);
+});
+
+function setupSaveProgressFlow(responses = []) {
+    global.WA_GOLD_RUSH_FLOW_ENDPOINTS = { saveProgress: 'https://example.com/save' };
+    const posted = [];
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        callFlow: async (_flowName, payload) => {
+            posted.push(payload);
+            return responses.length ? responses.shift() : { success: true, status: 200, data: { ok: true } };
+        },
+        resolveFlowEndpoint: (key) => global.WA_GOLD_RUSH_FLOW_ENDPOINTS[key] || ''
+    };
+    return posted;
+}
+
+test('SaveProgress rejects blank ClassCode, blank Level, missing StudentCode, and non-session identity', async () => {
+    global.localStorage = createSessionStorage();
+    const posted = setupSaveProgressFlow();
+    const sync = loadSharePointSync();
+    const base = { studentCode: 'SC-1', classCode: '6B', level: 2, currentRound: 2 };
+
+    for (const [override, field] of [
+        [{ classCode: '' }, 'classCode'],
+        [{ level: '' }, 'level'],
+        [{ level: undefined }, 'level'],
+        [{ level: 1 }, 'level'],
+        [{ studentCode: '' }, 'studentCode'],
+        [{ studentCode: 'bad code' }, 'studentCode']
+    ]) {
+        const payload = sync.buildProgressPayload({ ...base, ...override });
+        assert.equal(payload.progressKey, '', `${field} must not produce a ProgressKey`);
+        assert.ok(sync.validateProgressPayload(payload).errors.includes(field));
+        const result = await sync.syncProgress({ ...base, ...override });
+        assert.equal(result.ok, false);
+        assert.equal(result.rejected, true);
+        assert.equal(result.queued, false);
+        assert.ok(result.errors.includes(field));
+    }
+    assert.equal(sync.buildProgressPayload({ ...base, level: undefined }).level, null);
+
+    const mismatch = await sync.syncProgress({ ...base, studentCode: 'SC-2' });
+    assert.equal(mismatch.reason, 'identity_mismatch');
+
+    global.localStorage = createStorage();
+    const anonymous = await sync.syncProgress(base);
+    assert.equal(anonymous.reason, 'not_authenticated');
+
+    assert.equal(posted.length, 0);
+    assert.equal(sync.queueLength(), 0);
+});
+
+test('SaveProgress treats ok:false as a permanent failure, retries network errors, and keeps canonical ProgressKey', async () => {
+    global.localStorage = createSessionStorage();
+    const posted = setupSaveProgressFlow([
+        { success: true, status: 200, data: { ok: false, message: 'Duplicate conflict requires manual resolution' } },
+        { success: false, status: 503, error: 'Service unavailable' }
+    ]);
+    const sync = loadSharePointSync();
+
+    const rejected = await sync.syncProgress({ studentCode: 'sc-1', classCode: '6b', level: 2 });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.rejected, true);
+    assert.equal(rejected.queued, false);
+    assert.equal(rejected.progressKey, '6B|SC-1|2');
+    assert.equal(sync.queueLength(), 0);
+    assert.equal(sync.quarantineLength(), 1);
+    assert.match(sync.getQuarantine()[0].reason, /Duplicate conflict/);
+    assert.equal(sync.getCloudSaveStatus(), 'cloud save rejected');
+
+    const retryable = await sync.syncProgress({ studentCode: 'SC-1', classCode: '6B', level: 3 });
+    assert.equal(retryable.queued, true);
+    assert.equal(sync.queueLength(), 1);
+    assert.deepEqual(posted.map(p => p.progressKey), ['6B|SC-1|2', '6B|SC-1|3']);
+
+    // Retries are held (not sent) while a different student is signed in.
+    global.localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(buildRosterSession({ studentCode: 'SC-2' })));
+    await sync.retryQueue();
+    assert.equal(posted.length, 2);
+    assert.equal(sync.queueLength(), 1);
+
+    global.localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(buildRosterSession()));
+    await sync.retryQueue();
+    assert.equal(posted.length, 3);
+    assert.equal(posted[2].saveRequestId, retryable.saveRequestId);
+    assert.equal(posted[2].progressKey, '6B|SC-1|3');
+    assert.equal(sync.queueLength(), 0);
+});
+
+test('Level 2-5 save payload uses session identity, current gameplay level, and separate roster assigned level', async () => {
+    const storage = createSessionStorage({}, { assignedLevel: 4 });
+    global.localStorage = storage;
+    const sync = loadSharePointSync();
+    const scheduled = [];
+    const { context, gameState } = buildStudentGameHarness({
+        level: 3,
+        storage,
+        extraGlobals: { SharePointSync: sync }
+    });
+    // Replace the stubbed syncPlayerRecord with the real one for this test.
+    const script = fs.readFileSync(require.resolve('../levels/level-2-tycoon/script.js'), 'utf8');
+    const realSync = script.slice(script.indexOf('function syncPlayerRecord() {'), script.indexOf('function syncTeacherDashboardRecord(record) {'));
+    vm.runInContext(`${realSync}\nthis.realSyncPlayerRecord = syncPlayerRecord;\ngetProgressSaveScheduler = () => ({ schedule: (p) => { this.__scheduled.push(p); } });`, Object.assign(context, { __scheduled: scheduled }));
+    gameState.player.companyName = 'Co';
+    context.realSyncPlayerRecord();
+    assert.equal(scheduled.length, 1);
+    assert.equal(scheduled[0].studentCode, 'SC-1');
+    assert.equal(scheduled[0].classCode, '6B');
+    assert.equal(scheduled[0].level, 3);
+    assert.equal(scheduled[0].rosterAssignedLevel, 4);
+    assert.equal(scheduled[0].progressKey, '6B|SC-1|3');
+    const markers = JSON.parse(scheduled[0].progressionMarkersJson);
+    assert.equal(markers.currentLevel, 3);
+    assert.equal(markers.rosterAssignedLevel, 4);
+    assert.equal(markers.player.leaderboardName, 'Gold Miner');
 });

@@ -15,19 +15,57 @@ class LevelAccessGuard {
         return this.assignedLevel > 2 ? this.assignedLevel - 1 : null;
     }
 
+    static getSessionApi(globalObj) {
+        const root = globalObj || (typeof window !== 'undefined' ? window : globalThis);
+        const api = root?.WA_GOLD_RUSH_STUDENT_SESSION;
+        if (api && typeof api.readSession === 'function') return api;
+        if (typeof require === 'function') {
+            try { return require('../../shared/student-session.js'); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    static resolveStorage(storage) {
+        return storage || (typeof localStorage !== 'undefined' ? localStorage : null);
+    }
+
+    /**
+     * The roster-verified (GGR_LoginStudent) session, or null. Legacy,
+     * self-created, or incomplete sessions are rejected.
+     */
+    static readStudentSession(storage, globalObj) {
+        const api = LevelAccessGuard.getSessionApi(globalObj);
+        if (!api) return null;
+        return api.readSession(LevelAccessGuard.resolveStorage(storage));
+    }
+
+    /**
+     * The shared autosave slot is per device, not per student. It only counts
+     * for the signed-in student when its saved player.studentCode matches.
+     */
+    static isAutosaveOwnedBy(gameState, session) {
+        if (!session || !gameState || typeof gameState !== 'object') return false;
+        const ownerCode = String(gameState.player?.studentCode || '').trim().toUpperCase();
+        return !!ownerCode && ownerCode === String(session.studentCode || '').trim().toUpperCase();
+    }
+
     /**
      * Reads the per-level checkpoint state from the shared Level 2–5 autosave
      * slot. The game (script.js → GameState.saveToLocalStorage) and the home
      * page level cards read/write this exact shape, so all three agree.
+     * Requires an authenticated student session that owns the autosave.
      */
     static readSavedProgressionState(requiredLevel, storage) {
         try {
-            const store = storage || (typeof localStorage !== 'undefined' ? localStorage : null);
+            const store = LevelAccessGuard.resolveStorage(storage);
+            const session = LevelAccessGuard.readStudentSession(store);
+            if (!session) return null;
             const raw = store?.getItem(LevelAccessGuard.AUTOSAVE_KEY);
             if (!raw) return null;
             const data = JSON.parse(raw);
             const gs = data?.gameState;
             if (!gs) return null;
+            if (!LevelAccessGuard.isAutosaveOwnedBy(gs, session)) return null;
             const levelKey = String(Number(requiredLevel));
             return gs.progressionStateByLevel?.[levelKey]
                 || (String(gs.assignedLevel || '') === levelKey
@@ -60,21 +98,6 @@ class LevelAccessGuard {
         return !!endpoint && !(typeof api.isPlaceholderEndpoint === 'function' && api.isPlaceholderEndpoint(endpoint));
     }
 
-    static readStudentSession(storage) {
-        try {
-            const store = storage || (typeof localStorage !== 'undefined' ? localStorage : null);
-            const session = JSON.parse(store?.getItem(LevelAccessGuard.STUDENT_SESSION_KEY) || 'null');
-            const studentCode = String(session?.studentCode || '').trim();
-            if (!studentCode) return null;
-            return {
-                studentCode,
-                classCode: String(session.classCode || '').trim().toUpperCase()
-            };
-        } catch (_) {
-            return null;
-        }
-    }
-
     static extractProgressRecords(data) {
         const body = data && typeof data === 'object' && !Array.isArray(data) && data.body && typeof data.body === 'object'
             ? data.body
@@ -101,7 +124,7 @@ class LevelAccessGuard {
         if (!LevelAccessGuard.isRemoteProgressConfigured(root)) {
             return { unlocked: false, reason: 'flow_unavailable' };
         }
-        const session = LevelAccessGuard.readStudentSession(storage);
+        const session = LevelAccessGuard.readStudentSession(storage, root);
         if (!session) return { unlocked: false, reason: 'missing_student_session' };
         const extract = root?.WA_GOLD_RUSH_PROGRESS_SNAPSHOT?.extractCheckpointFields;
         if (typeof extract !== 'function') return { unlocked: false, reason: 'snapshot_unavailable' };
@@ -131,8 +154,11 @@ class LevelAccessGuard {
         const codeKey = session.studentCode.toUpperCase();
         const records = LevelAccessGuard.extractProgressRecords(result.data).filter((record) => {
             if (!record || typeof record !== 'object') return false;
+            // Only records explicitly belonging to the signed-in student (and
+            // their class, when the record carries one) may unlock a level.
             const recordCode = String(record.studentCode || record.StudentCode || '').trim().toUpperCase();
-            return !recordCode || recordCode === codeKey;
+            const recordClass = String(record.classCode || record.ClassCode || '').trim().toUpperCase();
+            return recordCode === codeKey && (!recordClass || recordClass === session.classCode);
         });
         const passed = records
             .map((record) => extract(record, level))
@@ -141,8 +167,21 @@ class LevelAccessGuard {
 
         try {
             const raw = storage?.getItem(LevelAccessGuard.AUTOSAVE_KEY);
-            const data = raw ? JSON.parse(raw) : {};
-            const gameState = data?.gameState && typeof data.gameState === 'object' ? data.gameState : {};
+            const parsed = raw ? JSON.parse(raw) : {};
+            const ownedBySession = LevelAccessGuard.isAutosaveOwnedBy(parsed?.gameState, session);
+            // Another student's (or an unowned) autosave is never merged into.
+            const data = ownedBySession ? parsed : {};
+            const gameState = ownedBySession
+                ? data.gameState
+                : {
+                    player: {
+                        studentCode: session.studentCode,
+                        leaderboardName: session.leaderboardName,
+                        studentId: session.studentId,
+                        studentName: session.studentName,
+                        classCode: session.classCode
+                    }
+                };
             const byLevel = gameState.progressionStateByLevel && typeof gameState.progressionStateByLevel === 'object'
                 ? gameState.progressionStateByLevel
                 : {};
@@ -180,6 +219,7 @@ class LevelAccessGuard {
      * (only when configured) before denying access.
      */
     async resolveAccess(options = {}) {
+        if (!LevelAccessGuard.readStudentSession(options.storage, options.globalObj)) return false;
         if (this.isLevelAccessible()) return true;
         const requiredLevel = this.getRequiredCheckpointLevel();
         const remote = await LevelAccessGuard.hydrateRemoteProgression(requiredLevel, options);
@@ -187,6 +227,9 @@ class LevelAccessGuard {
     }
 
     isLevelAccessible() {
+        if (!LevelAccessGuard.readStudentSession()) {
+            return false;
+        }
         if (this.assignedLevel <= 2) {
             return true;
         }
@@ -195,6 +238,9 @@ class LevelAccessGuard {
     }
 
     getAccessDenialReason() {
+        if (!LevelAccessGuard.readStudentSession()) {
+            return 'You must sign in with your Class Code, Student ID and PIN before playing.';
+        }
         if (this.assignedLevel <= 2) {
             return null;
         }
@@ -218,6 +264,10 @@ class LevelAccessGuard {
     }
 
     enforceAccess() {
+        if (!LevelAccessGuard.readStudentSession()) {
+            LevelAccessGuard.getSessionApi()?.requireSessionOrRedirect({ loginPath: '../../index.html' });
+            return;
+        }
         if (!this.isLevelAccessible()) {
             const reason = this.getAccessDenialReason();
             showAccessDeniedModal(`Access Denied: ${reason}`);

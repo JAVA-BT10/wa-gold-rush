@@ -329,34 +329,38 @@
 
         <section class="student-section" aria-labelledby="studentLoginHeading">
             <h2 id="studentLoginHeading">🎓 Students</h2>
-            <p>Sign in with your student code to use competition features and carry your identity into levels.</p>
-            <form id="studentLoginForm">
+            <p>Sign in with your Class Code, Student ID and PIN. Your identity comes from your class roster and is required before you can play, take checkpoint quizzes, or save progress.</p>
+            <form id="studentLoginForm" novalidate>
                 <div class="student-login-grid">
-                    <label for="studentCodeInput">Student Code
-                        <input id="studentCodeInput" type="text" maxlength="40" placeholder="e.g. SC-Y6-1042" required>
+                    <label for="studentClassCodeInput">Class Code
+                        <input id="studentClassCodeInput" type="text" maxlength="20" placeholder="e.g. 6B" autocomplete="off" required>
                     </label>
-                    <label for="leaderboardNameInput">Leaderboard Name
-                        <input id="leaderboardNameInput" type="text" maxlength="30" placeholder="Public nickname" required>
+                    <label for="studentIdInput">Student ID
+                        <input id="studentIdInput" type="text" maxlength="30" placeholder="e.g. 123456" autocomplete="off" required>
                     </label>
-                    <label for="studentIdInput">Student ID (optional)
-                        <input id="studentIdInput" type="text" maxlength="30" placeholder="e.g. 123456">
-                    </label>
-                    <label for="studentNameInput">Student Name (optional)
-                        <input id="studentNameInput" type="text" maxlength="50" placeholder="e.g. Alex">
-                    </label>
-                    <label for="studentClassCodeInput">Class Code (optional)
-                        <input id="studentClassCodeInput" type="text" maxlength="20" placeholder="e.g. 6B">
+                    <label for="studentPinInput">PIN
+                        <input id="studentPinInput" type="password" maxlength="12" inputmode="numeric" autocomplete="current-password" required>
                     </label>
                 </div>
                 <div class="student-actions">
                     <button id="studentLoginBtn" class="btn-student" type="submit">🔐 Student Login</button>
                     <span id="studentLoginHint" class="level-description" style="margin: 0;"></span>
                 </div>
+                <p id="studentLoginStatus" class="level-description" role="status" aria-live="polite" style="margin: 8px 0 0;"></p>
             </form>
-            <div id="studentActiveSession" class="student-actions" hidden>
-                <button id="studentContinueBtn" class="btn-student" type="button">▶ Continue</button>
-                <button id="studentLogoutBtn" class="btn-play" type="button">Log Out</button>
-                <span id="studentSessionSummary" class="level-description" style="margin: 0;"></span>
+            <div id="studentActiveSession" hidden>
+                <dl id="studentIdentitySummary" class="student-login-grid" aria-label="Signed-in student identity (from class roster, read-only)">
+                    <div><dt>Student Code</dt><dd id="studentIdentityCode"></dd></div>
+                    <div><dt>Leaderboard Name</dt><dd id="studentIdentityLeaderboardName"></dd></div>
+                    <div><dt>Student Name</dt><dd id="studentIdentityName"></dd></div>
+                    <div><dt>Class Code</dt><dd id="studentIdentityClassCode"></dd></div>
+                    <div><dt>Assigned Level</dt><dd id="studentIdentityAssignedLevel"></dd></div>
+                </dl>
+                <div class="student-actions">
+                    <button id="studentContinueBtn" class="btn-student" type="button">▶ Continue</button>
+                    <button id="studentLogoutBtn" class="btn-play" type="button">Log Out</button>
+                    <span id="studentSessionSummary" class="level-description" style="margin: 0;"></span>
+                </div>
             </div>
             <details style="margin-top: 12px;">
                 <summary>Change Student PIN</summary>
@@ -419,6 +423,7 @@
     <script src="shared/power-automate-headers.js"></script>
     <script src="shared/progression-snapshot.js"></script>
     <script src="levels/level-2-tycoon/level-access-guard.js"></script>
+    <script src="shared/student-session.js"></script>
     <script src="shared/student-auth-client.js"></script>
     <script>
         /**
@@ -489,7 +494,6 @@
         const STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
         const STUDENT_LOGIN_QUERY_PARAM = 'studentLogin';
         const RETURN_TO_QUERY_PARAM = 'returnTo';
-        const FLOW_STUDENT_LOGIN_FEATURE_FLAG = !!window.WA_GOLD_RUSH_FEATURE_FLAGS?.enableFlowStudentLogin;
 
         function getTeacherDashboardUrl(isSignIn = false) {
             const path = isSignIn
@@ -516,6 +520,7 @@
          * same-device (shared level2_autosave slot).
          */
         async function refreshRemoteProgression() {
+            if (!getStudentSession()) return;
             if (typeof LevelAccessGuard === 'undefined' || !LevelAccessGuard.isRemoteProgressConfigured()) return;
             let changed = false;
             for (const level of LEVELS) {
@@ -534,6 +539,10 @@
          * Check if level is accessible
          */
         function isLevelAccessible(level) {
+            // Every level, including Level 1, requires a roster-verified session.
+            if (!getStudentSession()) {
+                return false;
+            }
             if (!level.requiresApproval) {
                 return true;
             }
@@ -544,6 +553,9 @@
          * Get lock reason for level
          */
         function getLockReason(level) {
+            if (!getStudentSession()) {
+                return 'Sign in as a student below to play.';
+            }
             if (!level.requiresApproval) {
                 return null;
             }
@@ -848,29 +860,17 @@ const classCodes = Array.isArray(session.classCodes)
             showTeacherDashboardStoragePrompt();
         }
 
-        function parseStoredStudentSession(raw) {
-            if (!raw) return null;
-            try {
-                const session = JSON.parse(raw);
-                if (!session || typeof session !== 'object') return null;
-                const studentCode = String(session.studentCode || session.studentId || '').trim();
-                if (!studentCode) return null;
-                return {
-                    ok: true,
-                    studentCode,
-                    leaderboardName: String(session.leaderboardName || studentCode).trim(),
-                    studentId: String(session.studentId || '').trim(),
-                    studentName: String(session.studentName || '').trim(),
-                    classCode: String(session.classCode || '').trim().toUpperCase(),
-                    authenticatedAt: String(session.authenticatedAt || '').trim()
-                };
-            } catch (_) {
-                return null;
-            }
+        function getStudentSessionApi() {
+            return window.WA_GOLD_RUSH_STUDENT_SESSION || null;
         }
 
+        /**
+         * Returns the roster-verified session created from GGR_LoginStudent,
+         * or null. Legacy / self-created / incomplete sessions are rejected.
+         */
         function getStudentSession() {
-            return parseStoredStudentSession(getStorageValue(localStorage, STUDENT_SESSION_KEY));
+            const api = getStudentSessionApi();
+            return api ? api.readSession(localStorage) : null;
         }
 
         function getSafeReturnToUrl() {
@@ -892,16 +892,36 @@ const classCodes = Array.isArray(session.classCodes)
             return null;
         }
 
-        function hydrateStudentForm(session) {
+        function setStudentLoginStatus(message, isError = false) {
+            const statusEl = document.getElementById('studentLoginStatus');
+            if (!statusEl) return;
+            statusEl.textContent = message || '';
+            statusEl.style.color = isError ? '#c62828' : '#2e7d32';
+        }
+
+        function clearStudentLoginInputs({ keepIdentity = false } = {}) {
+            const clear = (id) => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            };
+            clear('studentPinInput');
+            if (!keepIdentity) {
+                clear('studentClassCodeInput');
+                clear('studentIdInput');
+            }
+        }
+
+        /** Roster identity is displayed read-only; it cannot be edited after login. */
+        function renderStudentIdentity(session) {
             const set = (id, value) => {
                 const el = document.getElementById(id);
-                if (el) el.value = value || '';
+                if (el) el.textContent = value == null ? '' : String(value);
             };
-            set('studentCodeInput', session?.studentCode || '');
-            set('leaderboardNameInput', session?.leaderboardName || '');
-            set('studentIdInput', session?.studentId || '');
-            set('studentNameInput', session?.studentName || '');
-            set('studentClassCodeInput', session?.classCode || '');
+            set('studentIdentityCode', session?.studentCode || '');
+            set('studentIdentityLeaderboardName', session?.leaderboardName || '');
+            set('studentIdentityName', session?.studentName || '');
+            set('studentIdentityClassCode', session?.classCode || '');
+            set('studentIdentityAssignedLevel', session?.assignedLevel ? `Level ${session.assignedLevel}` : '');
         }
 
         function toggleStudentAuthUI() {
@@ -910,21 +930,27 @@ const classCodes = Array.isArray(session.classCodes)
             const sessionSummary = document.getElementById('studentSessionSummary');
             const continueBtn = document.getElementById('studentContinueBtn');
             const loginHint = document.getElementById('studentLoginHint');
+            const api = getStudentSessionApi();
+            if (api && api.hasInvalidStoredSession(localStorage)) {
+                api.clearSession(localStorage);
+                setStudentLoginStatus('Your previous sign-in could not be verified against the class roster. Please sign in again with your Class Code, Student ID and PIN.', true);
+            }
             const session = getStudentSession();
             const targetUrl = getStudentLoginTargetUrl();
 
             if (!form || !activeSession || !sessionSummary || !continueBtn || !loginHint) return;
 
             if (session) {
-                hydrateStudentForm(session);
+                renderStudentIdentity(session);
                 form.hidden = true;
                 activeSession.hidden = false;
-                continueBtn.textContent = `▶ Continue as ${session.leaderboardName || session.studentCode}`;
+                continueBtn.textContent = `▶ Continue as ${session.leaderboardName}`;
                 loginHint.textContent = '';
-                sessionSummary.textContent = `Signed in as ${session.leaderboardName || session.studentCode} (${session.studentCode}).`;
+                sessionSummary.textContent = `Signed in as ${session.leaderboardName} (${session.studentCode}, class ${session.classCode}).`;
                 return;
             }
 
+            renderStudentIdentity(null);
             form.hidden = false;
             activeSession.hidden = true;
             sessionSummary.textContent = '';
@@ -933,48 +959,66 @@ const classCodes = Array.isArray(session.classCodes)
                 : 'Sign in, then choose a level below.';
             const shouldFocusLogin = new URLSearchParams(window.location.search).get(STUDENT_LOGIN_QUERY_PARAM) === '1';
             if (shouldFocusLogin) {
-                const studentCodeInput = document.getElementById('studentCodeInput');
-                if (studentCodeInput && typeof studentCodeInput.focus === 'function') {
-                    studentCodeInput.focus();
+                const classCodeInput = document.getElementById('studentClassCodeInput');
+                if (classCodeInput && typeof classCodeInput.focus === 'function') {
+                    classCodeInput.focus();
                 }
             }
         }
 
-        function buildStudentSessionFromForm() {
-            const studentCode = String(document.getElementById('studentCodeInput')?.value || '').trim();
-            const leaderboardName = String(document.getElementById('leaderboardNameInput')?.value || '').trim();
-            const studentId = String(document.getElementById('studentIdInput')?.value || '').trim();
-            const studentName = String(document.getElementById('studentNameInput')?.value || '').trim();
-            const classCode = String(document.getElementById('studentClassCodeInput')?.value || '').trim().toUpperCase();
-            if (!studentCode || !leaderboardName) return null;
-            return {
-                ok: true,
-                studentCode,
-                leaderboardName,
-                studentId,
-                studentName,
-                classCode,
-                authenticatedAt: new Date().toISOString()
-            };
-        }
-
+        /**
+         * Student login is roster-backed only: GGR_LoginStudent must return
+         * ok:true with a complete identity before a session is created. The
+         * PIN (and its hash) is never stored.
+         */
         async function handleStudentLogin(event) {
             event.preventDefault();
-            const nextSession = buildStudentSessionFromForm();
-            if (!nextSession) {
-                alert('Student Code and Leaderboard Name are required.');
+            const classCode = String(document.getElementById('studentClassCodeInput')?.value || '').trim().toUpperCase();
+            const studentId = String(document.getElementById('studentIdInput')?.value || '').trim();
+            const pin = String(document.getElementById('studentPinInput')?.value || '').trim();
+            const loginBtn = document.getElementById('studentLoginBtn');
+            if (!classCode || !studentId || !pin) {
+                setStudentLoginStatus('Class Code, Student ID and PIN are required.', true);
                 return;
             }
-            if (FLOW_STUDENT_LOGIN_FEATURE_FLAG) {
-                alert('Flow-based student login is prepared but not activated for sessions until response-contract validation is complete.');
+            const auth = window.WA_GOLD_RUSH_STUDENT_AUTH;
+            const api = getStudentSessionApi();
+            if (!auth || typeof auth.loginStudent !== 'function' || !api) {
+                setStudentLoginStatus('Student sign-in is unavailable right now. Please refresh the page or ask your teacher.', true);
                 return;
             }
-            const saved = setStorageValue(localStorage, STUDENT_SESSION_KEY, JSON.stringify(nextSession));
-            if (!saved) {
-                alert('Could not save student login in this browser.');
+
+            if (loginBtn) loginBtn.disabled = true;
+            setStudentLoginStatus('Checking your class roster…');
+            let result = null;
+            try {
+                result = await auth.loginStudent({ classCode, studentId, pin });
+            } catch (error) {
+                result = { success: false, error: error?.message || 'Sign-in failed.' };
+            } finally {
+                clearStudentLoginInputs({ keepIdentity: true });
+                if (loginBtn) loginBtn.disabled = false;
+            }
+
+            if (!result?.success) {
+                api.clearSession(localStorage);
+                setStudentLoginStatus(result?.error || 'Sign-in failed. Check your Class Code, Student ID and PIN.', true);
+                renderLevels();
                 return;
             }
+            const created = api.createSessionFromLogin(result.response);
+            if (!created.ok || !api.writeSession(localStorage, created.session)) {
+                api.clearSession(localStorage);
+                setStudentLoginStatus(created.ok
+                    ? 'Could not save your sign-in in this browser.'
+                    : `Your class roster record is incomplete (${created.errors.join(', ')}). Ask your teacher to check your entry.`, true);
+                renderLevels();
+                return;
+            }
+            clearStudentLoginInputs();
+            setStudentLoginStatus('');
             toggleStudentAuthUI();
+            renderLevels();
             refreshRemoteProgression();
             const returnTo = getStudentLoginTargetUrl();
             if (returnTo) {
@@ -1001,8 +1045,10 @@ const classCodes = Array.isArray(session.classCodes)
 
         function handleStudentLogout() {
             removeStorageValue(localStorage, STUDENT_SESSION_KEY);
-            hydrateStudentForm(null);
+            clearStudentLoginInputs();
+            setStudentLoginStatus('');
             toggleStudentAuthUI();
+            renderLevels();
         }
 
         function getStudentPinFormElements() {
