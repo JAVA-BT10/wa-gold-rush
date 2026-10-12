@@ -20,6 +20,8 @@ const SharePointSync = (() => {
         apiKey: '',
         // Maximum number of queued retries kept in localStorage
         maxQueueSize: 50,
+        // Maximum number of quarantined (permanently rejected) items kept for inspection
+        maxQuarantineSize: 50,
         // Retry interval in milliseconds
         retryIntervalMs: 30000,
         // Bound gameplay-triggered cloud saves so they resolve to success or retry quickly
@@ -27,7 +29,11 @@ const SharePointSync = (() => {
     };
 
     const QUEUE_KEY = 'wa_gr_sync_queue';
-    const QUEUE_SCHEMA_VERSION = 3;
+    const QUARANTINE_KEY = 'wa_gr_sync_quarantine';
+    const QUEUE_SCHEMA_VERSION = 4;
+    const MAX_RETRY_ATTEMPTS = 10;
+    // HTTP statuses that mean the request itself is wrong; retrying cannot help.
+    const PERMANENT_HTTP_STATUSES = [400, 410, 422];
     let _retryTimer = null;
     let _cloudSaveStatus = 'idle';
 
@@ -48,9 +54,27 @@ const SharePointSync = (() => {
         return Number.isFinite(num) ? Math.round(num) : 0;
     }
 
+    function _resolveSessionApi() {
+        const globalApi = (typeof globalThis !== 'undefined' ? globalThis : window).WA_GOLD_RUSH_STUDENT_SESSION;
+        if (globalApi && typeof globalApi.readSession === 'function') return globalApi;
+        if (typeof require === 'function') {
+            try { return require('./student-session.js'); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    /**
+     * Supported integer gameplay level for GGR_SaveProgress, or null.
+     * A missing/blank/fractional level is rejected — never defaulted to Level 1.
+     */
     function _normalizeLevel(value) {
-        const level = Math.floor(Number(value));
-        return Number.isFinite(level) && level > 0 ? level : 1;
+        const sessionApi = _resolveSessionApi();
+        return sessionApi ? sessionApi.normalizeProgressLevel(value) : null;
+    }
+
+    function _normalizeRosterLevel(value) {
+        const sessionApi = _resolveSessionApi();
+        return sessionApi ? sessionApi.normalizeLevel(value) : null;
     }
 
     function _createProgressTelemetry(payload = {}) {
@@ -66,9 +90,15 @@ const SharePointSync = (() => {
         };
     }
 
+    /**
+     * syncOutcome:
+     *  - 'failure'  retryable (network / server error)
+     *  - 'unknown'  timed out; the write may have happened — retry with the same saveRequestId
+     *  - 'rejected' permanent (bad identity / app-level ok:false) — quarantine, never retry
+     */
     function _createPostError(message, syncOutcome = 'failure', result) {
         const error = new Error(String(message || 'Progress sync failed.'));
-        error.syncOutcome = syncOutcome === 'unknown' ? 'unknown' : 'failure';
+        error.syncOutcome = ['unknown', 'rejected'].includes(syncOutcome) ? syncOutcome : 'failure';
         if (result !== undefined) {
             error.result = result;
         }
@@ -83,13 +113,19 @@ const SharePointSync = (() => {
         });
     }
 
+    /**
+     * Returns { item } for a valid queue entry or { invalid: { item, reason } }.
+     * Legacy entries are mapped field-for-field but never "repaired": a blank
+     * ClassCode, blank/unsupported Level, or malformed StudentCode is not
+     * filled in — the entry is quarantined instead.
+     */
     function _normalizeQueueItem(item) {
-        if (!item || typeof item !== 'object') return null;
+        if (!item || typeof item !== 'object') return { invalid: { item, reason: 'malformed_queue_item' } };
         const type = item.type === 'profile' ? 'profile' : (item.type === 'progress' ? 'progress' : '');
-        if (!type) return null;
+        if (!type) return { invalid: { item, reason: 'unknown_queue_item_type' } };
 
         let payload = item.payload && typeof item.payload === 'object' ? { ...item.payload } : null;
-        if (!payload) return null;
+        if (!payload) return { invalid: { item, reason: 'missing_payload' } };
 
         if (type === 'profile' && !payload.studentCode && payload.StudentCode) {
             payload = {
@@ -109,7 +145,7 @@ const SharePointSync = (() => {
             payload = {
                 studentCode: String(payload.StudentCode || '').trim(),
                 classCode: String(payload.classCode || payload.ClassCode || '').trim().toUpperCase(),
-                level: Number(payload.Level || payload.level) || 0,
+                level: payload.level ?? payload.Level,
                 currentRound: Number(payload.Round || payload.currentRound) || 1,
                 currentCash: _toRoundedInteger(payload.currentCash ?? payload.Cash ?? 0),
                 currentAssets: _toRoundedInteger(payload.currentAssets ?? payload.Assets ?? 0),
@@ -130,25 +166,35 @@ const SharePointSync = (() => {
 
         if (type === 'progress') {
             payload = buildProgressPayload(payload);
+            const validation = validateProgressPayload(payload);
+            if (!validation.ok) {
+                return { invalid: { item: { ...item, payload }, reason: `invalid_identity:${validation.errors.join(',')}` } };
+            }
         }
 
-        if (type === 'progress' && !payload.studentCode) return null;
-        if (type === 'profile' && !payload.studentCode) return null;
+        if (type === 'profile' && !payload.studentCode) return { invalid: { item, reason: 'invalid_identity:studentCode' } };
         return {
-            type,
-            payload,
-            queuedAt: String(item.queuedAt || new Date().toISOString()),
-            attempts: Number(item.attempts) || 0,
-            payloadSchemaVersion: QUEUE_SCHEMA_VERSION
+            item: {
+                type,
+                payload,
+                queuedAt: String(item.queuedAt || new Date().toISOString()),
+                attempts: Number(item.attempts) || 0,
+                payloadSchemaVersion: QUEUE_SCHEMA_VERSION
+            }
         };
     }
 
     function _coalesceQueue(queue) {
         const normalized = [];
+        const invalid = [];
         const progressIndexes = new Map();
         for (const rawItem of Array.isArray(queue) ? queue : []) {
-            const item = _normalizeQueueItem(rawItem);
-            if (!item) continue;
+            const result = _normalizeQueueItem(rawItem);
+            if (result.invalid) {
+                invalid.push(result.invalid);
+                continue;
+            }
+            const item = result.item;
             if (item.type === 'progress' && item.payload?.progressKey) {
                 const existingIndex = progressIndexes.get(item.payload.progressKey);
                 if (typeof existingIndex === 'number') {
@@ -159,25 +205,60 @@ const SharePointSync = (() => {
             }
             normalized.push(item);
         }
-        return normalized;
+        return { items: normalized, invalid };
+    }
+
+    function _loadQuarantine() {
+        try {
+            const q = JSON.parse(localStorage.getItem(QUARANTINE_KEY));
+            return Array.isArray(q) ? q : [];
+        } catch (_) { return []; }
+    }
+
+    /**
+     * Permanently rejected items are kept (not silently repaired, not
+     * silently dropped) so a teacher/admin can inspect them.
+     */
+    function _quarantine(entries) {
+        const list = (Array.isArray(entries) ? entries : [entries]).filter(Boolean);
+        if (!list.length) return;
+        try {
+            const quarantine = _loadQuarantine();
+            list.forEach(({ item, reason }) => {
+                quarantine.push({
+                    type: item?.type || '',
+                    payload: item?.payload ?? null,
+                    reason: String(reason || 'rejected'),
+                    queuedAt: item?.queuedAt || null,
+                    attempts: Number(item?.attempts) || 0,
+                    quarantinedAt: new Date().toISOString()
+                });
+                if (item?.type === 'progress') {
+                    _logProgress('quarantined', item.payload, { reason: String(reason || 'rejected') });
+                }
+            });
+            localStorage.setItem(QUARANTINE_KEY, JSON.stringify(quarantine.slice(-CONFIG.maxQuarantineSize)));
+        } catch (_) {}
     }
 
     function _loadQueue() {
         try {
             const q = JSON.parse(localStorage.getItem(QUEUE_KEY));
             if (!Array.isArray(q)) return [];
-            const normalized = _coalesceQueue(q);
-            if (normalized.length !== q.length || q.some(item => item?.payloadSchemaVersion !== QUEUE_SCHEMA_VERSION)) {
-                _saveQueue(normalized);
+            const { items, invalid } = _coalesceQueue(q);
+            if (invalid.length) _quarantine(invalid);
+            if (items.length !== q.length || q.some(item => item?.payloadSchemaVersion !== QUEUE_SCHEMA_VERSION)) {
+                _saveQueue(items);
             }
-            return normalized;
+            return items;
         } catch (_) { return []; }
     }
 
     function _saveQueue(queue) {
         try {
-            const normalized = _coalesceQueue(queue).slice(-CONFIG.maxQueueSize);
-            localStorage.setItem(QUEUE_KEY, JSON.stringify(normalized));
+            const { items, invalid } = _coalesceQueue(queue);
+            if (invalid.length) _quarantine(invalid);
+            localStorage.setItem(QUEUE_KEY, JSON.stringify(items.slice(-CONFIG.maxQueueSize)));
         } catch (_) {}
     }
 
@@ -262,7 +343,13 @@ const SharePointSync = (() => {
                 const unknownOutcome = result.status === 504
                     || result?.data?.ok === true
                     || /timed?\s*out|timeout|abort/i.test(String(errorMessage));
-                throw _createPostError(errorMessage, unknownOutcome ? 'unknown' : 'failure', result);
+                const permanent = !unknownOutcome && PERMANENT_HTTP_STATUSES.includes(Number(result.status));
+                throw _createPostError(errorMessage, unknownOutcome ? 'unknown' : (permanent ? 'rejected' : 'failure'), result);
+            }
+            // HTTP 200 with an application-level ok:false is a failed save.
+            if (result.data && typeof result.data === 'object' && result.data.ok === false) {
+                const errorMessage = String(result.data.message || result.data.error || 'Flow returned ok:false.').trim();
+                throw _createPostError(errorMessage, result.data.retryable === true ? 'failure' : 'rejected', result);
             }
             return result;
         } catch (error) {
@@ -272,6 +359,7 @@ const SharePointSync = (() => {
             if (error?.syncOutcome) {
                 throw error;
             }
+            // e.g. "Power Automate API key is required." — configuration, retryable.
             throw _createPostError(error?.message || error, /timed?\s*out|timeout|abort/i.test(String(error?.message || error)) ? 'unknown' : 'failure');
         } finally {
             if (timeoutId) clearTimeout(timeoutId);
@@ -309,12 +397,56 @@ const SharePointSync = (() => {
         };
     }
 
-    function buildCanonicalProgressKey({ classCode, studentCode, level }) {
-        return [
-            String(classCode || '').trim().toUpperCase(),
-            String(studentCode || '').trim().toUpperCase(),
-            _normalizeLevel(level)
-        ].join('|');
+    /**
+     * Canonical ProgressKey: UPPER(ClassCode)|UPPER(StudentCode)|Level.
+     * Returns '' when any part is blank, malformed, or unsupported — a key
+     * like "|SC-1|2" or "6B|SC-1|1" (defaulted level) is never produced.
+     */
+    function buildCanonicalProgressKey({ classCode, studentCode, level } = {}) {
+        const sessionApi = _resolveSessionApi();
+        if (!sessionApi) return '';
+        const normalizedClass = sessionApi.normalizeClassCode(classCode);
+        const normalizedCode = sessionApi.normalizeStudentCode(studentCode).toUpperCase();
+        const normalizedLevel = _normalizeLevel(level);
+        if (!normalizedClass || !normalizedCode || !normalizedLevel) return '';
+        return [normalizedClass, normalizedCode, normalizedLevel].join('|');
+    }
+
+    /**
+     * Validate a progress payload before it is posted or queued.
+     */
+    function validateProgressPayload(payload) {
+        const errors = [];
+        const sessionApi = _resolveSessionApi();
+        if (!sessionApi) return { ok: false, errors: ['session_contract_unavailable'] };
+        if (!payload || typeof payload !== 'object') return { ok: false, errors: ['payload'] };
+        const studentCode = String(payload.studentCode || '').trim();
+        if (!studentCode || sessionApi.normalizeStudentCode(studentCode) !== studentCode) errors.push('studentCode');
+        const classCode = String(payload.classCode || '').trim();
+        if (!classCode || sessionApi.normalizeClassCode(classCode) !== classCode) errors.push('classCode');
+        if (!Number.isInteger(payload.level) || _normalizeLevel(payload.level) !== payload.level) errors.push('level');
+        if (!errors.length) {
+            const expectedKey = buildCanonicalProgressKey(payload);
+            if (!expectedKey || payload.progressKey !== expectedKey) errors.push('progressKey');
+        }
+        return { ok: errors.length === 0, errors };
+    }
+
+    /**
+     * The payload identity must be the signed-in roster student's identity.
+     */
+    function _checkAuthenticatedIdentity(payload) {
+        const sessionApi = _resolveSessionApi();
+        if (!sessionApi) return { ok: false, reason: 'session_contract_unavailable' };
+        let session = null;
+        try {
+            session = sessionApi.readSession(typeof localStorage !== 'undefined' ? localStorage : null);
+        } catch (_) {
+            session = null;
+        }
+        if (!session) return { ok: false, reason: 'not_authenticated' };
+        if (!sessionApi.sessionMatches(session, payload)) return { ok: false, reason: 'identity_mismatch' };
+        return { ok: true, session };
     }
 
     /**
@@ -341,7 +473,10 @@ const SharePointSync = (() => {
         const telemetry = _createProgressTelemetry(opts);
         const classCode = String(opts.classCode || '').trim().toUpperCase();
         const studentCode = String(opts.studentCode || '').trim();
+        // Current gameplay level (null if missing/unsupported — never defaulted).
         const level = _normalizeLevel(opts.level);
+        // GGR_Students assigned level, kept separate from the level being played.
+        const rosterAssignedLevel = _normalizeRosterLevel(opts.rosterAssignedLevel);
         const progressionMarkersJson = opts.progressionMarkersJson
             ? (typeof opts.progressionMarkersJson === 'string' ? opts.progressionMarkersJson : JSON.stringify(opts.progressionMarkersJson))
             : '';
@@ -349,6 +484,7 @@ const SharePointSync = (() => {
             studentCode,
             classCode,
             level,
+            rosterAssignedLevel,
             currentRound: Number(opts.currentRound) || 1,
             currentCash: _toRoundedInteger(opts.currentCash ?? 0),
             currentAssets: _toRoundedInteger(opts.currentAssets ?? 0),
@@ -403,14 +539,23 @@ const SharePointSync = (() => {
     }
 
     /**
-     * Sync level progress/result. Non-blocking — failures are queued.
+     * Sync level progress/result. Non-blocking — retryable failures are queued,
+     * permanent rejections are quarantined, invalid identity is never sent.
      */
     async function syncProgress(opts) {
         if (!_resolveEndpoint(CONFIG.progressEndpointKey)) return { queued: false, skipped: true };
-        const payload = buildProgressPayload(opts);
-        if (!payload.studentCode) {
-            _dispatchCloudSaveStatus('idle');
-            return { queued: false, skipped: true };
+        const payload = buildProgressPayload(opts || {});
+        const validation = validateProgressPayload(payload);
+        if (!validation.ok) {
+            _logProgress('blocked (invalid identity/level)', payload, { errors: validation.errors });
+            _dispatchCloudSaveStatus('cloud save blocked: sign in again');
+            return { ok: false, queued: false, rejected: true, reason: 'invalid_payload', errors: validation.errors };
+        }
+        const auth = _checkAuthenticatedIdentity(payload);
+        if (!auth.ok) {
+            _logProgress('blocked (not authenticated)', payload, { reason: auth.reason });
+            _dispatchCloudSaveStatus('cloud save blocked: sign in again');
+            return { ok: false, queued: false, rejected: true, reason: auth.reason };
         }
         _dispatchCloudSaveStatus('saving');
         _logProgress('save attempt', payload);
@@ -428,6 +573,23 @@ const SharePointSync = (() => {
                 saveRequestId: payload.saveRequestId
             };
         } catch (err) {
+            if (err?.syncOutcome === 'rejected') {
+                _quarantine({
+                    item: { type: 'progress', payload, queuedAt: new Date().toISOString(), attempts: 1 },
+                    reason: `rejected:${err?.message || 'Flow rejected the save.'}`
+                });
+                _dispatchCloudSaveStatus('cloud save rejected');
+                return {
+                    ok: false,
+                    queued: false,
+                    rejected: true,
+                    quarantined: true,
+                    reason: 'flow_rejected',
+                    error: err?.message || 'Flow rejected the save.',
+                    progressKey: payload.progressKey,
+                    saveRequestId: payload.saveRequestId
+                };
+            }
             const unknownOutcome = err?.syncOutcome === 'unknown';
             _logProgress(unknownOutcome ? 'timeout/unknown outcome' : 'save failure', payload, {
                 error: err?.message || 'Progress sync failed.'
@@ -452,22 +614,41 @@ const SharePointSync = (() => {
 
     /**
      * Flush the retry queue. Called automatically by the retry loop.
+     * Progress items are only dispatched for the signed-in student they belong
+     * to; items for another (or no) signed-in student are held, not sent.
      */
     async function retryQueue() {
         const queue = _loadQueue();
         if (!queue.length) return;
 
         const remaining = [];
+        const rejected = [];
+        let finalFailure = false;
         for (const item of queue) {
             const endpointKey = item.type === 'profile' ? CONFIG.profileEndpointKey : CONFIG.progressEndpointKey;
             const url = _resolveEndpoint(endpointKey);
             if (!url) { remaining.push(item); continue; }
+            if (item.type === 'progress') {
+                const validation = validateProgressPayload(item.payload);
+                if (!validation.ok) {
+                    rejected.push({ item, reason: `invalid_identity:${validation.errors.join(',')}` });
+                    continue;
+                }
+                const auth = _checkAuthenticatedIdentity(item.payload);
+                if (!auth.ok) {
+                    _logProgress('retry held', item.payload, { reason: auth.reason });
+                    remaining.push(item);
+                    continue;
+                }
+            }
             try {
                 if (item.type === 'progress') {
                     _logProgress('retry', item.payload, {
                         attempts: Number(item.attempts || 0) + 1
                     });
                 }
+                // The queued payload (including its saveRequestId) is re-sent
+                // unchanged so the flow can de-duplicate unknown-outcome retries.
                 await _post(endpointKey, item.payload, item.type === 'progress'
                     ? { timeoutMs: CONFIG.progressRequestTimeoutMs }
                     : {});
@@ -478,34 +659,54 @@ const SharePointSync = (() => {
                 }
             } catch (error) {
                 item.attempts = (item.attempts || 0) + 1;
-                if (item.attempts < 10) {
+                if (error?.syncOutcome === 'rejected') {
+                    rejected.push({ item, reason: `rejected:${error?.message || 'Flow rejected the save.'}` });
+                    continue;
+                }
+                if (item.attempts < MAX_RETRY_ATTEMPTS) {
                     remaining.push(item);
+                } else {
+                    finalFailure = true;
+                    rejected.push({ item, reason: `max_attempts:${error?.message || 'Retry failed.'}` });
                 }
                 if (item.type === 'progress') {
-                    _logProgress(item.attempts >= 10 ? 'final failure' : 'retry queueing', item.payload, {
+                    _logProgress(item.attempts >= MAX_RETRY_ATTEMPTS ? 'final failure' : 'retry queueing', item.payload, {
                         attempts: item.attempts,
                         error: error?.message || 'Retry failed.',
                         verificationPending: error?.syncOutcome === 'unknown'
                     });
                 }
-                if (item.attempts >= 10) {
-                    _dispatchCloudSaveStatus('cloud save failed');
-                }
             }
         }
+        _quarantine(rejected);
         _saveQueue(remaining);
         if (!remaining.length && _retryTimer) {
             clearInterval(_retryTimer);
             _retryTimer = null;
-            _dispatchCloudSaveStatus('saved to cloud');
+        }
+        if (finalFailure) {
+            _dispatchCloudSaveStatus('cloud save failed');
+        } else if (rejected.length) {
+            _dispatchCloudSaveStatus('cloud save rejected');
         } else if (remaining.length) {
             _dispatchCloudSaveStatus('locally saved with retry pending');
+        } else {
+            _dispatchCloudSaveStatus('saved to cloud');
         }
     }
 
     /** Returns the number of items waiting in the retry queue. */
     function queueLength() {
         return _loadQueue().length;
+    }
+
+    /** Items permanently rejected (invalid identity, ok:false, or retries exhausted). */
+    function getQuarantine() {
+        return _loadQuarantine();
+    }
+
+    function quarantineLength() {
+        return _loadQuarantine().length;
     }
 
     function getCloudSaveStatus() {
@@ -542,10 +743,13 @@ const SharePointSync = (() => {
         buildProfilePayload,
         buildCanonicalProgressKey,
         buildProgressPayload,
+        validateProgressPayload,
         syncProfile,
         syncProgress,
         retryQueue,
         queueLength,
+        getQuarantine,
+        quarantineLength,
         getCloudSaveStatus
     };
 })();

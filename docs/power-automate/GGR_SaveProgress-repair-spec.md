@@ -8,7 +8,7 @@ The following remain manual, flow-side, or otherwise out of scope for this PR:
 
 - Power Automate flow edits and deployment
 - SharePoint data migration and duplicate cleanup execution
-- `GGR_LoginStudent` activation
+- `GGR_LoginStudent` flow changes (the client now **requires** it — see [Student identity prerequisites](#student-identity-prerequisites-ggr_loginstudent--ggr_students))
 - `GGR_TeacherResetStudentPin`
 - PIN lifecycle completion and teacher approval gating changes outside this SaveProgress work
 - Teacher approval workflow changes
@@ -51,6 +51,30 @@ The client now includes `progressKey` for diagnostics only.
 3. If canonical lookup returns zero rows, perform legacy lookup by `StudentCode + Level`.
 4. If a legacy row is found, migrate it to the canonical key and record operation `migrated_legacy`.
 5. Return the canonical `progressKey` and original `saveRequestId` in the response.
+
+## Student identity prerequisites (`GGR_LoginStudent` / `GGR_Students`)
+
+The client no longer creates student sessions locally. A student can only play, take checkpoint quizzes, or save after `GGR_LoginStudent` validates Class Code + Student ID + PIN hash against `GGR_Students`. The client rejects the login unless the response is:
+
+```json
+{
+  "ok": true,
+  "studentCode": "HG-NB5-018",
+  "studentId": "123456",
+  "studentName": "Alex Smith",
+  "leaderboardName": "Golddigger",
+  "classCode": "NB5",
+  "assignedLevel": 2
+}
+```
+
+- All six identity fields are required and must come from the `GGR_Students` row (never echoed from the request).
+- `studentCode` / `classCode`: letters, digits, and inner hyphens only (no spaces or `|`).
+- `assignedLevel`: integer 1–5 (the roster level). It is separate from the level being played, which SaveProgress receives as `level` (2–5) with `rosterAssignedLevel` alongside it.
+- `studentId` and `classCode` in the response must match the request, or the client rejects the login.
+- Return `ok:false` with a `message` for an unknown student, a wrong PIN, or an inactive student. The client never stores PINs or PIN hashes.
+
+The browser session is not a server-issued token, so `GGR_SaveProgress` must still re-validate identity against `GGR_Students` on every write. See the checklist below.
 
 ## Upsert order (fixes the duplicate `StudentCode` create failure)
 
@@ -111,6 +135,20 @@ The flow must recompute `ProgressKey`, check that the calling teacher is assigne
 ## Cross-device unlock (`getStudentProgress`)
 
 The game unlocks the next level from the saved `quiz_passed` state on the same device. To unlock on another device, add a `getStudentProgress` endpoint to the student pages' flow endpoints. It receives `{ studentCode, classCode, level }` and returns `{ ok: true, progress: [ ...GGR_StudentProgress rows... ] }`. If this endpoint is not configured, unlocks stay same-device.
+
+## Validation before lookup
+
+Before any `Get items` / `Create item` / `Update item`:
+
+1. Reject (`ok:false`, HTTP 400 or 422) when `classCode` is blank, `studentCode` is blank or malformed, or `level` is not an integer 2–5. Never default `level` to 1.
+2. Look up `GGR_Students` by `StudentCode` and reject (`ok:false`) if there is no active row or if its `ClassCode` differs from the request.
+3. Recompute the canonical `ProgressKey` (do not trust the client `progressKey`).
+
+The client treats HTTP 400/410/422 and any `ok:false` body (even at HTTP 200) as a **permanent rejection**. It quarantines the save in `wa_gr_sync_quarantine` and does not retry. Return `ok:false, retryable:true` only for transient conditions such as throttling. Timeouts, network errors, 404/409 (missing endpoint / create conflict), and 5xx responses are retried with the same `saveRequestId`.
+
+## Concurrent create recovery
+
+If two requests for the same key race and `Create item` fails because of the unique `ProgressKey` constraint, **do not create again**. Re-run `Get items` by the canonical `ProgressKey` and `Update item` on the row that is returned (`operation: "updated_after_conflict"`).
 
 ## Duplicate handling
 
@@ -189,6 +227,19 @@ The flow must echo `saveRequestId` and canonical `progressKey` in success and fa
 3. legacy migration: verify a legacy record such as `|HG-NB5-018|2` is found, repaired, and returned as `migrated_legacy`
 4. timeout-after-success: verify a timed-out request can later be confirmed as saved without treating the original timeout as definite failure
 5. confirm flow runs always end with a response and no indefinite `Apply to each`, `Do until`, `Update item`, or `Response` hangs remain
+6. submit a save with blank `classCode`, blank `level`, or an unknown `studentCode` and confirm `ok:false` with no list write
+7. send two simultaneous first saves for one student and level and confirm exactly one `GGR_StudentProgress` row exists afterwards
+
+## Backend deployment checklist (not changed by repo PRs)
+
+- [ ] `GGR_LoginStudent` returns authoritative `studentCode`, `studentId`, `studentName`, `leaderboardName`, `classCode`, `assignedLevel` from `GGR_Students`
+- [ ] `GGR_LoginStudent` returns `ok:false` for an unknown, inactive, or wrong-PIN student
+- [ ] `GGR_SaveProgress` validates ClassCode / StudentCode / Level (and the `GGR_Students` row) before any lookup or write
+- [ ] `GGR_SaveProgress` upserts by the canonical server-computed `ProgressKey`
+- [ ] concurrent create conflicts re-read and update the canonical row rather than creating duplicates
+- [ ] `StudentCode` column is not unique; `ProgressKey` is unique
+- [ ] `GGR_Students` remains the only source of student identity truth
+- [ ] malformed or incomplete identity is rejected before any write attempt
 
 ## Progress retrieval investigation before building `GGR_GetStudentProgress`
 

@@ -42,7 +42,23 @@ const gameState = {
 };
 
 // ===== INITIALIZATION =====
+function hasAuthenticatedStudent() {
+    const api = globalThis.WA_GOLD_RUSH_STUDENT_SESSION;
+    return !!(api && api.readSession(localStorage));
+}
+
+function requireAuthenticatedStudent() {
+    const api = globalThis.WA_GOLD_RUSH_STUDENT_SESSION;
+    if (!api) {
+        alert('Student sign-in is unavailable. Please return to the Home page.');
+        return false;
+    }
+    return !!api.requireSessionOrRedirect({ loginPath: '../../index.html' });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
+    // Direct navigation cannot bypass the roster-backed student login.
+    if (!requireAuthenticatedStudent()) return;
     console.log('DOM loaded, setting up event listeners');
     const playBtn = document.getElementById('playButton');
     const resetBtn = document.getElementById('resetButton');
@@ -282,6 +298,10 @@ function resetGame() {
 // ===== MAIN GAME LOGIC =====
 function playRound() {
     console.log('playRound called');
+    if (!hasAuthenticatedStudent()) {
+        requireAuthenticatedStudent();
+        return;
+    }
     
     if (gameState.isRolling) {
         console.log('Already rolling, ignoring click');

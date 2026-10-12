@@ -83,6 +83,56 @@ function createProgressSaveScheduler(options = {}) {
     };
 }
 
+function getStudentSessionApi() {
+    const api = globalThis.WA_GOLD_RUSH_STUDENT_SESSION;
+    return api && typeof api.readSession === 'function' ? api : null;
+}
+
+/** The roster-verified (GGR_LoginStudent) session, or null. */
+function getAuthenticatedStudentSession() {
+    const api = getStudentSessionApi();
+    return api ? api.readSession(localStorage) : null;
+}
+
+function redirectToStudentLogin() {
+    const api = getStudentSessionApi();
+    if (api) {
+        api.requireSessionOrRedirect({ loginPath: STUDENT_LOGIN_PATH });
+        return;
+    }
+    window.location.href = buildStudentLoginUrl();
+}
+
+/**
+ * Gate for every gameplay/progression action (roll, quiz open/submit, level
+ * advance, save dispatch). Requires an authenticated session whose identity is
+ * the identity currently applied to the game. Otherwise the student is sent
+ * back to the roster login and the action does not run.
+ */
+function requireAuthenticatedStudent() {
+    const session = getAuthenticatedStudentSession();
+    const playerCode = String(gameState?.player?.studentCode || '').trim().toUpperCase();
+    const playerClass = String(gameState?.player?.classCode || '').trim().toUpperCase();
+    if (!session || playerCode !== session.studentCode.toUpperCase() || playerClass !== session.classCode) {
+        redirectToStudentLogin();
+        return null;
+    }
+    return session;
+}
+
+function isAutosaveOwnedBySession(session) {
+    try {
+        const data = JSON.parse(localStorage.getItem('level2_autosave') || 'null');
+        if (typeof LevelAccessGuard !== 'undefined' && typeof LevelAccessGuard.isAutosaveOwnedBy === 'function') {
+            return LevelAccessGuard.isAutosaveOwnedBy(data?.gameState, session);
+        }
+        const ownerCode = String(data?.gameState?.player?.studentCode || '').trim().toUpperCase();
+        return !!ownerCode && ownerCode === session.studentCode.toUpperCase();
+    } catch (_) {
+        return false;
+    }
+}
+
 function getAssignedLevelFromUrl() {
     const params = new URLSearchParams(window.location.search);
     const level = Number(params.get('level'));
@@ -173,6 +223,14 @@ function resolveConfigPath() {
 }
 
 document.addEventListener('DOMContentLoaded', async function() {
+    // Direct navigation cannot bypass the roster-backed student login.
+    if (!getStudentSessionApi()) {
+        alert('Student sign-in is unavailable. Please return to the Home page.');
+        return;
+    }
+    const session = getStudentSessionApi().requireSessionOrRedirect({ loginPath: STUDENT_LOGIN_PATH });
+    if (!session) return;
+
     gameState = new GameState();
     gameState.assignedLevel = getAssignedLevelFromUrl();
 
@@ -191,13 +249,19 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (!(await resolveCurrentLevelAccess())) return;
 
     try {
-        gameState.loadFromLocalStorage();
+        // The autosave slot is shared per device: only load it when it belongs
+        // to the signed-in roster student, never another student's progress.
+        if (isAutosaveOwnedBySession(session)) {
+            gameState.loadFromLocalStorage();
+        } else {
+            gameState.reset();
+        }
         if (!enforceCurrentLevelAccess()) return;
         gameState.assignedLevel = getAssignedLevelFromUrl();
         gameState.applyLevelConfigAdapter?.();
         ensureInvestmentPlansForOwnedMines();
+        applyCompetitionSessionToIdentity(false);
         hydrateIdentityInputs();
-        applyCompetitionSessionToIdentity();
         setupEventListeners();
         updatePauseStateFromStorage();
         updateAssignedLevelBadge();
@@ -222,6 +286,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             gameState.applyLevelConfigAdapter?.();
             if (!enforceCurrentLevelAccess()) return;
             ensureInvestmentPlansForOwnedMines();
+            applyCompetitionSessionToIdentity(false);
             hydrateIdentityInputs();
             setupEventListeners();
             updatePauseStateFromStorage();
@@ -253,7 +318,7 @@ function setupEventListeners() {
     if (loadBtn) loadBtn.addEventListener('click', loadGame);
     if (resetBtn) resetBtn.addEventListener('click', resetGame);
     if (saveMinePlanBtn) saveMinePlanBtn.addEventListener('click', saveMinePlan);
-    if (saveIdentityBtn) saveIdentityBtn.addEventListener('click', saveIdentity);
+    if (saveIdentityBtn) saveIdentityBtn.addEventListener('click', saveCompanyName);
     if (logoutBtn) logoutBtn.addEventListener('click', logoutCompetitionSession);
 
     document.querySelectorAll('.modal-close').forEach(btn => {
@@ -272,7 +337,11 @@ function setupEventListeners() {
         if (event.key === PAUSE_STATE_KEY) {
             updatePauseStateFromStorage();
         }
-        if ((event.key === STRICT_MODE_KEY) || (event.key === TEACHER_DASHBOARD_KEY) || (event.key === CLASS_RECORDS_KEY) || (event.key === STUDENT_SESSION_KEY)) {
+        if (event.key === STUDENT_SESSION_KEY) {
+            handleStudentSessionChange();
+            return;
+        }
+        if ((event.key === STRICT_MODE_KEY) || (event.key === TEACHER_DASHBOARD_KEY) || (event.key === CLASS_RECORDS_KEY)) {
             applyCompetitionSessionToIdentity(false);
             updateCompetitionStatus();
             renderLeaderboard();
@@ -480,7 +549,7 @@ function renderLeaderboard() {
 
     if (isCompetitionLocked) {
         if (lockMessage) {
-            lockMessage.textContent = 'Login required for competition features in Strict Classroom Mode. You can continue playing and saving your progress without competition features.';
+            lockMessage.textContent = 'Sign in from the Home page with your Class Code, Student ID and PIN to play and save progress.';
             lockMessage.classList.remove('hidden');
         }
         if (leaderboardSummary) leaderboardSummary.textContent = 'Competition leaderboard is locked until you log in from Home.';
@@ -541,7 +610,7 @@ function getNextAssignedLevel() {
 }
 
 function getQuizStudentCode() {
-    return String(gameState?.player?.studentCode || gameState?.player?.studentId || 'anon').trim() || 'anon';
+    return getAuthenticatedStudentSession()?.studentCode || '';
 }
 
 function updateCheckpointQuizCopy(quiz) {
@@ -568,6 +637,7 @@ function updateCheckpointQuizCopy(quiz) {
 }
 
 function checkProgressionGoal() {
+    if (!getAuthenticatedStudentSession()) return;
     const goal = getCurrentProgressionGoal();
     if (!goal || gameState.getNetWorth() < goal || gameState.checkpointStatus === 'quiz_passed') {
         return;
@@ -585,6 +655,7 @@ function checkProgressionGoal() {
 }
 
 function showProgressionQuiz() {
+    if (!requireAuthenticatedStudent()) return;
     if (typeof ProgressionQuiz === 'undefined') {
         console.warn('ProgressionQuiz not loaded');
         return;
@@ -639,6 +710,7 @@ function showProgressionQuiz() {
 }
 
 function submitQuiz(quiz) {
+    if (!requireAuthenticatedStudent()) return;
     const answers = {};
     let missingAnswers = 0;
 
@@ -665,6 +737,7 @@ function submitQuiz(quiz) {
 }
 
 function displayQuizResults(result, quiz) {
+    if (!requireAuthenticatedStudent()) return;
     const container = document.getElementById('quizContainer');
     const resultsContainer = document.getElementById('quizResultsContainer');
     const submitDiv = document.getElementById('quizSubmitButton');
@@ -742,6 +815,7 @@ function displayQuizResults(result, quiz) {
  * level. The local autosave already holds quiz_passed, which the access guard reads.
  */
 async function continueAfterPassedQuiz(button, nextLevel) {
+    if (!requireAuthenticatedStudent()) return;
     if (!nextLevel) {
         closeAllModals();
         return;
@@ -955,6 +1029,7 @@ function getRoundEffects(event) {
 }
 
 function playRound() {
+    if (!requireAuthenticatedStudent()) return;
     if (isTeacherPaused()) {
         alert('Game is currently paused by the teacher.');
         return;
@@ -1090,22 +1165,19 @@ function displayResults(results, totalProfit, eventMessage) {
     container.innerHTML = html;
 }
 
-function saveIdentity(showAlert = true) {
-    const studentCodeEl  = document.getElementById('studentCodeInput');
-    const lbNameEl       = document.getElementById('leaderboardNameInput');
-    const studentIdEl    = document.getElementById('studentIdInput');
-    const studentNameEl  = document.getElementById('studentNameInput');
+/**
+ * Only the company name is editable in-game. Student identity is roster-backed
+ * (GGR_LoginStudent) and cannot be changed here.
+ */
+function saveCompanyName(showAlert = true) {
+    if (!requireAuthenticatedStudent()) return;
     const companyNameEl  = document.getElementById('companyNameInput');
-    gameState.player.studentCode     = studentCodeEl  ? studentCodeEl.value.trim()  : gameState.player.studentCode;
-    gameState.player.leaderboardName = lbNameEl       ? lbNameEl.value.trim()       : gameState.player.leaderboardName;
-    gameState.player.studentId       = studentIdEl    ? studentIdEl.value.trim()    : gameState.player.studentId;
-    gameState.player.studentName     = studentNameEl  ? studentNameEl.value.trim()  : gameState.player.studentName;
     gameState.player.companyName     = (companyNameEl ? companyNameEl.value.trim() : '') || DEFAULT_COMPANY_NAME;
     gameState.saveToLocalStorage();
     updateAllUI();
     syncPlayerRecord();
-    if (showAlert) {
-        alert('Identity saved.');
+    if (showAlert === true || (showAlert && typeof showAlert === 'object')) {
+        alert('Company name saved.');
     }
 }
 
@@ -1114,16 +1186,12 @@ function hydrateIdentityInputs() {
     if (!gameState.player.companyName || gameState.player.companyName === DEFAULT_COMPANY_NAME) {
         gameState.player.companyName = suggested[0] || DEFAULT_COMPANY_NAME;
     }
-    const studentCodeEl  = document.getElementById('studentCodeInput');
-    const lbNameEl       = document.getElementById('leaderboardNameInput');
-    const studentIdEl    = document.getElementById('studentIdInput');
-    const studentNameEl  = document.getElementById('studentNameInput');
-    const companyNameEl  = document.getElementById('companyNameInput');
-    if (studentCodeEl)  studentCodeEl.value  = gameState.player.studentCode     || '';
-    if (lbNameEl)       lbNameEl.value       = gameState.player.leaderboardName || '';
-    if (studentIdEl)    studentIdEl.value    = gameState.player.studentId       || '';
-    if (studentNameEl)  studentNameEl.value  = gameState.player.studentName     || '';
-    if (companyNameEl)  companyNameEl.value  = gameState.player.companyName     || '';
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+    set('studentCodeInput',     gameState.player.studentCode);
+    set('leaderboardNameInput', gameState.player.leaderboardName);
+    set('studentIdInput',       gameState.player.studentId);
+    set('studentNameInput',     gameState.player.studentName);
+    set('companyNameInput',     gameState.player.companyName);
 }
 
 function parseJsonStorage(storageType, key) {
@@ -1136,46 +1204,12 @@ function parseJsonStorage(storageType, key) {
     }
 }
 
-function getTeacherStudents() {
-    const data = parseJsonStorage(localStorage, TEACHER_DASHBOARD_KEY);
-    return Array.isArray(data?.students) ? data.students : [];
-}
-
-function getStoredStudentSession() {
-    const session = parseJsonStorage(localStorage, STUDENT_SESSION_KEY);
-    return session && typeof session === 'object' ? session : null;
-}
-
 /**
- * Returns a normalised session object if a student is logged in via StudentCode,
- * or null if not logged in.
+ * Returns the roster-verified session (created only from a successful
+ * GGR_LoginStudent response), or null. Legacy/self-created sessions are null.
  */
 function getSignedInStudentSession() {
-    try {
-        const session = getStoredStudentSession();
-        if (!session) return null;
-        const code = String(session.studentCode || '').trim();
-        if (!code) return null;
-        return {
-            studentCode:     code,
-            leaderboardName: String(session.leaderboardName || code).trim(),
-            studentId:       String(session.studentId || '').trim(),
-            studentName:     String(session.studentName || '').trim(),
-            classCode:       String(session.classCode || '').trim()
-        };
-    } catch (_) {
-        return null;
-    }
-}
-
-function getMatchedStudentFromSession(session) {
-    if (!session) return null;
-    const sessionCode = String(session.studentCode || session.studentId || '').trim().toLowerCase();
-    if (!sessionCode) return null;
-    return getTeacherStudents().find(student =>
-        String(student?.studentCode || student?.displayId || student?.id || '')
-            .trim().toLowerCase() === sessionCode
-    ) || null;
+    return getAuthenticatedStudentSession();
 }
 
 function isStrictModeEnabled() {
@@ -1183,37 +1217,52 @@ function isStrictModeEnabled() {
 }
 
 function getCompetitionContext() {
-    const strictModeEnabled = isStrictModeEnabled();
     const session = getSignedInStudentSession();
-    const matchedStudent = getMatchedStudentFromSession(session);
     const isLoggedIn = !!session;
     return {
-        strictModeEnabled,
+        strictModeEnabled: isStrictModeEnabled(),
         session,
-        matchedStudent,
         isLoggedIn,
-        canUseCompetitionFeatures: !strictModeEnabled || isLoggedIn
+        canUseCompetitionFeatures: isLoggedIn
     };
 }
 
+/**
+ * Identity comes only from the authenticated session — never from form
+ * inputs, the teacher dashboard cache, or other browser state.
+ */
 function applyCompetitionSessionToIdentity(updateInputs = true) {
     const competition = getCompetitionContext();
-    if (!competition.isLoggedIn) return competition;
     const session = competition.session;
-    const matched = competition.matchedStudent;
-    gameState.player.studentCode     = matched?.studentCode || matched?.displayId || session.studentCode || '';
-    gameState.player.leaderboardName = matched?.leaderboardName || session.leaderboardName || session.studentCode || '';
-    gameState.player.studentId       = matched?.studentId       || session.studentId  || '';
-    gameState.player.studentName     = matched?.studentName     || session.studentName || '';
-    gameState.player.classCode       = String(session.classCode || matched?.classCode || '').trim().toUpperCase();
+    gameState.player.studentCode     = session?.studentCode     || '';
+    gameState.player.leaderboardName = session?.leaderboardName || '';
+    gameState.player.studentId       = session?.studentId       || '';
+    gameState.player.studentName     = session?.studentName     || '';
+    gameState.player.classCode       = session?.classCode       || '';
     if (updateInputs) {
-        const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-        set('studentCodeInput',      gameState.player.studentCode);
-        set('leaderboardNameInput',  gameState.player.leaderboardName);
-        set('studentIdInput',        gameState.player.studentId);
-        set('studentNameInput',      gameState.player.studentName);
+        hydrateIdentityInputs();
     }
     return competition;
+}
+
+/**
+ * Another tab signed in/out or switched student: never keep playing under a
+ * different identity. Reload so the login gate and autosave ownership re-run.
+ */
+function handleStudentSessionChange() {
+    const session = getAuthenticatedStudentSession();
+    const playerCode = String(gameState?.player?.studentCode || '').trim().toUpperCase();
+    if (!session || session.studentCode.toUpperCase() !== playerCode) {
+        if (session && typeof window.location.reload === 'function') {
+            window.location.reload();
+            return;
+        }
+        redirectToStudentLogin();
+        return;
+    }
+    applyCompetitionSessionToIdentity(true);
+    updateCompetitionStatus();
+    renderLeaderboard();
 }
 
 function updateCloudSaveStatusLabel(status) {
@@ -1245,15 +1294,12 @@ function updateCompetitionStatus() {
     updateStudentLoginCta(competition);
     if (!statusEl) return;
     if (competition.isLoggedIn) {
-        const lbName = competition.session.leaderboardName || competition.session.studentCode;
-        statusEl.textContent = `Competition Status: Logged in as ${lbName} (${competition.session.studentCode})`;
+        statusEl.textContent = `Signed in as ${competition.session.leaderboardName} (${competition.session.studentCode}, class ${competition.session.classCode})`;
         updateInvestmentProfilePanel();
         return;
     }
 
-    statusEl.textContent = competition.strictModeEnabled
-        ? 'Competition Status: Free-play mode (login required for competition features)'
-        : 'Competition Status: Free-play mode';
+    statusEl.textContent = 'Not signed in — sign in from the Home page to play.';
 }
 
 function buildStudentLoginUrl() {
@@ -1271,29 +1317,23 @@ function updateStudentLoginCta(competition = getCompetitionContext()) {
     if (competition.isLoggedIn) {
         loginCta.hidden = true;
         if (loginHint) {
-            loginHint.textContent = 'Competition login active. Identity and saved progress will continue to sync in this level.';
+            loginHint.textContent = 'Your identity comes from your class roster and cannot be edited here. Only the company name can be changed.';
         }
         return;
     }
     loginCta.hidden = false;
     if (loginHint) {
-        loginHint.textContent = 'Log in for competition from the Home page. You will return here and your local save will still load.';
+        loginHint.textContent = 'Sign in from the Home page with your Class Code, Student ID and PIN to play.';
     }
 }
 
 function logoutCompetitionSession() {
-    localStorage.removeItem(STUDENT_SESSION_KEY);
-    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-    set('studentCodeInput',     '');
-    set('leaderboardNameInput', '');
-    set('studentIdInput',       '');
-    set('studentNameInput',     '');
-    gameState.player.studentCode     = '';
-    gameState.player.leaderboardName = '';
-    gameState.player.studentId       = '';
-    gameState.player.studentName     = '';
-    gameState.saveToLocalStorage();
-    updateAllUI();
+    // The autosave keeps its owner so the same student can resume after
+    // signing in again; it is never loaded for a different student.
+    const api = getStudentSessionApi();
+    if (api) api.clearSession(localStorage);
+    else localStorage.removeItem(STUDENT_SESSION_KEY);
+    window.location.href = buildStudentLoginUrl();
 }
 
 function getOrCreatePlayerKey() {
@@ -1342,37 +1382,19 @@ function calculateStrategyLabel() {
 }
 
 function syncPlayerRecord() {
-    const competition = getCompetitionContext();
-    if (!competition.canUseCompetitionFeatures) {
-        const lockMessage = document.getElementById('competition-lock-message');
-        if (lockMessage) {
-            lockMessage.textContent = 'Login required to publish leaderboard/class records while Strict Classroom Mode is on. You can continue playing and saving locally.';
-            lockMessage.classList.remove('hidden');
-        }
-        return;
-    }
-
-    const playerCode = competition.isLoggedIn
-        ? (competition.session.studentCode || gameState.player.studentCode)
-        : gameState.player.studentCode;
-
-    // Don't publish anonymous records
-    if (!playerCode) return;
+    // Saves are only built from the authenticated roster session identity.
+    const session = requireAuthenticatedStudent();
+    if (!session) return;
 
     const playerKey = getOrCreatePlayerKey();
     const records = getClassRecords();
     const totalRounds = Math.max(1, gameState.round - 1);
 
-    const studentCode     = playerCode;
-    const leaderboardName = competition.isLoggedIn
-        ? (competition.session.leaderboardName || competition.session.studentCode || gameState.player.leaderboardName || playerCode)
-        : (gameState.player.leaderboardName || playerCode);
-    const studentId   = competition.isLoggedIn
-        ? (competition.session.studentId   || gameState.player.studentId)
-        : gameState.player.studentId;
-    const studentName = competition.isLoggedIn
-        ? (competition.session.studentName || gameState.player.studentName)
-        : (gameState.player.studentName || '');
+    const studentCode     = session.studentCode;
+    const leaderboardName = session.leaderboardName;
+    const studentId       = session.studentId;
+    const studentName     = session.studentName;
+    const classCode       = session.classCode;
 
     // Investment profile snapshot
     let investmentProfile = null;
@@ -1401,11 +1423,14 @@ function syncPlayerRecord() {
         round: gameState.round,
         cash: gameState.cash,
         netWorth: gameState.getNetWorth(),
+        currentLevel: gameState.assignedLevel,
+        rosterAssignedLevel: session.assignedLevel,
         player: {
             studentCode,
             leaderboardName,
             studentId,
-            studentName
+            studentName,
+            classCode
         },
         companyName: gameState.player.companyName || DEFAULT_COMPANY_NAME,
         ownedMines: ownedMinesSnapshot,
@@ -1434,7 +1459,7 @@ function syncPlayerRecord() {
         leaderboardName,
         studentId,
         studentName,
-        classCode: competition.session?.classCode || gameState.player.classCode || '',
+        classCode,
         companyName: gameState.player.companyName || DEFAULT_COMPANY_NAME,
         level: gameState.assignedLevel,
         round: gameState.round,
@@ -1462,39 +1487,26 @@ function syncPlayerRecord() {
         const currentCash = Number(gameState.cash);
         const currentAssets = Number((gameState.getMineValue() + gameState.getMachineryValue()).toFixed(2));
         const needsSupport = checkpointStatus === 'quiz_available' && latestQuizAttempt?.passed === false;
-        const progressPayload = typeof SharePointSync.buildProgressPayload === 'function'
-            ? SharePointSync.buildProgressPayload({
-                studentCode,
-                classCode: competition.session?.classCode || gameState.player.classCode || '',
-                level: gameState.assignedLevel,
-                currentRound: gameState.round,
-                currentCash,
-                currentAssets,
-                netWorth,
-                score: netWorth,
-                progressionMarkersJson: JSON.stringify(progressionSnapshot),
-                badgesJson: JSON.stringify([]),
-                achievementsCount: Array.isArray(progressionState.quizAttempts) ? progressionState.quizAttempts.length : 0,
-                sessionStatus: competition.isLoggedIn ? 'authenticated' : 'local_only',
-                needsSupport,
-                supportReason: needsSupport ? 'checkpoint_quiz_retry' : ''
-            })
-            : {
-                studentCode,
-                classCode: competition.session?.classCode || gameState.player.classCode || '',
-                level: gameState.assignedLevel,
-                currentRound: gameState.round,
-                currentCash,
-                currentAssets,
-                netWorth,
-                score: netWorth,
-                progressionMarkersJson: JSON.stringify(progressionSnapshot),
-                badgesJson: JSON.stringify([]),
-                achievementsCount: Array.isArray(progressionState.quizAttempts) ? progressionState.quizAttempts.length : 0,
-                sessionStatus: competition.isLoggedIn ? 'authenticated' : 'local_only',
-                needsSupport,
-                supportReason: needsSupport ? 'checkpoint_quiz_retry' : ''
-            };
+        if (typeof SharePointSync.buildProgressPayload !== 'function') return;
+        // level = the level being played (from the page URL); rosterAssignedLevel
+        // = the GGR_Students assignment. They are deliberately kept separate.
+        const progressPayload = SharePointSync.buildProgressPayload({
+            studentCode,
+            classCode,
+            level: gameState.assignedLevel,
+            rosterAssignedLevel: session.assignedLevel,
+            currentRound: gameState.round,
+            currentCash,
+            currentAssets,
+            netWorth,
+            score: netWorth,
+            progressionMarkersJson: JSON.stringify(progressionSnapshot),
+            badgesJson: JSON.stringify([]),
+            achievementsCount: Array.isArray(progressionState.quizAttempts) ? progressionState.quizAttempts.length : 0,
+            sessionStatus: 'authenticated',
+            needsSupport,
+            supportReason: needsSupport ? 'checkpoint_quiz_retry' : ''
+        });
         getProgressSaveScheduler().schedule(progressPayload);
     }
 }
@@ -1548,13 +1560,20 @@ function updatePauseStateFromStorage() {
 }
 
 function saveGame() {
-    saveIdentity(false);
+    if (!requireAuthenticatedStudent()) return;
+    saveCompanyName(false);
     const result = gameState.saveToLocalStorage();
     alert(result ? '✅ Game saved successfully!' : '❌ Error saving game.');
 }
 
 function loadGame() {
+    const session = requireAuthenticatedStudent();
+    if (!session) return;
     if (!confirm('Load saved game? This will overwrite current progress.')) return;
+    if (!isAutosaveOwnedBySession(session)) {
+        alert('❌ No save data found for your account on this device.');
+        return;
+    }
     const result = gameState.loadFromLocalStorage();
     if (!result.success) {
         alert('❌ No save data found');
@@ -1572,8 +1591,8 @@ function loadGame() {
     gameState.applyLevelConfigAdapter?.();
     if (!enforceCurrentLevelAccess()) return;
     ensureInvestmentPlansForOwnedMines();
+    applyCompetitionSessionToIdentity(false);
     hydrateIdentityInputs();
-    applyCompetitionSessionToIdentity();
     updateAssignedLevelBadge();
     updateAllUI();
     closeAllModals();
@@ -1588,6 +1607,7 @@ function removePlayerRecord(playerKey) {
 }
 
 function resetGame() {
+    if (!requireAuthenticatedStudent()) return;
     if (!confirm('Start a new game? All progress will be lost.')) return;
     const playerKey = getOrCreatePlayerKey();
     gameState.assignedLevel = getAssignedLevelFromUrl();
@@ -1595,8 +1615,8 @@ function resetGame() {
     gameState.applyLevelConfigAdapter?.();
     localStorage.removeItem('level2_autosave');
     removePlayerRecord(playerKey);
+    applyCompetitionSessionToIdentity(false);
     hydrateIdentityInputs();
-    applyCompetitionSessionToIdentity();
     updateAssignedLevelBadge();
     updateAllUI();
     closeAllModals();

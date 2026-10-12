@@ -91,18 +91,18 @@
 
                 <section class="panel-section">
                     <h2>🏢 Company & Student Identity</h2>
-                    <p id="competition-status" class="competition-status">Competition Status: Free-play mode</p>
+                    <p id="competition-status" class="competition-status">Checking student sign-in…</p>
                     <p id="cloudSaveStatus" class="panel-note">Cloud save status: idle</p>
-                    <p id="studentLoginHint" class="panel-note">Log in for competition from the <a href="../../index.html">Home page</a>. Your session carries over automatically.</p>
+                    <p id="studentLoginHint" class="panel-note">Your identity comes from your class roster and cannot be edited here. Only the company name can be changed.</p>
                     <div class="identity-grid">
-                        <label>Student Code <input id="studentCodeInput" type="text" maxlength="40" placeholder="e.g. SC-Y6-1042"></label>
-                        <label>Leaderboard Name <input id="leaderboardNameInput" type="text" maxlength="30" placeholder="Your public nickname"></label>
-                        <label>Student ID <input id="studentIdInput" type="text" maxlength="30" placeholder="e.g. 123456"></label>
-                        <label>Student Name <input id="studentNameInput" type="text" maxlength="50" placeholder="e.g. Alex"></label>
+                        <label>Student Code <input id="studentCodeInput" type="text" readonly aria-readonly="true"></label>
+                        <label>Leaderboard Name <input id="leaderboardNameInput" type="text" readonly aria-readonly="true"></label>
+                        <label>Student ID <input id="studentIdInput" type="text" readonly aria-readonly="true"></label>
+                        <label>Student Name <input id="studentNameInput" type="text" readonly aria-readonly="true"></label>
                         <label>Company Name <input id="companyNameInput" type="text" maxlength="50" placeholder="e.g. Perth Prospectors"></label>
                     </div>
-                    <button id="saveIdentityButton" class="btn-secondary">Save Identity</button>
-                    <button id="competitionLogoutButton" class="btn-secondary">Log Out of Competition</button>
+                    <button id="saveIdentityButton" class="btn-secondary">Save Company Name</button>
+                    <button id="competitionLogoutButton" class="btn-secondary">Log Out</button>
                     <a id="studentLoginCta" class="btn-cta-nav" href="../../index.html?studentLogin=1">🔐 Student Login on Home</a>
                 </section>
 
@@ -250,6 +250,7 @@
         }
     </script>
     <script src="../../shared/flow-endpoints.js"></script>
+    <script src="../../shared/student-session.js"></script>
     <script src="game-state.js"></script>
     <script src="level-access-guard.js"></script>
     <script src="../../shared/power-automate-headers.js"></script>
