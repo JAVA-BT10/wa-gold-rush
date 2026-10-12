@@ -148,7 +148,7 @@ Frontend flow calls use `WA_GOLD_RUSH_POWER_AUTOMATE.callFlow(...)`, which handl
 
 ### Progress saves
 
-`shared/sharepoint-sync.js` only sends a save when `studentCode`, `classCode`, and the current gameplay `level` (2–5) are valid and match the signed-in session. The canonical `ProgressKey` is `UPPER(ClassCode)|UPPER(StudentCode)|Level`. Invalid or rejected saves (HTTP 4xx or `ok:false`) go to `wa_gr_sync_quarantine` and are not retried. Network errors and timeouts are retried with the same `saveRequestId`. See `docs/power-automate/GGR_SaveProgress-repair-spec.md` for the flow-side checklist.
+`shared/sharepoint-sync.js` only sends a save when `studentCode`, `classCode`, and the current gameplay `level` (2–5) are valid and match the signed-in session. The canonical `ProgressKey` is `UPPER(ClassCode)|UPPER(StudentCode)|Level`. Invalid or rejected saves (HTTP 400/410/422 or `ok:false`) go to `wa_gr_sync_quarantine` and are not retried. Network errors and timeouts are retried with the same `saveRequestId`. See `docs/power-automate/GGR_SaveProgress-repair-spec.md` for the flow-side checklist.
 
 #### Power Automate: student/profile upsert flow
 Trigger: **When an HTTP request is received**  

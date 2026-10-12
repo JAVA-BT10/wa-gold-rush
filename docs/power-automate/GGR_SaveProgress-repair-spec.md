@@ -144,7 +144,7 @@ Before any `Get items` / `Create item` / `Update item`:
 2. Look up `GGR_Students` by `StudentCode` and reject (`ok:false`) if there is no active row or if its `ClassCode` differs from the request.
 3. Recompute the canonical `ProgressKey` (do not trust the client `progressKey`).
 
-The client treats HTTP 400/404/409/410/422 and any `ok:false` body (even at HTTP 200) as a **permanent rejection**. It quarantines the save in `wa_gr_sync_quarantine` and does not retry. Return `ok:false, retryable:true` only for transient conditions such as throttling. Timeouts, network errors, and 5xx responses are retried with the same `saveRequestId`.
+The client treats HTTP 400/410/422 and any `ok:false` body (even at HTTP 200) as a **permanent rejection**. It quarantines the save in `wa_gr_sync_quarantine` and does not retry. Return `ok:false, retryable:true` only for transient conditions such as throttling. Timeouts, network errors, 404/409 (missing endpoint / create conflict), and 5xx responses are retried with the same `saveRequestId`.
 
 ## Concurrent create recovery
 

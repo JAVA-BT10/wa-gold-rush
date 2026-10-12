@@ -33,7 +33,7 @@ const SharePointSync = (() => {
     const QUEUE_SCHEMA_VERSION = 4;
     const MAX_RETRY_ATTEMPTS = 10;
     // HTTP statuses that mean the request itself is wrong; retrying cannot help.
-    const PERMANENT_HTTP_STATUSES = [400, 404, 409, 410, 422];
+    const PERMANENT_HTTP_STATUSES = [400, 410, 422];
     let _retryTimer = null;
     let _cloudSaveStatus = 'idle';
 
