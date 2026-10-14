@@ -119,6 +119,16 @@ Student identity comes **only** from the class roster (`GGR_Students`) through t
 5. Every level page, quiz action, save, and level unlock requires this session. Direct navigation to a level without it redirects to the Home login with `returnTo`.
 6. Students can log out from the Home page or in-game at any time.
 
+### Creating a student PIN
+
+On `index.html`, open **Set or Change Student PIN** and select **First-time PIN setup / I do not have an old PIN yet**. Enter Class Code and Student ID, choose a private PIN, and re-enter it exactly. Select **Set PIN**, wait for backend-confirmed success, then log in above with the new PIN. First-time requests omit `oldPinHash`; ordinary changes still require the old PIN.
+
+The form allows up to **12 characters** per PIN field. The numeric keyboard is a hint, not digits-only validation; **482619 is an example only**, not a prefilled/default PIN or a mandatory six-digit format. The frontend requires nonempty trimmed entries, matching new/confirmation values, and a new PIN different from the old one for ordinary changes. It trims surrounding whitespace and SHA-256 hashes the PIN without converting it to a number (leading zeroes are preserved). PINs and hashes are not persisted in browser storage. No mandatory four/six-digit minimum or digits-only backend policy has been verified.
+
+**Deployment verification still required:** the deployed `GGR_ChangeStudentPin` definition is not available here. Verify its PIN policy, authorised first-time/reset eligibility, credential update in `GGR_Students`, and subsequent `GGR_LoginStudent` sign-in live. The frontend example does not repair the flow or prove a PIN was saved. The reported screenshot (first-time mode selected, masked matching fields, `[object Object]` response) is a reference for helper placement, not evidence of the backend failure's cause; error formatting is unchanged in this PR.
+
+Removing Class Code for Student ID + PIN-only login is separate coordinated frontend/backend contract work. No List names or internal mappings change here; `GGR_StudentProgress` display column `LastPlayedUtc` intentionally retains internal name `LaastPlayedUtc`.
+
 ### Data Fields & Privacy Model
 
 | Field | Stored Where | Visible To |

@@ -400,6 +400,7 @@ test('student auth change pin omits old pin hash for first-time setup', async ()
     const result = await auth.changeStudentPin({
         classCode: '6b',
         studentId: '123456',
+        oldPin: '1111',
         newPin: '2222',
         firstTimeSetup: true
     });
@@ -409,6 +410,106 @@ test('student auth change pin omits old pin hash for first-time setup', async ()
     assert.equal(capturedPayload.firstTimeSetup, true);
     assert.equal(Object.prototype.hasOwnProperty.call(capturedPayload, 'oldPinHash'), false);
     assert.match(capturedPayload.newPinHash, /^[a-f0-9]{64}$/);
+});
+
+test('student PIN hashing preserves leading zeroes and existing trim/format semantics', async () => {
+    const calls = [];
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        callFlow: async (flowName, payload) => {
+            calls.push({ flowName, payload });
+            return { success: true, data: { ok: true, ...payload, studentCode: 'SC-1', studentName: 'Alex Smith', leaderboardName: 'Gold Miner', assignedLevel: 2 } };
+        }
+    };
+    const auth = loadStudentAuth();
+    const expectedHash = require('node:crypto').createHash('sha256').update('004826').digest('hex');
+    await auth.changeStudentPin({ classCode: '6B', studentId: '123456', newPin: ' 004826 ', firstTimeSetup: true });
+    await auth.loginStudent({ classCode: '6B', studentId: '123456', pin: '004826' });
+    assert.equal(calls[0].flowName, 'changeStudentPin');
+    assert.deepEqual(calls[0].payload, { classCode: '6B', studentId: '123456', newPinHash: expectedHash, firstTimeSetup: true });
+    assert.equal(calls[1].flowName, 'loginStudent');
+    assert.deepEqual(calls[1].payload, { classCode: '6B', studentId: '123456', pinHash: expectedHash });
+    assert.notEqual(await auth.hashPin('4826'), expectedHash);
+    for (const pin of ['7', 'aB-9', '123456789012']) {
+        assert.equal(await auth.hashPin(` ${pin} `), require('node:crypto').createHash('sha256').update(pin).digest('hex'));
+    }
+    await assert.rejects(() => auth.hashPin('   '), /PIN is required/);
+});
+
+test('home page PIN guidance is visible, accessible, and never prefills or imposes a new format', () => {
+    const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+    assert.match(html, /<summary>Set or Change Student PIN<\/summary>/);
+    for (const [inputId, hintId] of [['newPinInput', 'newPinHint'], ['confirmNewPinInput', 'confirmNewPinHint']]) {
+        const input = html.match(new RegExp(`<input\\b[^>]*id="${inputId}"[^>]*>`))?.[0];
+        assert.ok(input);
+        assert.match(input, /type="password"/);
+        assert.match(input, /maxlength="12"/);
+        assert.match(input, /inputmode="numeric"/);
+        assert.match(input, /autocomplete="new-password"/);
+        assert.ok(input.includes(`aria-describedby="${hintId}"`));
+        assert.doesNotMatch(input, /\b(?:value|placeholder|pattern|minlength)\s*=/);
+        const hint = html.match(new RegExp(`<span\\b[^>]*id="${hintId}"[^>]*>([^<]+)<\\/span>`));
+        assert.ok(hint);
+        assert.doesNotMatch(hint[0], /\bhidden\b|sr-only|display:\s*none/);
+        if (inputId === 'newPinInput') {
+            assert.match(hint[1], /Choose your own PIN and keep it private/);
+            assert.match(hint[1], /Numbers are suggested: example only, 482619 \(not a default\)/);
+            assert.match(hint[1], /up to 12 characters; no specific length is required by this form/);
+        } else {
+            assert.match(hint[1], /Re-enter exactly the same PIN/);
+        }
+    }
+    assert.match(html, /id="firstTimePinSetupInput"[^>]*aria-describedby="studentPinSetupInstructions"/);
+    assert.match(html, /Select the first-time option below; an old PIN is not required/);
+    assert.match(html, /Wait for backend confirmation of success, then use your new PIN with your Class Code and Student ID to log in above/);
+    assert.match(html, /id="studentPinStatus"[^>]*role="status"[^>]*aria-live="polite"/);
+});
+
+test('home page PIN validation still trims, requires confirmation, and rejects unchanged ordinary PINs', async () => {
+    const harness = buildHomePageFunctionHarness();
+    const fields = harness.elements;
+    fields.pinClassCodeInput.value = '6B';
+    fields.pinStudentIdInput.value = '123456';
+    fields.oldPinInput.value = '004826';
+    for (const firstTimeSetup of [false, true]) {
+        fields.firstTimePinSetupInput.checked = firstTimeSetup;
+        for (const [newPin, confirmation, error] of [
+            ['   ', '004826', /required/],
+            ['004826', '   ', /required/],
+            ['004826', '4826', /must match/],
+            ...(!firstTimeSetup ? [[' 004826 ', '004826', /different from old PIN/]] : [])
+        ]) {
+            fields.newPinInput.value = newPin;
+            fields.confirmNewPinInput.value = confirmation;
+            await harness.handleStudentPinChange({ preventDefault() {} });
+            assert.match(fields.studentPinStatus.textContent, error);
+            assert.equal(harness.getCapturedPayload(), null);
+        }
+    }
+    fields.newPinInput.value = ' 004826 ';
+    fields.confirmNewPinInput.value = '004826';
+    await harness.handleStudentPinChange({ preventDefault() {} });
+    assert.equal(harness.getCapturedPayload().newPin, '004826');
+    assert.equal(harness.getCapturedPayload().firstTimeSetup, true);
+});
+
+test('home page first-time PIN setup waits for backend confirmation before reporting success', async () => {
+    const harness = buildHomePageFunctionHarness();
+    let confirmBackend;
+    harness.setChangeStudentPinImpl(() => new Promise((resolve) => { confirmBackend = resolve; }));
+    harness.elements.firstTimePinSetupInput.checked = true;
+    harness.syncStudentPinMode();
+    harness.elements.pinClassCodeInput.value = '6B';
+    harness.elements.pinStudentIdInput.value = '123456';
+    harness.elements.newPinInput.value = '004826';
+    harness.elements.confirmNewPinInput.value = '004826';
+    const pending = harness.handleStudentPinChange({ preventDefault() {} });
+    assert.equal(harness.elements.studentPinStatus.textContent, 'Setting PIN…');
+    assert.equal(harness.elements.newPinInput.value, '004826');
+    confirmBackend({ success: true });
+    await pending;
+    assert.equal(harness.elements.studentPinStatus.textContent, 'PIN set after backend confirmation.');
+    assert.equal(harness.elements.newPinInput.value, '');
+    assert.equal(harness.elements.confirmNewPinInput.value, '');
 });
 
 test('student auth change pin still requires old pin for normal changes', async () => {
