@@ -487,7 +487,7 @@
             return dashboard.getAllTeachers().filter((teacher) => {
                 if (session.role.toLowerCase() === 'admin') return true;
                 return teacher.email === session.teacherEmail
-                    || dashboard.canTeacherAccessClass(teacher.classCode);
+                    || teacher.classCodes.some(classCode => dashboard.canTeacherAccessClass(classCode));
             });
         }
 
