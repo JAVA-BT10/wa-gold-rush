@@ -1,4 +1,10 @@
 (function initStudentAuthClient(globalObj) {
+    function getErrorMessage(value, fallback = '') {
+        const helper = globalObj.WA_GOLD_RUSH_POWER_AUTOMATE?.getErrorMessage
+            || (typeof require === 'function' ? require('./power-automate-headers.js').getErrorMessage : null);
+        return helper ? helper(value, fallback) : fallback;
+    }
+
     async function hashPin(pin) {
         const normalized = String(pin || '').trim();
         if (!normalized) {
@@ -138,13 +144,13 @@
             requireApiKey: true,
             cache: 'no-store'
         });
-        const responseHasOkFlag = result.data && Object.prototype.hasOwnProperty.call(result.data, 'ok');
-        const responseOk = responseHasOkFlag ? result.data?.ok === true : result.success === true;
+        const success = result.success === true && result.data?.ok === true;
         return {
-            success: result.success && responseOk,
+            success,
             status: result.status,
             response: result.data || null,
-            error: result.error || String(result.data?.error || result.data?.message || '').trim()
+            error: success ? '' : getErrorMessage(result.error)
+                || getErrorMessage(result.data, 'PIN update was not confirmed. Ask your teacher for help before trying again.')
         };
     }
 

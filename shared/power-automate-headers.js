@@ -109,6 +109,19 @@
         return /REPLACE-WITH/i.test(String(url || ''));
     }
 
+    function getErrorMessage(value, fallback = '', depth = 0) {
+        if (typeof value === 'string') {
+            const text = value.trim();
+            return text && !text.includes('[object Object]') ? text : fallback;
+        }
+        if (!value || typeof value !== 'object' || depth >= 5) return fallback;
+        for (const key of ['message', 'Message', 'error', 'Error', 'value', 'innerError']) {
+            const text = getErrorMessage(value[key], '', depth + 1);
+            if (text) return text;
+        }
+        return fallback;
+    }
+
     function resolveFlowEndpoint(flowName, endpointMap) {
         if (!flowName) return '';
         const flowKey = String(flowName || '').trim();
@@ -161,7 +174,7 @@
             }
 
             if (!response.ok) {
-                const errorText = String(data?.error || data?.message || rawBody || `HTTP ${response.status}`).trim();
+                const errorText = getErrorMessage(isJson ? data : rawBody, `HTTP ${response.status}`);
                 return {
                     success: false,
                     status: response.status,
@@ -180,7 +193,7 @@
         } catch (error) {
             return {
                 success: false,
-                error: String(error?.message || error || 'Flow request failed.')
+                error: getErrorMessage(error, 'Flow request failed.')
             };
         }
     }
@@ -192,6 +205,7 @@
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.isPlaceholderEndpoint = isPlaceholderEndpoint;
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.postToFlow = postToFlow;
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = callFlow;
+    globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.getErrorMessage = getErrorMessage;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
@@ -200,6 +214,7 @@
             resolveApiKey,
             postToFlow,
             callFlow,
+            getErrorMessage,
             resolveFlowEndpoint,
             isPlaceholderEndpoint
         };
