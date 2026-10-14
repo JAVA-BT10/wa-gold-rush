@@ -363,7 +363,13 @@
                 </div>
             </div>
             <details style="margin-top: 12px;">
-                <summary>Change Student PIN</summary>
+                <summary>Set or Change Student PIN</summary>
+                <p id="studentPinSetupInstructions" class="level-description">
+                    Creating your PIN for the first time? Select the first-time option below; an old PIN is not required.
+                    Enter your Class Code and Student ID, choose and confirm your new PIN, then select Set PIN.
+                    Wait for backend confirmation of success, then use your new PIN with your Class Code and Student ID to log in above.
+                    If setup fails, ask your teacher to check that your account is ready.
+                </p>
                 <form id="studentPinChangeForm" class="student-login-grid" style="margin-top: 12px;">
                     <label for="pinClassCodeInput">Class Code
                         <input id="pinClassCodeInput" type="text" maxlength="20" placeholder="e.g. 6B" required>
@@ -372,24 +378,26 @@
                         <input id="pinStudentIdInput" type="text" maxlength="30" placeholder="e.g. 123456" required>
                     </label>
                     <label for="firstTimePinSetupInput" style="display: flex; align-items: center; gap: 8px; align-self: end;">
-                        <input id="firstTimePinSetupInput" type="checkbox" aria-labelledby="firstTimePinSetupLabel">
+                        <input id="firstTimePinSetupInput" type="checkbox" aria-labelledby="firstTimePinSetupLabel" aria-describedby="studentPinSetupInstructions">
                         <span id="firstTimePinSetupLabel">First-time PIN setup / I do not have an old PIN yet</span>
                     </label>
                     <label for="oldPinInput"><span id="oldPinLabelText">Old PIN</span>
                         <input id="oldPinInput" type="password" maxlength="12" inputmode="numeric" required>
                     </label>
                     <label for="newPinInput">New PIN
-                        <input id="newPinInput" type="password" maxlength="12" inputmode="numeric" required>
+                        <input id="newPinInput" type="password" maxlength="12" inputmode="numeric" autocomplete="new-password" aria-describedby="newPinHint" required>
+                        <span id="newPinHint" class="level-description" style="margin: 0;">Choose your own PIN and keep it private. Numbers are suggested: example only, 482619 (not a default). You can enter up to 12 characters; no specific length is required by this form.</span>
                     </label>
                     <label for="confirmNewPinInput">Confirm New PIN
-                        <input id="confirmNewPinInput" type="password" maxlength="12" inputmode="numeric" required>
+                        <input id="confirmNewPinInput" type="password" maxlength="12" inputmode="numeric" autocomplete="new-password" aria-describedby="confirmNewPinHint" required>
+                        <span id="confirmNewPinHint" class="level-description" style="margin: 0;">Re-enter exactly the same PIN you chose above.</span>
                     </label>
                     <p id="studentPinModeHint" class="level-description" style="margin: 0;">
                         Enter your old PIN to change it. If this is your first time or a teacher reset your PIN, tick the box above.
                     </p>
                     <div class="student-actions">
                         <button id="studentPinChangeBtn" class="btn-student" type="submit">🔁 Change PIN</button>
-                        <span id="studentPinStatus" class="level-description" style="margin: 0;"></span>
+                        <span id="studentPinStatus" class="level-description" role="status" aria-live="polite" style="margin: 0;"></span>
                     </div>
                 </form>
             </details>
