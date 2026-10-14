@@ -1,6 +1,7 @@
 (function initFlowEndpoints(globalObj) {
     const existingEndpoints = globalObj.WA_GOLD_RUSH_FLOW_ENDPOINTS || {};
     const dashboardEndpoints = globalObj.WA_GOLD_RUSH_DASHBOARD_CONFIG?.flowEndpoints || {};
+    const runtimeEndpoints = globalObj.WA_GOLD_RUSH_RUNTIME_CONFIG?.flowEndpoints || {};
 
     const defaults = {
         loginTeacher: 'https://224cde437d52e44da36161836e53cf.cc.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/10/workflows/63479c7d2c794888b481e3d477f60136/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=eg2dklPqD9lEhEmrhI5d6UCRC-0o4Sef-P54qF4wK0M',
@@ -21,7 +22,8 @@
         });
     }
 
-    const merged = { ...defaults };
+    const merged = { ...defaults, saveCheckpointApproval: '' };
+    applyOverrides(merged, runtimeEndpoints);
     applyOverrides(merged, existingEndpoints);
     applyOverrides(merged, dashboardEndpoints);
     globalObj.WA_GOLD_RUSH_FLOW_ENDPOINTS = merged;

@@ -263,9 +263,38 @@ test('runtime config script marks load status flag', () => {
     assert.equal(context.window.WA_GOLD_RUSH_RUNTIME_CONFIG.version, 'dev');
 });
 
+test('approval endpoint resolves runtime and dashboard overrides without placeholder masking', () => {
+    const registry = fs.readFileSync(require.resolve('../shared/flow-endpoints.js'), 'utf8');
+    const config = fs.readFileSync(require.resolve('../teacher/dashboard-config.js'), 'utf8');
+    for (const [runtimeUrl, sharedUrl, dashboardUrl, expected] of [
+        ['https://example.com/runtime-approval', '', 'https://REPLACE-WITH-APPROVAL', 'https://example.com/runtime-approval'],
+        ['', 'https://example.com/shared-approval', 'https://REPLACE-WITH-APPROVAL', 'https://example.com/shared-approval'],
+        ['https://example.com/runtime-approval', '', 'https://example.com/override', 'https://example.com/override'],
+        ['', '', '', 'https://REPLACE-WITH-GGR_SaveCheckpointApproval-URL']
+    ]) {
+        const context = {
+            WA_GOLD_RUSH_RUNTIME_CONFIG: { flowEndpoints: { saveCheckpointApproval: runtimeUrl } },
+            WA_GOLD_RUSH_FLOW_ENDPOINTS: { saveCheckpointApproval: sharedUrl },
+            WA_GOLD_RUSH_DASHBOARD_CONFIG: { apiKey: 'test-key', flowEndpoints: { saveCheckpointApproval: dashboardUrl } },
+            setTimeout() {}
+        };
+        context.window = context;
+        vm.runInNewContext(registry, context);
+        vm.runInNewContext(config, context);
+        assert.equal(context.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints.saveCheckpointApproval, expected);
+        const TeacherDashboard = require('../teacher/dashboard-state.js');
+        global.WA_GOLD_RUSH_DASHBOARD_CONFIG = context.WA_GOLD_RUSH_DASHBOARD_CONFIG;
+        assert.equal(new TeacherDashboard().hasConfiguredFlowEndpoint('saveCheckpointApproval'), !/REPLACE-WITH/.test(expected));
+    }
+});
+
 test('pages deploy workflow keeps secret injection and rendered runtime artifacts usable', () => {
     const workflow = fs.readFileSync(require.resolve('../.github/workflows/build-and-deploy.yml'), 'utf8');
     assert.ok(workflow.includes('WA_GGR_API_KEY: ${{ secrets.WA_GGR_API_KEY }}'));
+    assert.ok(workflow.includes('WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL: ${{ secrets.WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL }}'));
+    assert.ok(workflow.includes('approval_url = os.environ.get("WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL", "").strip()'));
+    assert.ok(workflow.includes('flow_endpoints = {"saveCheckpointApproval": approval_url}'));
+    assert.ok(workflow.includes('flowEndpoints: {json.dumps(flow_endpoints)}'));
     assert.ok(workflow.includes('WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}'));
     assert.ok(workflow.includes('WA_GGR_PAGES_BUILD_DIR: pages-dist'));
     assert.ok(workflow.includes('path: pages-dist'));
@@ -365,6 +394,61 @@ test('student auth login hashes PIN and sends expected fields', async () => {
     assert.equal('pinHash' in result.response, false);
 });
 
+test('callFlow renders nested and unreadable gateway errors without object coercion', async () => {
+    const helpers = require('../shared/power-automate-headers.js');
+    for (const [body, expected] of [
+        [JSON.stringify({ error: { code: 'BadGateway', message: 'The PIN service is unavailable.' } }), 'The PIN service is unavailable.'],
+        [JSON.stringify({ error: { code: 'BadGateway' } }), 'HTTP 502'],
+        [JSON.stringify({ message: { value: 'Ask your teacher for help.' } }), 'Ask your teacher for help.'],
+        ['Bad Gateway', 'Bad Gateway'],
+        ['[object Object]', 'HTTP 502'],
+        ['', 'HTTP 502']
+    ]) {
+        const result = await helpers.callFlow('https://example.com/pin', {}, {
+            includeApiKey: false,
+            fetch: async () => ({ ok: false, status: 502, text: async () => body })
+        });
+        assert.equal(result.success, false);
+        assert.equal(result.error, expected);
+    }
+    const cyclic = {};
+    cyclic.error = cyclic;
+    assert.equal(helpers.getErrorMessage(cyclic, 'Fallback'), 'Fallback');
+});
+
+test('student PIN changes require explicit confirmation and render application errors', async () => {
+    for (const [data, expected] of [
+        [{ ok: false, error: { message: 'Setup is not allowed.' } }, 'Setup is not allowed.'],
+        [{ ok: false, error: { code: 'Denied' } }, 'PIN update was not confirmed. Ask your teacher for help before trying again.'],
+        [{}, 'PIN update was not confirmed. Ask your teacher for help before trying again.'],
+        [null, 'PIN update was not confirmed. Ask your teacher for help before trying again.'],
+        [{ ok: 'true' }, 'PIN update was not confirmed. Ask your teacher for help before trying again.']
+    ]) {
+        global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+            callFlow: async () => ({ success: true, status: 200, data })
+        };
+        const result = await loadStudentAuth().changeStudentPin({
+            classCode: '6B', studentId: '123456', newPin: '5837', firstTimeSetup: true
+        });
+        assert.equal(result.success, false);
+        assert.equal(result.error, expected);
+    }
+});
+
+test('PIN creation guidance is accessible, illustrative only, and does not promise reset access', () => {
+    const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+    for (const id of ['newPinInput', 'confirmNewPinInput']) {
+        const input = html.match(new RegExp(`<input id="${id}"[^>]*>`))[0];
+        assert.match(input, /aria-describedby="[^"]*studentPinCreationHint/);
+        assert.match(input, /autocomplete="new-password"/);
+        assert.doesNotMatch(input, /\bvalue=|\bpattern=|\bminlength=/);
+    }
+    assert.match(html, /For example, 5837/);
+    assert.match(html, /do not use this example as your own/);
+    assert.match(html, /id="studentPinStatus"[^>]*role="status"[^>]*aria-live="polite"/);
+    assert.doesNotMatch(html, /first time or a teacher reset your PIN/);
+});
+
 test('student auth change pin respects backend ok=false responses', async () => {
     global.WA_GOLD_RUSH_POWER_AUTOMATE = {
         callFlow: async () => ({
@@ -457,7 +541,7 @@ test('home page first-time PIN mode disables old PIN and submits first-time payl
         newPin: '2222',
         firstTimeSetup: true
     });
-    assert.equal(harness.elements.studentPinStatus.textContent, 'PIN set after backend confirmation.');
+    assert.equal(harness.elements.studentPinStatus.textContent, 'PIN set successfully. Sign in above with your new PIN to play.');
 });
 
 test('home page normal PIN mode keeps old PIN required and submits change payload', async () => {
@@ -485,7 +569,7 @@ test('home page normal PIN mode keeps old PIN required and submits change payloa
         newPin: '2222',
         firstTimeSetup: false
     });
-    assert.equal(harness.elements.studentPinStatus.textContent, 'PIN updated after backend confirmation.');
+    assert.equal(harness.elements.studentPinStatus.textContent, 'PIN updated successfully. Sign in above with your new PIN.');
 });
 
 test('home page keeps PIN entries when backend rejects the change', async () => {
@@ -503,6 +587,18 @@ test('home page keeps PIN entries when backend rejects the change', async () => 
     assert.equal(harness.elements.newPinInput.value, '2222');
     assert.equal(harness.elements.confirmNewPinInput.value, '2222');
     assert.equal(harness.elements.studentPinStatus.textContent, 'Old PIN mismatch');
+});
+
+test('home page PIN status falls back safely for unexpected error objects', async () => {
+    const harness = buildHomePageFunctionHarness();
+    harness.setChangeStudentPinImpl(async () => ({ success: false, error: { code: 'BadGateway' } }));
+    harness.elements.firstTimePinSetupInput.checked = true;
+    harness.elements.pinClassCodeInput.value = '6B';
+    harness.elements.pinStudentIdInput.value = '123456';
+    harness.elements.newPinInput.value = '5837';
+    harness.elements.confirmNewPinInput.value = '5837';
+    await harness.handleStudentPinChange({ preventDefault() {} });
+    assert.equal(harness.elements.studentPinStatus.textContent, 'PIN update failed.');
 });
 
 test('sharepoint sync loads cleanly, exposes progress sync helpers, and canonicalizes rebuilt payload keys', () => {
@@ -930,6 +1026,46 @@ test('dashboard hydration accepts partial flow response when teachers array is m
     assert.equal(dashboard.students[0].gameState.round, 3);
     assert.equal(dashboard.teachers.length, 0);
     assert.match(result.statusMessage, /did not include: teachers/);
+});
+
+test('Lists ClassCodes hydrate and display only authorized teachers while authenticated admins see all', async () => {
+    const rows = [
+        { Title: 'One', TeacherEmail: 'one@example.com', TeacherName: 'Teacher One', Role: { Value: 'teacher' }, Active: true, AllowedDashboardAccess: true, ClassCodes: '6b; 6c', DomainValidated: true, LastUpdatedUtc: '2026-10-01T00:00:00Z' },
+        { Title: 'Two', TeacherEmail: 'two@example.com', TeacherName: 'Teacher Two', Role: 'teacher', Active: true, AllowedDashboardAccess: true, ClassCodes: ['7A'], DomainValidated: true, LastUpdatedUtc: '2026-10-01T00:00:00Z' },
+        { Title: 'Admin', TeacherEmail: 'admin@example.com', TeacherName: 'Admin', Role: { Value: 'admin' }, Active: true, AllowedDashboardAccess: true, ClassCodes: '', DomainValidated: true, LastUpdatedUtc: '2026-10-01T00:00:00Z' }
+    ];
+    const dashboard = setupTeacherDashboardGlobals({
+        endpoints: { loginTeacher: 'https://example.com/login' },
+        callFlow: async (name) => ({
+            success: true, status: 200,
+            data: name === 'loginTeacher'
+                ? { ok: true, TeacherName: 'Creator', Role: { Value: 'ADMIN' }, ClassCodes: ['6B'] }
+                : { ok: true, Teachers: { value: rows } }
+        })
+    });
+    assert.equal((await dashboard.hydrateDashboardFromFlow()).success, true);
+    assert.deepEqual(dashboard.getTeacher('one@example.com').classCodes, ['6B', '6C']);
+    assert.equal(dashboard.getTeacher('one@example.com').classCode, '6B, 6C');
+    assert.deepEqual(dashboard.normalizeDashboardTeacher({ ClassCodes: [{ Value: '6b' }, { Value: '6c' }] }).classCodes, ['6B', '6C']);
+    assert.deepEqual(dashboard.normalizeDashboardTeacher({ ClassCodes: { Value: '6b,6c' } }).classCodes, ['6B', '6C']);
+    const html = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
+    const displayFunction = html.slice(html.indexOf('function getAuthorizedTeachers()'), html.indexOf('function withAuthorizedStudents('));
+    const context = { dashboard };
+    vm.runInNewContext(`${displayFunction}\nthis.visibleTeachers = getAuthorizedTeachers;`, context);
+    assert.deepEqual(context.visibleTeachers().map(row => row.email), ['one@example.com']);
+    assert.equal(dashboard.canTeacherAccessClass('6B'), true);
+    assert.equal(dashboard.canTeacherAccessClass('7A'), false);
+    assert.equal(dashboard.canTeacherAccessClass(''), false);
+    const login = await dashboard.authenticateTeacher({ teacherEmail: 'admin@example.com', classCode: '6B' });
+    assert.equal(login.success, true);
+    assert.equal(dashboard.getTeacherSession().role, 'admin');
+    await dashboard.hydrateDashboardFromFlow();
+    assert.equal(dashboard.getTeacherSession().role, 'admin');
+    assert.equal(dashboard.canTeacherAccessClass('7A'), true);
+    assert.equal(context.visibleTeachers().length, 3);
+    dashboard.clearTeacherSession();
+    assert.equal(dashboard.canTeacherAccessClass('6B'), false);
+    assert.equal(context.visibleTeachers().length, 0);
 });
 
 test('dashboard hydration never merges stale local teacher/dashboard caches into flow data', async () => {

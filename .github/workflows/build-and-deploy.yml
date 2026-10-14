@@ -24,6 +24,7 @@ jobs:
       - name: Generate runtime config
         env:
           WA_GGR_API_KEY: ${{ secrets.WA_GGR_API_KEY }}
+          WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL: ${{ secrets.WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL }}
           WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}
           WA_GGR_PAGES_BUILD_DIR: pages-dist
         run: |
@@ -34,6 +35,8 @@ jobs:
           import shutil
 
           api_key = os.environ.get("WA_GGR_API_KEY", "").strip()
+          approval_url = os.environ.get("WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL", "").strip()
+          flow_endpoints = {"saveCheckpointApproval": approval_url}
           if not api_key:
               raise SystemExit("WA_GGR_API_KEY secret is required to deploy teacher/runtime-config.js")
           runtime_config_version = os.environ.get("WA_GGR_RUNTIME_CONFIG_VERSION", "").strip()
@@ -77,6 +80,7 @@ jobs:
               "  windowObj.WA_GOLD_RUSH_RUNTIME_CONFIG = {\n"
               "    ...existingRuntimeConfig,\n"
               "    apiKey,\n"
+              f"    flowEndpoints: {json.dumps(flow_endpoints)},\n"
               "    buildTarget: 'github-pages',\n"
               f"    version: {json.dumps(runtime_config_version)}\n"
               "  };\n"

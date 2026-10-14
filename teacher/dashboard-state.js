@@ -367,7 +367,10 @@ class TeacherDashboard {
     normalizeDashboardTeacher(teacher = {}) {
         const email = this.readListText(teacher, ['email', 'teacherEmail', 'TeacherEmail', 'Email']).toLowerCase();
         const name = this.readListText(teacher, ['name', 'teacherName', 'TeacherName', 'Title', 'DisplayName']);
-        const classCode = this.readListText(teacher, ['classCode', 'ClassCode']).toUpperCase();
+        const classCodes = this.normalizeClassCodeList(
+            teacher.classCodes ?? teacher.ClassCodes ?? teacher.classCode ?? teacher.ClassCode
+        );
+        const classCode = classCodes.join(', ');
         const role = (this.readListText(teacher, ['role', 'Role']) || 'teacher').toLowerCase();
         const activeRaw = this.readListValue(teacher?.active ?? teacher?.Active ?? teacher?.IsActive);
         const active = !(activeRaw === false || /^(false|no|0|inactive)$/i.test(String(activeRaw ?? '').trim()));
@@ -378,7 +381,7 @@ class TeacherDashboard {
             name,
             teacherName: name,
             classCode,
-            classCodes: classCode ? [classCode] : [],
+            classCodes,
             role,
             active
         };
@@ -875,11 +878,11 @@ class TeacherDashboard {
     normalizeClassCodeList(value) {
         if (Array.isArray(value)) {
             return value
-                .map(entry => String(entry || '').trim().toUpperCase())
+                .map(entry => String(this.readListValue(entry) || '').trim().toUpperCase())
                 .filter(Boolean);
         }
 
-        return String(value || '')
+        return String(this.readListValue(value) || '')
             .split(/[,\n;]+/)
             .map(entry => entry.trim().toUpperCase())
             .filter(Boolean);
