@@ -99,7 +99,15 @@ setTimeout(() => {
 const sharedFlowEndpoints = window.WA_GOLD_RUSH_FLOW_ENDPOINTS || {};
 const configuredUnlockEndpoint = String(existingFlowEndpoints.teacherUnlockStudent || '').trim();
 const configuredGetDashboardDataEndpoint = String(existingFlowEndpoints.getDashboardData || '').trim();
-const configuredApprovalEndpoint = String(existingFlowEndpoints.saveCheckpointApproval || '').trim();
+function configuredEndpoint(value) {
+    const endpoint = String(value || '').trim();
+    return endpoint && !/REPLACE-WITH/i.test(endpoint) ? endpoint : '';
+}
+const configuredApprovalEndpoint = configuredEndpoint(existingFlowEndpoints.saveCheckpointApproval);
+const sharedApprovalEndpoint = configuredEndpoint(sharedFlowEndpoints.saveCheckpointApproval);
+const runtimeApprovalEndpoint = configuredEndpoint(
+    window.WA_GOLD_RUSH_RUNTIME_CONFIG?.flowEndpoints?.saveCheckpointApproval
+);
 
 window.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints = {
     ...sharedFlowEndpoints,
@@ -120,9 +128,10 @@ window.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints = {
         || 'https://REPLACE-WITH-GGR_GetStudentProgress-URL',
     // Checkpoint approval persistence. Until this flow is configured the checkpoint
     // approval buttons stay disabled (no local-only approvals).
-    saveCheckpointApproval: configuredApprovalEndpoint && !/REPLACE-WITH/i.test(configuredApprovalEndpoint)
+    saveCheckpointApproval: configuredApprovalEndpoint
         ? configuredApprovalEndpoint
-        : (sharedFlowEndpoints.saveCheckpointApproval
+        : (sharedApprovalEndpoint
+            || runtimeApprovalEndpoint
             || 'https://REPLACE-WITH-GGR_SaveCheckpointApproval-URL'),
     
     // TIER 4 - Analytics
