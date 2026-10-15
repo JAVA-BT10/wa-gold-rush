@@ -305,7 +305,7 @@ test('approval endpoint resolves runtime and dashboard overrides without placeho
     );
 });
 
-test('pages deploy workflow keeps secret injection and rendered runtime artifacts usable', () => {
+test('pages deploy publishes browser-readable configuration while tracked stub stays credential-free', () => {
     const workflow = fs.readFileSync(require.resolve('../.github/workflows/build-and-deploy.yml'), 'utf8');
     assert.ok(workflow.includes('WA_GGR_API_KEY: ${{ secrets.WA_GGR_API_KEY }}'));
     assert.ok(workflow.includes('WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL: ${{ secrets.WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL }}'));
@@ -313,6 +313,7 @@ test('pages deploy workflow keeps secret injection and rendered runtime artifact
     assert.ok(workflow.includes('flow_endpoints = {"saveCheckpointApproval": approval_url}'));
     assert.ok(workflow.includes('flowEndpoints: {json.dumps(flow_endpoints)}'));
     const runtimeConfigSource = fs.readFileSync(require.resolve('../teacher/runtime-config.js'), 'utf8');
+    // Source hygiene only: the deployed file is generated separately and exposes these values.
     assert.doesNotMatch(runtimeConfigSource, /saveCheckpointApproval|[?&]sig=/i);
     assert.ok(workflow.includes('WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}'));
     assert.ok(workflow.includes('WA_GGR_PAGES_BUILD_DIR: pages-dist'));
@@ -350,6 +351,8 @@ test('pages deploy workflow keeps secret injection and rendered runtime artifact
         approvalUrl: 'https://example.com/save-approval',
         version: '123-1'
     });
+    assert.ok(rendered.runtimeConfigScript.includes(JSON.stringify('runtime-key')));
+    assert.ok(rendered.runtimeConfigScript.includes(JSON.stringify('https://example.com/save-approval')));
     const context = {
         WA_GOLD_RUSH_RUNTIME_CONFIG: { existing: true },
         WA_GOLD_RUSH_DASHBOARD_CONFIG: {
@@ -1784,7 +1787,8 @@ test('checkpoint approval is disabled when GGR_SaveCheckpointApproval is not con
     assert.match(CheckpointApproval.generateQuizReviewHTML(null, {}), /not stored/);
 });
 
-test('checkpoint approval saves through the flow with session reviewer and canonical key', async () => {
+test('checkpoint approval forwards client session reviewer and canonical key through mocked flow', async () => {
+    // Verifies payload wiring, not authenticated identity or live flow authorization.
     const calls = [];
     const dashboard = setupTeacherDashboardGlobals({
         endpoints: { saveCheckpointApproval: 'https://example.com/save-approval' },
@@ -1809,7 +1813,7 @@ test('checkpoint approval saves through the flow with session reviewer and canon
     assert.equal(calls[1].flowName, 'getDashboardData');
 });
 
-test('checkpoint UI files hold no localStorage approval authority or prompt-based reviewer', () => {
+test('checkpoint UI source avoids localStorage and prompted reviewer input', () => {
     for (const file of ['../teacher/checkpoint-dashboard.js', '../teacher/checkpoint-approval.js']) {
         const source = fs.readFileSync(require.resolve(file), 'utf8');
         assert.doesNotMatch(source, /localStorage/, `${file} must not use localStorage`);
