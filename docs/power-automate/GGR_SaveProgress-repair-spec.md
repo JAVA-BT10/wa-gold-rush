@@ -115,6 +115,8 @@ The client payload (built by `shared/sharepoint-sync.js` via `shared/progression
 
 The Teacher Dashboard approval/retake buttons call the `saveCheckpointApproval` endpoint. Until that endpoint is configured, the buttons stay disabled and show an "unavailable" message; nothing is stored in the browser.
 
+**Current mode is direct browser integration, not confidential.** GitHub Actions reads `WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL` and `WA_GGR_API_KEY`, then publishes their values in the Pages `teacher/runtime-config.js`. They remain out of tracked source but are visible in downloaded JavaScript/devtools and network requests. The browser has generated JS values, not access to Actions environment variables. Do not commit or log credentials. Preserve this deployment wiring until an authenticated backend is deployed; see the [SHA-pinned approval audit and migration contract](checkpoint-approval-security.md). GitHub Pages cannot host that confidential backend.
+
 Request body:
 
 ```json
@@ -130,7 +132,7 @@ Request body:
 }
 ```
 
-The flow must recompute `ProgressKey`, check that the calling teacher is assigned to `ClassCode` (or has `Role=admin` in `GGR_Teachers`), then `Update item` the matching `GGR_StudentProgress` row's `ApprovalStatus`, `ApproverName` and `ApprovalTimestamp`. For `retake_requested`, it should also set `CheckpointStatus` to `quiz_available`. Respond with `{ "ok": true }` or `{ "ok": false, "error": "..." }`.
+The flow must recompute `ProgressKey`, check that the calling teacher is assigned to `ClassCode` (or has `Role=admin` in `GGR_Teachers`), then `Update item` the matching `GGR_StudentProgress` row's `ApprovalStatus`, `ApproverName` and `ApprovalTimestamp`. These are server-side requirements, not verified properties of the deployed flow. Browser-supplied `approverEmail`, role, class checks and `sessionStorage` are not authenticated identity proof; neither the shared API key nor CORS authenticates an individual teacher. The migration must verify an authenticated active teacher and current role/class authorization, validate the target student/level/decision, and derive reviewer fields and timestamp server-side while retaining this flow payload shape. For `retake_requested`, the flow should also set `CheckpointStatus` to `quiz_available`. Respond with `{ "ok": true }` or `{ "ok": false, "error": "..." }` without leaking credentials or internal errors.
 
 ## Cross-device unlock (`getStudentProgress`)
 
