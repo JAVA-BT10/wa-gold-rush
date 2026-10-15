@@ -272,6 +272,8 @@ test('approval endpoint resolves runtime and dashboard overrides without placeho
         ['https://example.com/runtime-approval', '', 'https://REPLACE-WITH-APPROVAL', 'https://example.com/runtime-approval'],
         ['', 'https://example.com/shared-approval', 'https://REPLACE-WITH-APPROVAL', 'https://example.com/shared-approval'],
         ['https://example.com/runtime-approval', '', 'https://example.com/override', 'https://example.com/override'],
+        ['https://example.com/runtime-approval', 'https://REPLACE-WITH-SHARED', 'https://REPLACE-WITH-APPROVAL', 'https://example.com/runtime-approval'],
+        ['https://REPLACE-WITH-RUNTIME', 'https://example.com/shared-approval', 'https://REPLACE-WITH-APPROVAL', 'https://example.com/shared-approval'],
         ['', '', '', 'https://REPLACE-WITH-GGR_SaveCheckpointApproval-URL']
     ]) {
         const context = {
@@ -288,6 +290,19 @@ test('approval endpoint resolves runtime and dashboard overrides without placeho
         global.WA_GOLD_RUSH_DASHBOARD_CONFIG = context.WA_GOLD_RUSH_DASHBOARD_CONFIG;
         assert.equal(new TeacherDashboard().hasConfiguredFlowEndpoint('saveCheckpointApproval'), !/REPLACE-WITH/.test(expected));
     }
+
+    const runtimeFallbackContext = {
+        WA_GOLD_RUSH_RUNTIME_CONFIG: { flowEndpoints: { saveCheckpointApproval: 'https://example.com/runtime-approval' } },
+        WA_GOLD_RUSH_FLOW_ENDPOINTS: { saveCheckpointApproval: 'https://REPLACE-WITH-SHARED' },
+        WA_GOLD_RUSH_DASHBOARD_CONFIG: { apiKey: 'test-key', flowEndpoints: { saveCheckpointApproval: 'https://REPLACE-WITH-APPROVAL' } },
+        setTimeout() {}
+    };
+    runtimeFallbackContext.window = runtimeFallbackContext;
+    vm.runInNewContext(config, runtimeFallbackContext);
+    assert.equal(
+        runtimeFallbackContext.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints.saveCheckpointApproval,
+        'https://example.com/runtime-approval'
+    );
 });
 
 test('pages deploy workflow keeps secret injection and rendered runtime artifacts usable', () => {
@@ -297,6 +312,8 @@ test('pages deploy workflow keeps secret injection and rendered runtime artifact
     assert.ok(workflow.includes('approval_url = os.environ.get("WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL", "").strip()'));
     assert.ok(workflow.includes('flow_endpoints = {"saveCheckpointApproval": approval_url}'));
     assert.ok(workflow.includes('flowEndpoints: {json.dumps(flow_endpoints)}'));
+    const runtimeConfigSource = fs.readFileSync(require.resolve('../teacher/runtime-config.js'), 'utf8');
+    assert.doesNotMatch(runtimeConfigSource, /saveCheckpointApproval|[?&]sig=/i);
     assert.ok(workflow.includes('WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}'));
     assert.ok(workflow.includes('WA_GGR_PAGES_BUILD_DIR: pages-dist'));
     assert.ok(workflow.includes('path: pages-dist'));
