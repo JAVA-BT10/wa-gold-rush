@@ -53,15 +53,13 @@
         const validation = sessionApi
             ? sessionApi.validateIdentity(source)
             : { ok: false, identity: {}, errors: ['session_contract_unavailable'] };
-        const assignedLevel = sessionApi ? sessionApi.normalizeLevel(source.assignedLevel) : null;
+        const progression = sessionApi && validation.identity.assignedLevel
+            ? sessionApi.normalizeRosterProgression(source, validation.identity.assignedLevel)
+            : { progressedLevel: null, currentLevel: null };
         return {
             ok: source.ok === true,
-            studentCode: String(source.studentCode || '').trim(),
-            leaderboardName: String(source.leaderboardName || '').trim(),
-            studentId: String(source.studentId || '').trim(),
-            studentName: String(source.studentName || '').trim(),
-            classCode: String(source.classCode || '').trim().toUpperCase(),
-            assignedLevel,
+            ...validation.identity,
+            ...progression,
             identityValid: validation.ok,
             identityErrors: validation.errors,
             message: String(source.message || source.error || '').trim()

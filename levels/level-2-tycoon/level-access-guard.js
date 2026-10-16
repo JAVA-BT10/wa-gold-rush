@@ -227,10 +227,11 @@ class LevelAccessGuard {
     }
 
     isLevelAccessible() {
-        if (!LevelAccessGuard.readStudentSession()) {
+        const session = LevelAccessGuard.readStudentSession();
+        if (!session) {
             return false;
         }
-        if (this.assignedLevel <= 2) {
+        if (this.assignedLevel <= session.assignedLevel || this.assignedLevel <= 2) {
             return true;
         }
         const state = this.getSavedProgressionState(this.getRequiredCheckpointLevel());
@@ -238,10 +239,11 @@ class LevelAccessGuard {
     }
 
     getAccessDenialReason() {
-        if (!LevelAccessGuard.readStudentSession()) {
+        const session = LevelAccessGuard.readStudentSession();
+        if (!session) {
             return 'You must sign in with your Class Code, Student ID and PIN before playing.';
         }
-        if (this.assignedLevel <= 2) {
+        if (this.assignedLevel <= session.assignedLevel || this.assignedLevel <= 2) {
             return null;
         }
 

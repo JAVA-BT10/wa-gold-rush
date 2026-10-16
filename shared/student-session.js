@@ -41,11 +41,59 @@
      * fractional, or out-of-range level is rejected rather than coerced.
      */
     function normalizeLevel(value, allowedLevels = ROSTER_LEVELS) {
+        value = unwrapLevelValue(value);
         if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
         const text = String(value).trim();
         if (!/^\d+$/.test(text)) return null;
         const level = Number(text);
         return allowedLevels.includes(level) ? level : null;
+    }
+
+    function unwrapLevelValue(value) {
+        let current = value;
+        for (let depth = 0; depth < 3 && current && typeof current === 'object' && !Array.isArray(current); depth += 1) {
+            if (Object.prototype.hasOwnProperty.call(current, 'Value')) current = current.Value;
+            else if (Object.prototype.hasOwnProperty.call(current, 'value')) current = current.value;
+            else return null;
+        }
+        return current;
+    }
+
+    /**
+     * Normalize SharePoint roster columns and API aliases at the roster boundary.
+     * When multiple aliases are present they must all be valid and agree.
+     */
+    function normalizeRosterLevel(record = {}) {
+        const source = record && typeof record === 'object' ? record : {};
+        const aliases = ['Level', 'level', 'assignedLevel', 'AssignedLevel'];
+        const values = [];
+        for (const key of aliases) {
+            if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+            const raw = unwrapLevelValue(source[key]);
+            if (raw === null || raw === undefined || (typeof raw === 'string' && !raw.trim())) continue;
+            const level = normalizeLevel(raw);
+            if (level === null) return { assignedLevel: null, error: 'assignedLevel' };
+            values.push(level);
+        }
+        if (!values.length) return { assignedLevel: null, error: 'assignedLevel' };
+        if (values.some((level) => level !== values[0])) {
+            return { assignedLevel: null, error: 'conflictingAssignedLevel' };
+        }
+        return { assignedLevel: values[0], error: '' };
+    }
+
+    function normalizeOptionalRosterLevel(source, names, fallback) {
+        const values = [];
+        for (const name of names) {
+            if (!Object.prototype.hasOwnProperty.call(source, name)) continue;
+            const raw = unwrapLevelValue(source[name]);
+            if (raw === null || raw === undefined || (typeof raw === 'string' && !raw.trim())) continue;
+            const level = normalizeLevel(raw);
+            if (level === null) return fallback;
+            values.push(level);
+        }
+        if (!values.length || values.some((level) => level !== values[0])) return fallback;
+        return values[0];
     }
 
     function normalizeProgressLevel(value) {
@@ -58,16 +106,29 @@
      */
     function validateIdentity(input = {}) {
         const source = input && typeof input === 'object' ? input : {};
+        const rosterLevel = normalizeRosterLevel(source);
+        const assignedLevel = rosterLevel.assignedLevel;
         const identity = {
             studentCode: normalizeStudentCode(source.studentCode),
             studentId: normalizeText(source.studentId, 30),
             studentName: normalizeText(source.studentName, 100),
             leaderboardName: normalizeText(source.leaderboardName, 60),
             classCode: normalizeClassCode(source.classCode),
-            assignedLevel: normalizeLevel(source.assignedLevel)
+            assignedLevel
         };
         const errors = IDENTITY_FIELDS.filter((field) => identity[field] === '' || identity[field] === null);
+        if (rosterLevel.error === 'conflictingAssignedLevel') errors.push(rosterLevel.error);
         return { ok: errors.length === 0, identity, errors };
+    }
+
+    function normalizeRosterProgression(source, assignedLevel) {
+        const progressedLevel = normalizeOptionalRosterLevel(source, ['progressedLevel', 'ProgressedLevel'], assignedLevel);
+        const safeProgressedLevel = Math.max(assignedLevel, progressedLevel);
+        const currentLevel = normalizeOptionalRosterLevel(source, ['currentLevel', 'CurrentLevel'], assignedLevel);
+        return {
+            progressedLevel: safeProgressedLevel,
+            currentLevel: currentLevel <= safeProgressedLevel ? currentLevel : assignedLevel
+        };
     }
 
     function isValidTimestamp(value) {
@@ -90,6 +151,7 @@
         const authenticatedAt = isValidTimestamp(options.authenticatedAt)
             ? String(options.authenticatedAt).trim()
             : new Date().toISOString();
+        const progression = normalizeRosterProgression(response, validation.identity.assignedLevel);
         return {
             ok: true,
             errors: [],
@@ -98,6 +160,7 @@
                 source: SOURCE,
                 schemaVersion: SCHEMA_VERSION,
                 ...validation.identity,
+                ...progression,
                 authenticatedAt
             }
         };
@@ -123,11 +186,13 @@
         if (!isValidTimestamp(session.authenticatedAt)) return null;
         const validation = validateIdentity(session);
         if (!validation.ok) return null;
+        const progression = normalizeRosterProgression(session, validation.identity.assignedLevel);
         return {
             ok: true,
             source: SOURCE,
             schemaVersion: SCHEMA_VERSION,
             ...validation.identity,
+            ...progression,
             authenticatedAt: String(session.authenticatedAt).trim()
         };
     }
@@ -235,6 +300,8 @@
         normalizeStudentCode,
         normalizeClassCode,
         normalizeLevel,
+        normalizeRosterLevel,
+        normalizeRosterProgression,
         normalizeProgressLevel,
         validateIdentity,
         createSessionFromLogin,

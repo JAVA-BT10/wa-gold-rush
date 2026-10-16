@@ -96,6 +96,7 @@ Access: `/teacher/dashboard.html`
 - **Still in browser storage:** class controls (pause and Strict Classroom Mode), student autosave, and the cloud-save retry queue. These are not roster data.
 
 Backend prerequisites and the SaveProgress upsert contract are documented in `docs/power-automate/GGR_SaveProgress-repair-spec.md`.
+The student login/import/progression audit and tenant deployment checklist are in [`docs/power-automate/student-login-progression-repair.md`](docs/power-automate/student-login-progression-repair.md). `GGR_Students.Level` remains the teacher-assigned level; `GGR_StudentProgress.Level` remains the per-game-level progress key dimension.
 
 ---
 

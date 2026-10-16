@@ -484,6 +484,7 @@ const SharePointSync = (() => {
             studentCode,
             classCode,
             level,
+            currentLevel: level,
             rosterAssignedLevel,
             currentRound: Number(opts.currentRound) || 1,
             currentCash: _toRoundedInteger(opts.currentCash ?? 0),

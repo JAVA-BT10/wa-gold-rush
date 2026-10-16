@@ -12,6 +12,27 @@
  * authoritative source for dashboard records.
  */
 
+function getStudentRosterLevelApi() {
+    const globalApi = globalThis.WA_GOLD_RUSH_STUDENT_SESSION;
+    if (globalApi && typeof globalApi.normalizeRosterLevel === 'function') return globalApi;
+    if (typeof require === 'function') {
+        try { return require('../shared/student-session.js'); } catch (_) { return null; }
+    }
+    return null;
+}
+
+function normalizeRosterLevel(record) {
+    const api = getStudentRosterLevelApi();
+    if (!api) return null;
+    return api.normalizeRosterLevel(record).assignedLevel;
+}
+
+function normalizeOptionalRosterLevel(value) {
+    const api = getStudentRosterLevelApi();
+    if (!api) return null;
+    return api.normalizeLevel(value);
+}
+
 // ============================================================================
 // Teacher access control
 // ============================================================================
@@ -344,7 +365,7 @@ class TeacherDashboard {
     }
 
     buildStudentFlowPayload(student = {}) {
-        const parsedLevel = parseInt(student.level ?? student.assignedLevel, 10);
+        const level = normalizeRosterLevel(student);
         const teacherSession = this.getTeacherSession();
         return {
             studentCode: String(student.studentCode || student.displayId || '').trim(),
@@ -352,7 +373,9 @@ class TeacherDashboard {
             studentName: String(student.studentName || student.name || '').trim(),
             leaderboardName: String(student.leaderboardName || student.name || '').trim(),
             classCode: String(student.classCode || '').trim(),
-            Level: (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : 1,
+            Level: level,
+            ProgressedLevel: normalizeOptionalRosterLevel(student.progressedLevel ?? student.ProgressedLevel) || level,
+            CurrentLevel: normalizeOptionalRosterLevel(student.currentLevel ?? student.CurrentLevel) || level,
             active: student.active !== false,
             teacherEmailPrimary: String(student.teacherEmailPrimary || teacherSession?.teacherEmail || '').trim().toLowerCase(),
             timestampUtc: new Date().toISOString()
@@ -375,8 +398,8 @@ class TeacherDashboard {
 
     async syncStudentToBackend(student, options = {}) {
         const payload = this.buildStudentFlowPayload(student);
-        if (!payload.studentCode || !payload.leaderboardName || !payload.classCode) {
-            return { success: false, skipped: true, error: 'Student payload is incomplete.' };
+        if (!payload.studentCode || !payload.leaderboardName || !payload.classCode || !payload.Level) {
+            return { success: false, skipped: true, error: 'Student payload is incomplete or has an invalid Level (1–5).'};
         }
         return this.postFlowPayload('upsertStudentProfile', payload, options);
     }
@@ -601,7 +624,9 @@ class TeacherDashboard {
 
     normalizeDashboardStudent(student = {}) {
         const identity = this.normalizeDashboardStudentIdentity(student);
-        const parsedLevel = parseInt(this.readListValue(student.level ?? student.Level ?? student.assignedLevel), 10);
+        const level = normalizeRosterLevel(student);
+        const progressedLevel = normalizeOptionalRosterLevel(this.readListValue(student.progressedLevel ?? student.ProgressedLevel));
+        const currentLevel = normalizeOptionalRosterLevel(this.readListValue(student.currentLevel ?? student.CurrentLevel));
         const activeRaw = this.readListValue(student?.active ?? student?.Active);
         return {
             ...student,
@@ -612,7 +637,10 @@ class TeacherDashboard {
             leaderboardName: this.readListText(student, ['leaderboardName', 'LeaderboardName', 'studentName', 'StudentName', 'Title']),
             studentName: this.readListText(student, ['studentName', 'StudentName', 'name']),
             classCode: this.readListText(student, ['classCode', 'ClassCode']).toUpperCase(),
-            level: (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : null,
+            level,
+            assignedLevel: level,
+            progressedLevel: progressedLevel && level ? Math.max(level, progressedLevel) : level,
+            currentLevel: currentLevel && progressedLevel && currentLevel <= progressedLevel ? currentLevel : level,
             active: !(activeRaw === false || /^(false|no|0|inactive)$/i.test(String(activeRaw ?? '').trim()))
         };
     }
@@ -1065,7 +1093,7 @@ class TeacherDashboard {
     async syncStudentsToBackend(students = [], options = {}) {
         const payload = (Array.isArray(students) ? students : [])
             .map(student => this.buildStudentFlowPayload(student))
-            .filter(student => student.studentCode && student.leaderboardName && student.classCode);
+            .filter(student => student.studentCode && student.leaderboardName && student.classCode && student.Level);
         if (!payload.length) {
             return { success: true, skipped: true, count: 0, succeeded: [], failed: [] };
         }
@@ -1462,8 +1490,10 @@ class TeacherDashboard {
             studentData.studentId || studentData.email || ''
         ).trim();
         const classCode = String(studentData.classCode || '').trim().toUpperCase();
-        const parsedLevel = parseInt(studentData.level, 10);
-        const level = (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : 2;
+        const level = normalizeRosterLevel(studentData);
+        if (!level) {
+            return this.failureResult('Assigned Level must be a whole number from 1 to 5 in the roster Level field.');
+        }
 
         if (!studentCode) {
             return this.failureResult('Student Code is required.');
@@ -1488,6 +1518,9 @@ class TeacherDashboard {
             studentName,
             classCode,
             level,
+            assignedLevel: level,
+            progressedLevel: level,
+            currentLevel: level,
             active: true
         };
 
@@ -1580,7 +1613,9 @@ class TeacherDashboard {
                         studentId:       idx(f, 'studentid'),
                         studentName:     idx(f, 'studentname'),
                         classCode:       idx(f, 'classcode'),
-                        level:           parseInt(idx(f, 'level'), 10) || 1
+                        Level:           idx(f, 'level'),
+                        level:           idx(f, 'level'),
+                        assignedLevel:   idx(f, 'assignedlevel')
                     });
                 } else {
                     // Legacy format: name,email,level
@@ -1589,12 +1624,11 @@ class TeacherDashboard {
                         return;
                     }
                     const [name, email, levelRaw] = f;
-                    const parsedLevel = parseInt(levelRaw, 10);
                     rawStudents.push({
                         _row: originalRow,
                         name,
                         email,
-                        level: (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : 1
+                        Level: levelRaw
                     });
                 }
             });
@@ -1622,7 +1656,6 @@ class TeacherDashboard {
                     return;
                 }
 
-                const parsedLevel = parseInt(item.level ?? item.Level ?? item.assignedLevel, 10);
                 rawStudents.push({
                     _row: idx + 1,
                     studentCode:     (item.studentCode     || item.StudentCode     || '').toString().trim(),
@@ -1630,7 +1663,10 @@ class TeacherDashboard {
                     studentId:       (item.studentId       || item.StudentID       || item.email || '').toString().trim(),
                     studentName:     (item.studentName     || item.StudentName     || item.name  || '').toString().trim(),
                     classCode:       (item.classCode       || item.ClassCode       || '').toString().trim(),
-                    level: (parsedLevel >= 1 && parsedLevel <= 6) ? parsedLevel : 1
+                    Level: item.Level,
+                    level: item.level,
+                    assignedLevel: item.assignedLevel,
+                    AssignedLevel: item.AssignedLevel
                 });
             });
         } else {
@@ -1888,8 +1924,10 @@ class TeacherDashboard {
             student.classCode = updates.classCode.trim().toUpperCase();
         }
         if (updates.level !== undefined) {
-            const v = parseInt(updates.level, 10);
-            student.level = (v >= 1 && v <= 6) ? v : student.level;
+            const v = normalizeRosterLevel({ level: updates.level });
+            if (!v) return this.failureResult('Assigned Level must be a whole number from 1 to 5.');
+            student.level = v;
+            student.assignedLevel = v;
         }
 
         if (typeof updates.classCode === 'string' && !student.classCode) {
