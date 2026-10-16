@@ -233,9 +233,12 @@ invent a client endpoint name or imply this reset exists.
    names and response shape after each deployment.
 4. Keep a rollback export. If a flow fails, restore its prior version and the
    backup data rather than renaming `Level` or deleting per-level progress.
-   Remove/rotate previously exposed signed trigger credentials through the
-   tenant's flow configuration; do not paste them into a PR. GitHub Pages
-   runtime configuration is browser-visible, not confidential.
+   The existing shared endpoint registry contains signed trigger URLs; assume
+   these values are already public and rotate them in the tenant. Do not copy
+   trigger URLs or keys into a PR. GitHub Pages runtime configuration is
+   browser-visible, not confidential; move sensitive calls behind an
+   authenticated server-side service rather than republishing them as build
+   secrets.
 5. Inspect each flow's live run history with identifiers and credentials
    redacted. No flow definitions or tenant run history are available to this
    repository change, and no real student credentials or tenant rows were
