@@ -1613,7 +1613,9 @@ class TeacherDashboard {
                         studentId:       idx(f, 'studentid'),
                         studentName:     idx(f, 'studentname'),
                         classCode:       idx(f, 'classcode'),
-                        Level:           idx(f, 'level') || idx(f, 'assignedlevel')
+                        Level:           idx(f, 'level'),
+                        level:           idx(f, 'level'),
+                        assignedLevel:   idx(f, 'assignedlevel')
                     });
                 } else {
                     // Legacy format: name,email,level

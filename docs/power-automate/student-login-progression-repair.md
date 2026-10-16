@@ -23,11 +23,11 @@ the existing checkpoint fields/status vocabulary, and the `StudentCode` /
 | Student login | The client accepts `Level`, `level`, or `assignedLevel` (including SharePoint `{Value}` wrappers), rejects invalid/conflicting roster-level aliases, then retains `ok:true`, complete-identity and request-match checks. | `GGR_LoginStudent` must return `Level` as `assignedLevel` from the matched active `GGR_Students` row. Inspect its actual run history to distinguish response mapping from PIN/lookup failure. |
 | Session and PIN | PIN hashes are sent to the flow but never included in saved sessions. PIN change continues to require transport success **and** `data.ok === true`; a success-only response is not accepted. | Verify PIN validation, first-time setup/old-PIN requirements, lockout policy, and persistence in `GGR_ChangeStudentPin`. Do not make PIN change update progression. |
 | Import/dashboard | CSV/JSON `Level` is checked as an integer 1–5; new/imported records initialize ProgressedLevel and CurrentLevel from that student's validated Level. Dashboard normalization reads the three distinct levels. | Update `GGR_UpsertStudentProfile` and `GGR_GetDashboardData`; ordinary reimport must preserve legitimate progression/current state and credentials. Verify SharePoint internal field names. |
-| Starting access | A student may start at their teacher-assigned level (and practice earlier levels) without checkpoints for levels below that assignment. Further levels retain the existing per-level checkpoint policy. | Confirm the actual class progression policy and live checkpoint data. A client-side saved quiz is not backend authorization. |
+| Starting access | A student may start at their teacher-assigned level (and practice earlier levels) without checkpoints for levels below that assignment. Existing home/game behavior unlocks later levels from `quiz_passed`; approval fields are not currently a mandatory access gate. | Confirm whether teacher approval is intended to gate play. No new teacher-approval gate is introduced here; any policy change must be made consistently in home, game, and remote access. A client-side saved quiz is not backend authorization. |
 | Saves and retry | Saves retain per-level `Level`, canonical ProgressKey, request IDs and the existing queue/retry behavior. Student payloads distinguish the played `currentLevel` from roster assignment. | `GGR_SaveProgress` must validate the roster server-side, preserve `GGR_Students.Level` and teacher decision fields, and update only roster CurrentLevel when it is valid and no higher than the stored ProgressedLevel. |
 | Restore | Same-device autosave is only loaded when it belongs to the signed-in student. Configured `getStudentProgress` failures are bounded and do not block login. | Remote progress currently restores checkpoint evidence, not the complete game state. Full cloud/cross-device game restore requires a separately verified retrieval payload and mapping. No such live restore is claimed here. |
 | Approval and unlock | Existing status strings and progress-row schema remain intact; no per-approval increment is performed in client code. | The approval flow must authenticate/authorize the teacher, verify a passed checkpoint, update one canonical per-level progress row idempotently, and set roster ProgressedLevel to `max(existing, approved checkpoint level + 1)` capped at 5. |
-| Flow/deployment | The repository documents contracts; it contains no editable Power Automate flow definitions. | Deploy and test the flow changes below. A repository build/test cannot prove a live tenant login, SharePoint write, or student gameplay path. |
+| Flow/deployment | `Current Flow Inventory.docx` contains human-readable flow notes and copied action metadata, not importable/deployable flow definitions. | Deploy and test the flow changes below. A repository build/test cannot prove a live tenant login, SharePoint write, or student gameplay path. |
 
 ## Flow contracts to implement and verify
 
@@ -197,11 +197,15 @@ Recompute the key on the server, authorize the active teacher against
 checkpoint passed before approval. Do not trust browser session fields or the
 shared API key as proof of teacher identity.
 
-Use a conditional update/ETag or equivalent serialization to prevent duplicate
-or concurrent decisions from incrementing twice. For an approval of
-checkpoint level `N`, set roster ProgressedLevel to
-`max(valid stored ProgressedLevel, min(5, N + 1))`; never use
-`ProgressedLevel + 1`. Repeated or out-of-order approvals are idempotent and
+The current client unlock behavior treats `quiz_passed` as sufficient, even
+when an approval-status value is absent; this patch does not silently convert
+the optional review flow into a mandatory gate. Confirm the intended policy
+with teachers before changing it. When an authorized approval is the
+progression event under that policy, use a conditional update/ETag or
+equivalent serialization to prevent duplicate or concurrent decisions from
+incrementing twice. For approval of checkpoint level `N`, set roster
+ProgressedLevel to `max(valid stored ProgressedLevel, min(5, N + 1))`; never
+use `ProgressedLevel + 1`. Repeated or out-of-order approvals are idempotent and
 cannot downgrade progression. Level 5 approval remains capped at 5.
 `retake_requested` changes only the existing progress/checkpoint status fields
 according to the current flow's policy; it does not lower roster progression.

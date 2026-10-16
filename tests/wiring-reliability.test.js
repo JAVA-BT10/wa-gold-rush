@@ -1974,6 +1974,11 @@ test('student auth login fails when the roster response is incomplete, malformed
     result = await respond({ ok: false, message: 'Invalid PIN' }).loginStudent({ classCode: '6b', studentId: '123456', pin: '1234' });
     assert.equal(result.success, false);
     assert.equal(result.error, 'Invalid PIN');
+    for (const message of ['Unknown student', 'Student is inactive', 'Invalid PIN']) {
+        result = await respond({ ok: false, message }).loginStudent({ classCode: '6b', studentId: '123456', pin: '1234' });
+        assert.equal(result.success, false, `${message} must remain a negative login`);
+        assert.equal(result.response.ok, false);
+    }
 
     await assert.rejects(() => respond(complete).loginStudent({ classCode: '6b', studentId: '', pin: '1234' }), /required/);
 });
@@ -2051,19 +2056,31 @@ test('student import initializes assignment/progression only from valid Level 1â
     const TeacherDashboard = require('../teacher/dashboard-state.js');
     const dashboard = new TeacherDashboard();
     const imported = dashboard.bulkImportStudents(
-        'StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level\nSC-2,Gold,123,Alex,6B,4\nSC-3,Gold,124,Sam,6B,6',
+        'StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level,AssignedLevel\nSC-2,Gold,123,Alex,6B,4,\nSC-3,Gold,124,Sam,6B,6,\nSC-4,Gold,125,Pat,6B,2,3',
         'csv'
     );
     assert.equal(imported.added.length, 1);
     assert.equal(imported.added[0].level, 4);
     assert.equal(imported.added[0].progressedLevel, 4);
     assert.equal(imported.added[0].currentLevel, 4);
-    assert.equal(imported.skipped.length, 1);
+    assert.equal(imported.skipped.length, 2);
     assert.match(imported.skipped[0].reason, /Level/);
+    assert.match(imported.skipped[1].reason, /Level/);
     const payload = dashboard.buildStudentFlowPayload(imported.added[0]);
     assert.equal(payload.Level, 4);
     assert.equal(payload.ProgressedLevel, 4);
     assert.equal(payload.CurrentLevel, 4);
+
+    const jsonImport = dashboard.bulkImportStudents(JSON.stringify({
+        StudentCode: 'SC-5',
+        LeaderboardName: 'Silver',
+        StudentID: '126',
+        StudentName: 'Lee',
+        ClassCode: '6B',
+        Level: 3
+    }), 'json');
+    assert.equal(jsonImport.added[0].assignedLevel, 3);
+    assert.equal(jsonImport.added[0].progressedLevel, 3);
 });
 
 test('assigned starting level is playable without fabricated prior checkpoints', () => {
