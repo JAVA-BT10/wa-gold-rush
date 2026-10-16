@@ -2274,7 +2274,7 @@ const FIVE_TEACHER_ROWS = [
 
 function createDashboardDomHarness(dashboardOverrides = {}) {
     const html = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
-    const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map(match => match[1]);
+    const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map(match => match[1]);
     const mainScript = scripts[scripts.length - 1];
     assert.match(mainScript, /const dashboard = new TeacherDashboard\(\);/);
 
@@ -2551,7 +2551,7 @@ test('postFlowPayload diagnostics classify skipped, network and HTTP failures wi
         const network = await dashboard.postFlowPayload('upsertTeacher', payload);
         assert.equal(requests, 1);
         assert.equal(network.stage, 'network');
-        assert.equal(network.diagnostics.classification, 'network/CORS blocked before reaching Power Automate');
+        assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').classification, 'network/CORS blocked before reaching Power Automate');
         assert.match(dashboard.describeFlowFailure(network), /^Network\/CORS blocked before reaching Power Automate \(upsertTeacher\)/);
 
         for (const [status, pattern] of [[401, /X-GGR-Key API key/], [403, /permissions/], [404, /regenerated.*"upsertTeacher".*runtime-config/], [500, /received the request but failed/], [502, /received the request but failed/]]) {
@@ -2559,8 +2559,8 @@ test('postFlowPayload diagnostics classify skipped, network and HTTP failures wi
             const result = await dashboard.postFlowPayload('upsertTeacher', payload);
             assert.equal(result.stage, 'http');
             assert.equal(result.status, status);
-            assert.equal(result.diagnostics.status, status);
-            assert.equal(result.diagnostics.sent, true);
+            assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').status, status);
+            assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').sent, true);
             assert.match(dashboard.describeFlowFailure(result), new RegExp(`upsertTeacher returned HTTP ${status}`));
             assert.match(dashboard.describeFlowFailure(result), pattern);
         }
@@ -2573,17 +2573,17 @@ test('postFlowPayload diagnostics classify skipped, network and HTTP failures wi
         fetchImpl = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ ok: true }) });
         const sent = await dashboard.postFlowPayload('upsertTeacher', payload);
         assert.equal(sent.success, true);
-        assert.equal(sent.diagnostics.outcome, 'sent');
-        assert.deepEqual(sent.diagnostics.payloadKeys, ['teacherEmail', 'teacherName', 'classCode', 'role']);
-        assert.equal(sent.diagnostics.apiKeyPresent, true);
-        assert.equal(sent.diagnostics.endpoint, 'https://flow.example.com/workflows/abc/triggers/manual/paths/invoke?<redacted>');
+        assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').outcome, 'sent');
+        assert.deepEqual(dashboard.getFlowDiagnostics('upsertTeacher').payloadKeys, ['teacherEmail', 'teacherName', 'classCode', 'role']);
+        assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').apiKeyPresent, true);
+        assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').endpoint, 'https://flow.example.com/workflows/abc/triggers/manual/paths/invoke?<redacted>');
 
         requests = 0;
         global.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints.upsertTeacher = 'https://REPLACE-WITH-GGR_UpsertTeacher-URL';
         const placeholder = await dashboard.postFlowPayload('upsertTeacher', payload);
         assert.equal(placeholder.stage, 'not_sent');
         assert.equal(placeholder.reason, 'endpoint_placeholder');
-        assert.equal(placeholder.diagnostics.sent, false);
+        assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').sent, false);
         assert.match(dashboard.describeFlowFailure(placeholder), /^Not sent: the upsertTeacher endpoint is still a placeholder/);
         const notConfigured = await dashboard.importTeachers('TeacherEmail,TeacherName,ClassCode,Role\nx@example.com,X,6A,teacher');
         assert.equal(notConfigured.success, false);
@@ -2593,7 +2593,7 @@ test('postFlowPayload diagnostics classify skipped, network and HTTP failures wi
         global.WA_GOLD_RUSH_POWER_AUTOMATE.getApiKey = () => '';
         const missingKey = await dashboard.postFlowPayload('upsertTeacher', payload);
         assert.equal(missingKey.reason, 'api_key_missing');
-        assert.equal(missingKey.diagnostics.apiKeyPresent, false);
+        assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').apiKeyPresent, false);
         assert.match(dashboard.describeFlowFailure(missingKey), /^Not sent: the Power Automate API key \(X-GGR-Key\) is missing/);
         assert.equal(requests, 0, 'skipped requests never reach fetch');
 

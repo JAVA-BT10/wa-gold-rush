@@ -228,8 +228,10 @@ class TeacherDashboard {
             apiKeyPresent: !!apiKey,
             payloadKeys: this.describePayloadKeys(payload)
         };
+        // Diagnostics are kept on the dashboard (see getFlowDiagnostics) rather
+        // than on the returned result so they never flow into session storage.
         const notSent = (reason, error, extra = {}) => {
-            const diagnostics = this.recordFlowDiagnostics(flowName, {
+            this.recordFlowDiagnostics(flowName, {
                 ...baseDiagnostics,
                 outcome: 'skipped',
                 sent: false,
@@ -244,7 +246,6 @@ class TeacherDashboard {
                 reason,
                 flowName,
                 error,
-                diagnostics,
                 ...extra
             };
         };
@@ -308,7 +309,7 @@ class TeacherDashboard {
             reason = 'flow_rejected';
         }
 
-        const diagnostics = this.recordFlowDiagnostics(flowName, {
+        this.recordFlowDiagnostics(flowName, {
             ...baseDiagnostics,
             outcome: stage === 'confirmed' ? 'sent' : 'failed',
             sent: true,
@@ -325,8 +326,7 @@ class TeacherDashboard {
             responseReceived,
             stage,
             reason,
-            flowName,
-            diagnostics
+            flowName
         };
         if (stage === 'rejected') {
             return {
@@ -1777,7 +1777,7 @@ class TeacherDashboard {
         if (!result.success) {
             return this.failureResult(
                 this.describeFlowFailure(result, 'upsertTeacher') || 'GGR_UpsertTeacher did not confirm the save.',
-                { teacher, status: result.status, stage: result.stage, reason: result.reason, diagnostics: result.diagnostics }
+                { teacher, status: result.status, stage: result.stage, reason: result.reason }
             );
         }
 
