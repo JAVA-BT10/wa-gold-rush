@@ -2242,3 +2242,435 @@ test('Level 2-5 save payload uses session identity, current gameplay level, and 
     assert.equal(markers.rosterAssignedLevel, 4);
     assert.equal(markers.player.leaderboardName, 'Gold Miner');
 });
+
+// ---------------------------------------------------------------------------
+// Teacher dashboard: SharePoint role normalisation, teacher visibility,
+// roster controls and GGR_UpsertTeacher diagnostics.
+// ---------------------------------------------------------------------------
+
+const SP_ADMIN_REFERENCE_JSON = '{"@odata.type":"#microsoft.azure.connectors.sharepoint.splistexpandedreference","id":1,"value":"admin"}';
+
+function setTeacherSession(overrides = {}) {
+    global.sessionStorage = createStorage({
+        wa_gold_rush_teacher_session: JSON.stringify({
+            ok: true,
+            teacherEmail: 'teacher@example.com',
+            teacherName: 'Teacher One',
+            classCode: 'NB5',
+            classCodes: ['NB5'],
+            role: 'teacher',
+            ...overrides
+        })
+    });
+}
+
+const FIVE_TEACHER_ROWS = [
+    { TeacherEmail: 'admin@example.com', TeacherName: 'Admin', Role: { '@odata.type': '#microsoft.azure.connectors.sharepoint.splistexpandedreference', id: 1, value: 'admin' }, ClassCodes: 'NB5' },
+    { TeacherEmail: 'one@example.com', TeacherName: 'One', Role: { Value: 'teacher' }, ClassCodes: '6A' },
+    { TeacherEmail: 'two@example.com', TeacherName: 'Two', Role: '{"value":"teacher"}', ClassCodes: ['7B'] },
+    { TeacherEmail: 'three@example.com', TeacherName: 'Three', Role: 'Teacher', ClassCodes: [{ Value: '8C' }] },
+    { TeacherEmail: 'four@example.com', TeacherName: 'Four', Role: { value: 'teacher' }, ClassCodes: '["9D"]' }
+];
+
+function createDashboardDomHarness(dashboardOverrides = {}) {
+    const html = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
+    const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)].map(match => match[1]);
+    const mainScript = scripts[scripts.length - 1];
+    assert.match(mainScript, /const dashboard = new TeacherDashboard\(\);/);
+
+    const elements = new Map();
+    const decode = value => String(value)
+        .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const parseAttributes = (source) => {
+        const attrs = {};
+        for (const match of source.matchAll(/([\w-]+)="([^"]*)"/g)) attrs[match[1]] = decode(match[2]);
+        return attrs;
+    };
+    const getElement = (id) => {
+        if (!elements.has(id)) {
+            const element = createStubElement(id);
+            const listeners = {};
+            Object.assign(element, {
+                value: '',
+                hidden: false,
+                className: '',
+                dataset: {},
+                listeners,
+                addEventListener(type, handler) { listeners[type] = handler; },
+                removeAttribute() {},
+                focus() {},
+                reset() {}
+            });
+            elements.set(id, element);
+        }
+        return elements.get(id);
+    };
+    class HTMLElement {}
+    const rosterControls = () => {
+        const markup = getElement('rosterBody').innerHTML;
+        const controls = [];
+        for (const match of markup.matchAll(/<input\b([^>]*)>|<select\b([^>]*)>([\s\S]*?)<\/select>/g)) {
+            const tag = match[1] !== undefined ? 'input' : 'select';
+            const attrs = parseAttributes(tag === 'input' ? match[1] : match[2]);
+            let value = attrs.value || '';
+            if (tag === 'select') {
+                const selected = /<option value="([^"]*)" selected/.exec(match[3] || '');
+                value = selected ? selected[1] : '';
+            }
+            controls.push({ tag, attrs, value });
+        }
+        return controls;
+    };
+    const document = {
+        body: getElement('body'),
+        documentElement: { dataset: {} },
+        getElementById: getElement,
+        addEventListener() {},
+        querySelectorAll() { return []; },
+        createElement: () => getElement(`created-${elements.size}`),
+        querySelector(selector) {
+            const match = /^(input|select)\[data-field="([^"]+)"\]\[data-id="((?:\\.|[^"\\])+)"\]$/.exec(selector);
+            if (!match) return null;
+            const dataId = match[3].replace(/\\(.)/g, '$1');
+            const control = rosterControls().find(entry =>
+                entry.tag === match[1] && entry.attrs['data-field'] === match[2] && entry.attrs['data-id'] === dataId);
+            return control ? { value: control.value } : null;
+        }
+    };
+    const consoleErrors = [];
+    const context = {
+        console: { ...console, error: (...args) => consoleErrors.push(args), info() {}, warn() {} },
+        document,
+        window: { location: { search: '' } },
+        localStorage: global.localStorage,
+        HTMLElement,
+        CSS: { escape: value => String(value).replace(/(["\\<>])/g, '\\$1') },
+        TeacherDashboard: class extends require('../teacher/dashboard-state.js') {
+            constructor() {
+                super();
+                Object.assign(this, dashboardOverrides);
+            }
+        },
+        Promise,
+        setTimeout,
+        prompt: () => '',
+        confirm: () => true
+    };
+    vm.createContext(context);
+    vm.runInContext(mainScript, context);
+    const click = async (id, target) => {
+        await getElement(id).listeners.click?.(target ? { target } : {});
+        await flushMicrotasks();
+        await new Promise(resolve => setImmediate(resolve));
+    };
+    return {
+        context,
+        consoleErrors,
+        getElement,
+        rosterControls,
+        click,
+        dashboard: vm.runInContext('dashboard', context),
+        run: code => vm.runInContext(code, context),
+        makeTarget(attrs) {
+            const target = Object.create(HTMLElement.prototype);
+            target.getAttribute = name => attrs[name] ?? null;
+            return target;
+        }
+    };
+}
+
+test('role normaliser unwraps Value/value objects, JSON strings and plain roles without granting admin to malformed roles', () => {
+    const dashboard = setupTeacherDashboardGlobals();
+    for (const value of ['admin', ' Admin ', 'ADMIN', { Value: 'admin' }, { value: 'Admin' }, SP_ADMIN_REFERENCE_JSON, '{"Value":"admin"}', JSON.stringify(SP_ADMIN_REFERENCE_JSON)]) {
+        assert.equal(dashboard.normalizeTeacherRole(value), 'admin', `expected admin for ${JSON.stringify(value)}`);
+    }
+    for (const value of ['teacher', { Value: 'Teacher' }, '{"value":"teacher"}']) {
+        assert.equal(dashboard.normalizeTeacherRole(value), 'teacher');
+    }
+    for (const value of ['', null, undefined, 'superadmin', 'admin, teacher', '{"value":"admin"', { id: 1 }, { role: 'admin' }, '{"value":{"nested":"admin"}}', ['admin', 'teacher'], 42]) {
+        assert.equal(dashboard.normalizeTeacherRole(value), '', `malformed role must not normalise: ${JSON.stringify(value)}`);
+    }
+    for (const value of [{ id: 1 }, '{"value":"admin"', { value: { foo: 1 } }]) {
+        const text = dashboard.normalizeChoiceText(value);
+        assert.doesNotMatch(text, /\[object Object\]|[{}"]/);
+    }
+    assert.deepEqual(dashboard.normalizeClassCodeList('["nb5", {"Value":"6b"}]'), ['NB5', '6B']);
+    assert.deepEqual(dashboard.normalizeClassCodeList([{ value: 'nb5' }, '6b; 6c']), ['NB5', '6B', '6C']);
+    assert.deepEqual(dashboard.normalizeClassCodeList({ value: [{ Value: 'nb5' }] }), ['NB5']);
+    // Collection envelopes are still read through readDashboardArray's `.value` handling.
+    assert.deepEqual(dashboard.readDashboardArray({ Teachers: { value: [{ a: 1 }] } }, ['Teachers']), [{ a: 1 }]);
+    const teacher = dashboard.normalizeDashboardTeacher({ TeacherEmail: 'A@Example.com', TeacherName: { Value: 'Ms A' }, Role: SP_ADMIN_REFERENCE_JSON, ClassCodes: { value: 'nb5' } });
+    assert.equal(teacher.role, 'admin');
+    assert.equal(teacher.name, 'Ms A');
+    assert.equal(teacher.classCode, 'NB5');
+    assert.equal(dashboard.normalizeDashboardTeacher({ TeacherEmail: 'b@example.com', Role: 'superadmin' }).role, 'teacher');
+});
+
+test('cached teacher sessions with serialized SharePoint roles are normalised on read and login', async () => {
+    const dashboard = setupTeacherDashboardGlobals();
+    for (const role of [SP_ADMIN_REFERENCE_JSON, { value: 'admin' }, { Value: 'Admin' }, 'admin']) {
+        setTeacherSession({ role });
+        const session = dashboard.getTeacherSession();
+        assert.equal(session.role, 'admin');
+        assert.equal(dashboard.isAdminSession(), true);
+        assert.equal(dashboard.canTeacherAccessClass('7B'), true);
+    }
+    for (const role of ['{"value":"admin"', 'superadmin', { id: 1 }, '[object Object]']) {
+        setTeacherSession({ role });
+        assert.equal(dashboard.getTeacherSession().role, '');
+        assert.equal(dashboard.isAdminSession(), false);
+        assert.equal(dashboard.canTeacherAccessClass('7B'), false);
+        assert.equal(dashboard.canTeacherAccessClass('NB5'), true);
+    }
+    setTeacherSession({ role: 'teacher', classCode: { Value: 'nb5' }, classCodes: '["nb5","6b"]' });
+    assert.equal(dashboard.getTeacherSession().classCode, 'NB5');
+    assert.deepEqual(dashboard.getTeacherSession().classCodes, ['NB5', '6B']);
+
+    global.sessionStorage = createStorage();
+    global.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints.loginTeacher = 'https://example.com/login';
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({
+        success: true,
+        status: 200,
+        data: { ok: true, TeacherName: 'Admin', Role: SP_ADMIN_REFERENCE_JSON, ClassCodes: [{ Value: 'nb5' }] }
+    });
+    const login = await dashboard.authenticateTeacher({ teacherEmail: 'admin@example.com', classCode: 'NB5' });
+    assert.equal(login.success, true);
+    assert.equal(login.session.role, 'admin');
+    assert.equal(JSON.parse(global.sessionStorage.getItem('wa_gold_rush_teacher_session')).role, 'admin');
+});
+
+test('admin sees all five hydrated teachers across classes; non-admins stay scoped with an explicit message', async () => {
+    setupTeacherDashboardGlobals({
+        callFlow: async () => ({ success: true, status: 200, data: { ok: true, Teachers: { value: FIVE_TEACHER_ROWS } } })
+    });
+    setTeacherSession({ teacherEmail: 'admin@example.com', role: SP_ADMIN_REFERENCE_JSON });
+    const harness = createDashboardDomHarness();
+    const hydration = await harness.dashboard.hydrateDashboardFromFlow();
+    assert.equal(hydration.counts.teachers, 5);
+
+    assert.equal(harness.run('getAuthorizedTeachers().length'), 5);
+    harness.run('refreshTeachers(); renderTeacherSessionSummary();');
+    const adminRows = harness.getElement('teacherListBody').innerHTML;
+    assert.equal((adminRows.match(/<tr>/g) || []).length, 5);
+    assert.doesNotMatch(adminRows, /\[object Object\]|odata/);
+    assert.match(harness.getElement('teacherSessionSummary').textContent, /\(admin\) — classes: NB5$/);
+
+    setTeacherSession({ teacherEmail: 'one@example.com', role: { Value: 'teacher' }, classCode: '6A', classCodes: ['6A'] });
+    assert.deepEqual(harness.run('getAuthorizedTeachers().map(t => t.email)'), ['one@example.com']);
+
+    setTeacherSession({ teacherEmail: 'nobody@example.com', role: 'teacher', classCode: 'ZZ9', classCodes: ['ZZ9'] });
+    harness.run('refreshTeachers();');
+    assert.match(harness.getElement('teacherListBody').innerHTML, /5 teachers loaded, 0 visible for your classes/);
+});
+
+test('roster controls have unique escaped id and name attributes and saves still read them', async () => {
+    setupTeacherDashboardGlobals();
+    setTeacherSession({ classCode: '6B', classCodes: ['6B'] });
+    const updates = [];
+    const harness = createDashboardDomHarness({
+        async updateStudent(studentId, changes) {
+            updates.push({ studentId, changes });
+            return { success: true, student: { leaderboardName: changes.leaderboardName }, hydration: null };
+        }
+    });
+    harness.dashboard.students = [
+        { id: 'a"b<c>', studentCode: 'a"b<c>', leaderboardName: 'Quote', studentName: 'Q', studentId: '1', classCode: '6B', level: 3, gameState: {} },
+        { id: 'a_b_c_', studentCode: 'a_b_c_', leaderboardName: 'Plain', studentName: 'P', studentId: '2', classCode: '6B', level: 2, gameState: {} }
+    ];
+    harness.run('renderRoster();');
+    const controls = harness.rosterControls();
+    assert.equal(controls.length, 12);
+    const ids = controls.map(control => control.attrs.id);
+    assert.equal(new Set(ids).size, ids.length, 'roster control ids must be unique');
+    controls.forEach((control) => {
+        assert.match(control.attrs.id, /^roster-[A-Za-z]+-[A-Za-z0-9_-]+-\d+$/);
+        assert.match(control.attrs.name, new RegExp(`^roster-${control.attrs['data-field']}-[A-Za-z0-9_-]+$`));
+        assert.ok(control.attrs['aria-label']);
+        assert.ok(control.attrs['data-id']);
+    });
+    assert.doesNotMatch(harness.getElement('rosterBody').innerHTML, /id="[^"]*[<>]/);
+
+    await harness.click('rosterBody', harness.makeTarget({ 'data-action': 'save', 'data-id': 'a"b<c>' }));
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].studentId, 'a"b<c>');
+    assert.equal(updates[0].changes.leaderboardName, 'Quote');
+    assert.equal(updates[0].changes.level, 3);
+    assert.match(harness.getElement('rosterActionMsg').innerHTML, /Saved changes for Quote/);
+});
+
+test('addTeacher for an existing teacher whose role is a SharePoint reference still sends GGR_UpsertTeacher', async () => {
+    const calls = [];
+    const dashboard = setupTeacherDashboardGlobals({
+        endpoints: { upsertTeacher: 'https://example.com/upsert-teacher?sig=SECRET' },
+        callFlow: async (flowName, payload) => {
+            calls.push({ flowName, payload });
+            if (flowName === 'upsertTeacher') return { success: true, status: 200, data: { ok: true } };
+            return { success: true, status: 200, data: { ok: true, Teachers: FIVE_TEACHER_ROWS } };
+        }
+    });
+    // Unnormalised in-memory row (as produced before this fix).
+    dashboard.teachers = [{ id: 'admin@example.com', email: 'admin@example.com', name: 'Admin', classCode: 'NB5', role: SP_ADMIN_REFERENCE_JSON }];
+    const result = await dashboard.addTeacher('admin@example.com', 'Admin Renamed', '', '');
+    assert.equal(result.success, true, result.error);
+    assert.equal(calls[0].flowName, 'upsertTeacher');
+    assert.equal(calls[0].payload.role, 'admin');
+    assert.equal(calls[0].payload.teacherName, 'Admin Renamed');
+
+    calls.length = 0;
+    dashboard.teachers = [{ id: 'one@example.com', email: 'one@example.com', name: 'One', classCode: '6A', role: { value: 'teacher' } }];
+    const second = await dashboard.addTeacher('one@example.com', 'One', '', '');
+    assert.equal(second.success, true, second.error);
+    assert.equal(calls[0].payload.role, 'teacher');
+    assert.equal(calls[0].payload.classCode, '6A');
+
+    const invalid = await dashboard.addTeacher('not-an-email', 'X', '6A', 'teacher');
+    assert.equal(invalid.success, false);
+    assert.equal(invalid.stage, 'validation');
+    assert.match(invalid.error, /^Validation failed: Invalid TeacherEmail/);
+});
+
+test('postFlowPayload diagnostics classify skipped, network and HTTP failures without leaking secrets', async () => {
+    const helpers = require('../shared/power-automate-headers.js');
+    const API_KEY = 'super-secret-api-key';
+    const ENDPOINT = 'https://flow.example.com/workflows/abc/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers&sig=TOPSECRETSIG';
+    let fetchImpl = null;
+    const dashboard = setupTeacherDashboardGlobals({
+        apiKey: API_KEY,
+        endpoints: { upsertTeacher: ENDPOINT },
+        callFlow: (flowName, payload, options) => helpers.callFlow(flowName, payload, { ...options, fetch: (...args) => fetchImpl(...args) })
+    });
+    const logs = [];
+    const originalInfo = console.info;
+    console.info = (...args) => logs.push(args);
+    global.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS = true;
+    try {
+        const payload = { teacherEmail: 'x@example.com', teacherName: 'X', classCode: '6A', role: 'teacher' };
+
+        let requests = 0;
+        fetchImpl = async () => { requests += 1; throw new TypeError('Failed to fetch'); };
+        const network = await dashboard.postFlowPayload('upsertTeacher', payload);
+        assert.equal(requests, 1);
+        assert.equal(network.stage, 'network');
+        assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').classification, 'network/CORS blocked before reaching Power Automate');
+        assert.match(dashboard.describeFlowFailure(network), /^Network\/CORS blocked before reaching Power Automate \(upsertTeacher\)/);
+
+        for (const [status, pattern] of [[401, /X-GGR-Key API key/], [403, /permissions/], [404, /regenerated.*"upsertTeacher".*runtime-config/], [500, /received the request but failed/], [502, /received the request but failed/]]) {
+            fetchImpl = async () => ({ ok: false, status, text: async () => '' });
+            const result = await dashboard.postFlowPayload('upsertTeacher', payload);
+            assert.equal(result.stage, 'http');
+            assert.equal(result.status, status);
+            assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').status, status);
+            assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').sent, true);
+            assert.match(dashboard.describeFlowFailure(result), new RegExp(`upsertTeacher returned HTTP ${status}`));
+            assert.match(dashboard.describeFlowFailure(result), pattern);
+        }
+
+        fetchImpl = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ ok: false, message: 'Domain not allowed' }) });
+        const rejected = await dashboard.postFlowPayload('upsertTeacher', payload);
+        assert.equal(rejected.stage, 'rejected');
+        assert.match(dashboard.describeFlowFailure(rejected), /received the request but rejected it: Domain not allowed/);
+
+        fetchImpl = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ ok: true }) });
+        const sent = await dashboard.postFlowPayload('upsertTeacher', payload);
+        assert.equal(sent.success, true);
+        assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').outcome, 'sent');
+        assert.deepEqual(dashboard.getFlowDiagnostics('upsertTeacher').payloadKeys, ['teacherEmail', 'teacherName', 'classCode', 'role']);
+        assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').apiKeyPresent, true);
+        assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').endpoint, 'https://flow.example.com/workflows/abc/triggers/manual/paths/invoke?<redacted>');
+
+        requests = 0;
+        global.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints.upsertTeacher = 'https://REPLACE-WITH-GGR_UpsertTeacher-URL';
+        const placeholder = await dashboard.postFlowPayload('upsertTeacher', payload);
+        assert.equal(placeholder.stage, 'not_sent');
+        assert.equal(placeholder.reason, 'endpoint_placeholder');
+        assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').sent, false);
+        assert.match(dashboard.describeFlowFailure(placeholder), /^Not sent: the upsertTeacher endpoint is still a placeholder/);
+        const notConfigured = await dashboard.importTeachers('TeacherEmail,TeacherName,ClassCode,Role\nx@example.com,X,6A,teacher');
+        assert.equal(notConfigured.success, false);
+        assert.match(notConfigured.teachers.failed[0].error, /^Not sent: neither the upsertTeacher nor the bulkImportTeachers endpoint is configured/);
+
+        global.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints.upsertTeacher = ENDPOINT;
+        global.WA_GOLD_RUSH_POWER_AUTOMATE.getApiKey = () => '';
+        const missingKey = await dashboard.postFlowPayload('upsertTeacher', payload);
+        assert.equal(missingKey.reason, 'ggr_header_missing');
+        assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').apiKeyPresent, false);
+        assert.match(dashboard.describeFlowFailure(missingKey), /^Not sent: the Power Automate API key \(X-GGR-Key\) is missing/);
+        assert.equal(requests, 0, 'skipped requests never reach fetch');
+
+        global.WA_GOLD_RUSH_POWER_AUTOMATE.getApiKey = () => API_KEY;
+        global.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints.bulkImportTeachers = 'https://flow.example.com/bulk?sig=BULKSIG';
+        fetchImpl = async () => ({ ok: false, status: 404, text: async () => '' });
+        const bulk = await dashboard.importTeachers('TeacherEmail,TeacherName,ClassCode,Role\nx@example.com,X,6A,teacher');
+        assert.match(bulk.teachers.failed[0].error, /^bulkImportTeachers returned HTTP 404/);
+        delete global.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints.bulkImportTeachers;
+
+        const serializedLogs = JSON.stringify(logs);
+        assert.ok(logs.length > 0, 'diagnostics should log when enabled');
+        assert.match(serializedLogs, /upsertTeacher/);
+        assert.doesNotMatch(serializedLogs, /TOPSECRETSIG|BULKSIG|sig=|api-version|super-secret-api-key|x@example\.com/);
+        assert.doesNotMatch(JSON.stringify(dashboard.getFlowDiagnostics('upsertTeacher')), /sig=|super-secret-api-key/);
+
+        global.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS = false;
+        logs.length = 0;
+        await dashboard.postFlowPayload('upsertTeacher', payload);
+        assert.equal(logs.length, 0, 'diagnostics are opt-in');
+    } finally {
+        console.info = originalInfo;
+        delete global.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS;
+    }
+});
+
+test('dashboard handlers surface thrown exceptions and stage-named teacher errors to the user', async () => {
+    setupTeacherDashboardGlobals();
+    setTeacherSession({ classCode: '6B', classCodes: ['6B'] });
+    const boom = name => async () => { throw new Error(`${name} exploded`); };
+    const harness = createDashboardDomHarness({
+        addTeacher: boom('addTeacher'),
+        importTeachers: boom('importTeachers'),
+        addStudent: boom('addStudent'),
+        importRoster: boom('importRoster')
+    });
+    const setValue = (id, value) => { harness.getElement(id).value = value; };
+
+    setValue('newTeacherEmail', 'new@example.com');
+    setValue('newTeacherName', 'New');
+    setValue('newTeacherRole', 'teacher');
+    await harness.click('addTeacherBtn');
+    assert.match(harness.getElement('teacherAddMsg').innerHTML, /Teacher was not saved\. Unexpected error: addTeacher exploded/);
+    assert.match(harness.getElement('dashboardStatus').innerHTML, /addTeacher exploded/);
+    assert.equal(harness.getElement('addTeacherBtn').disabled, false);
+
+    setValue('teacherImportInput', 'TeacherEmail,TeacherName,ClassCode,Role\na@example.com,A,6B,teacher');
+    await harness.click('teacherImportBtn');
+    assert.match(harness.getElement('teacherImportResult').innerHTML, /Teacher import failed\. Unexpected error: importTeachers exploded/);
+
+    setValue('studentCode', 'SC-9');
+    setValue('studentLeaderboardName', 'Nine');
+    setValue('studentClassCode', '6B');
+    setValue('studentLevel', '2');
+    await harness.click('addStudentBtn');
+    assert.match(harness.getElement('studentActionMsg').innerHTML, /Student was not saved\. Unexpected error: addStudent exploded/);
+
+    setValue('importFormat', 'csv');
+    setValue('bulkInput', 'StudentCode,LeaderboardName,ClassCode\nSC-1,One,6B');
+    await harness.click('importBtn');
+    assert.match(harness.getElement('importResult').innerHTML, /importRoster exploded/);
+
+    // A blank Class Code for the teacher role defaults to the signed-in teacher's primary class
+    // and a backend failure is reported with its stage.
+    const sent = [];
+    harness.dashboard.addTeacher = async (...args) => {
+        sent.push(args);
+        return { success: false, error: 'upsertTeacher returned HTTP 404. The trigger URL was likely regenerated.' };
+    };
+    setValue('newTeacherClassCode', '');
+    await harness.click('addTeacherBtn');
+    assert.deepEqual(sent[0], ['new@example.com', 'New', '6B', 'teacher']);
+    assert.match(harness.getElement('teacherAddMsg').innerHTML, /Teacher was not saved\. upsertTeacher returned HTTP 404/);
+
+    global.sessionStorage = createStorage();
+    sent.length = 0;
+    await harness.click('addTeacherBtn');
+    assert.equal(sent.length, 0);
+    assert.match(harness.getElement('teacherAddMsg').innerHTML, /Validation failed: Class Code is required when adding a teacher/);
+});

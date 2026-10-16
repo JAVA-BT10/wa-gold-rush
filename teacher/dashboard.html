@@ -183,6 +183,9 @@
                 <li>Teachers returned: <strong id="diagTeachersReturned">Pending</strong></li>
                 <li>Progress records returned: <strong id="diagProgressReturned">Pending</strong></li>
                 <li>Missing arrays: <strong id="diagMissingArrays">Pending</strong></li>
+                <li>upsertTeacher endpoint: <strong id="diagUpsertTeacherEndpoint">Pending</strong></li>
+                <li>bulkImportTeachers endpoint: <strong id="diagBulkImportTeachersEndpoint">Pending</strong></li>
+                <li>Last upsertTeacher request: <strong id="diagUpsertTeacherLastRequest">None yet</strong></li>
             </ul>
             <p class="muted" id="diagMetaSummary" role="status" aria-live="polite" aria-atomic="true"></p>
         </section>
@@ -484,10 +487,12 @@
             const session = dashboard.getTeacherSession();
             if (!session) return [];
 
+            const isAdmin = dashboard.isAdminSession(session);
             return dashboard.getAllTeachers().filter((teacher) => {
-                if (session.role.toLowerCase() === 'admin') return true;
+                if (isAdmin) return true;
+                const classCodes = Array.isArray(teacher.classCodes) ? teacher.classCodes : [];
                 return teacher.email === session.teacherEmail
-                    || teacher.classCodes.some(classCode => dashboard.canTeacherAccessClass(classCode));
+                    || classCodes.some(classCode => dashboard.canTeacherAccessClass(classCode));
             });
         }
 
@@ -701,6 +706,25 @@
                 ? (diagnostics.missingArrays.length ? diagnostics.missingArrays.join(', ') : 'None')
                 : 'Pending');
             setText('diagMetaSummary', metaSummary);
+
+            const describeEndpoint = (flowName) => {
+                const info = typeof dashboard.getFlowEndpointDiagnostics === 'function'
+                    ? dashboard.getFlowEndpointDiagnostics(flowName)
+                    : null;
+                if (!info) return 'Unknown';
+                if (info.configured) return `Configured — ${info.endpoint}`;
+                return info.placeholder ? 'Not configured (placeholder)' : 'Not configured';
+            };
+            setText('diagUpsertTeacherEndpoint', describeEndpoint('upsertTeacher'));
+            setText('diagBulkImportTeachersEndpoint', describeEndpoint('bulkImportTeachers'));
+            const lastUpsert = typeof dashboard.getFlowDiagnostics === 'function'
+                ? dashboard.getFlowDiagnostics('upsertTeacher')
+                : null;
+            if (lastUpsert) {
+                const status = lastUpsert.status ? ` HTTP ${lastUpsert.status}` : '';
+                const reason = lastUpsert.reason ? ` (${lastUpsert.reason})` : '';
+                setText('diagUpsertTeacherLastRequest', `${lastUpsert.sent ? 'sent' : 'not sent'}${status}${reason} — stage: ${lastUpsert.stage}`);
+            }
         }
 
         function withBusyButton(buttonId, busyLabel, callback) {
@@ -729,6 +753,18 @@
                 restoreButton();
                 throw error;
             }
+        }
+
+        // Runs a button action and surfaces unexpected exceptions to the user
+        // instead of leaving them as unhandled promise rejections.
+        function runDashboardAction(buttonId, busyLabel, statusIds, failurePrefix, callback) {
+            return Promise.resolve()
+                .then(() => withBusyButton(buttonId, busyLabel, callback))
+                .catch((error) => {
+                    console.error(`[Dashboard] ${failurePrefix}`, error);
+                    const message = `${failurePrefix} Unexpected error: ${serializeErrorMessage(error, 'Unknown error.')}`;
+                    statusIds.forEach(id => setStatusMessage(id, 'error', message));
+                });
         }
 
         function describeStudent(student) {
@@ -834,6 +870,11 @@
             });
         }
 
+        function rosterControlName(field, studentId) {
+            const safeId = String(studentId ?? '').replace(/[^A-Za-z0-9_-]/g, '_') || 'row';
+            return `roster-${field}-${safeId}`;
+        }
+
         function renderRoster() {
             const body = document.getElementById('rosterBody');
             const students = getAuthorizedStudents();
@@ -841,7 +882,7 @@
                 body.innerHTML = '<tr><td colspan="10">No students in your authorized classes yet.</td></tr>';
                 return;
             }
-            body.innerHTML = students.map(s => {
+            body.innerHTML = students.map((s, index) => {
                 const id   = escHtml(s.id);
                 const sc   = escHtml(s.studentCode     || s.displayId || '');
                 const lb   = escHtml(s.leaderboardName || s.name     || '');
@@ -852,13 +893,17 @@
                 const levelOpts = [1,2,3,4,5,6].map(l =>
                     `<option value="${l}" ${level === l ? 'selected' : ''}>${l === 1 ? 'L1' : 'L'+l}</option>`
                 ).join('');
+                const fieldAttrs = (field) => {
+                    const name = rosterControlName(field, s.id);
+                    return `id="${escHtml(`${name}-${index}`)}" name="${escHtml(name)}"`;
+                };
                 return `<tr>
-                    <td><input class="edit-input" data-field="studentCode"     data-id="${id}" value="${sc}" aria-label="Student Code"></td>
-                    <td><input class="edit-input" data-field="leaderboardName" data-id="${id}" value="${lb}" aria-label="Leaderboard Name"></td>
-                    <td><input class="edit-input" data-field="studentName"     data-id="${id}" value="${sn}" aria-label="Student Name"></td>
-                    <td><input class="edit-input" data-field="studentId"       data-id="${id}" value="${si}" aria-label="Student ID"></td>
-                    <td><input class="edit-input" data-field="classCode"       data-id="${id}" value="${cc}" aria-label="Class Code"></td>
-                    <td><select class="edit-select" data-field="level" data-id="${id}" aria-label="Level">${levelOpts}</select></td>
+                    <td><input class="edit-input" ${fieldAttrs('studentCode')}     data-field="studentCode"     data-id="${id}" value="${sc}" aria-label="Student Code"></td>
+                    <td><input class="edit-input" ${fieldAttrs('leaderboardName')} data-field="leaderboardName" data-id="${id}" value="${lb}" aria-label="Leaderboard Name"></td>
+                    <td><input class="edit-input" ${fieldAttrs('studentName')}     data-field="studentName"     data-id="${id}" value="${sn}" aria-label="Student Name"></td>
+                    <td><input class="edit-input" ${fieldAttrs('studentId')}       data-field="studentId"       data-id="${id}" value="${si}" aria-label="Student ID"></td>
+                    <td><input class="edit-input" ${fieldAttrs('classCode')}       data-field="classCode"       data-id="${id}" value="${cc}" aria-label="Class Code"></td>
+                    <td><select class="edit-select" ${fieldAttrs('level')} data-field="level" data-id="${id}" aria-label="Level">${levelOpts}</select></td>
                     <td>$${Number(s.gameState?.netWorth || 0).toFixed(2)}</td>
                     <td>${Number(s.gameState?.round) || 1}</td>
                     <td>${escHtml(s.gameState?.lastPlayed ? new Date(s.gameState.lastPlayed).toLocaleString() : 'Never')}</td>
@@ -962,7 +1007,7 @@
         });
 
         document.getElementById('addStudentBtn').addEventListener('click', () => {
-            withBusyButton('addStudentBtn', 'Saving to Microsoft Lists…', async () => {
+            runDashboardAction('addStudentBtn', 'Saving to Microsoft Lists…', ['studentActionMsg', 'dashboardStatus'], 'Student was not saved.', async () => {
                 const studentCode     = document.getElementById('studentCode').value.trim();
                 const leaderboardName = document.getElementById('studentLeaderboardName').value.trim();
                 const studentName     = document.getElementById('studentName').value.trim();
@@ -1016,7 +1061,7 @@
         }
 
         document.getElementById('importBtn').addEventListener('click', () => {
-            withBusyButton('importBtn', 'Saving to Microsoft Lists…', async () => {
+            runDashboardAction('importBtn', 'Saving to Microsoft Lists…', ['importResult', 'dashboardStatus'], 'Could not import roster data.', async () => {
                 const format = document.getElementById('importFormat').value;
                 const input = document.getElementById('bulkInput').value.trim();
                 if (!input) {
@@ -1064,8 +1109,9 @@
         });
 
         document.getElementById('teacherImportBtn').addEventListener('click', () => {
-            withBusyButton('teacherImportBtn', 'Saving to Microsoft Lists…', async () => {
+            runDashboardAction('teacherImportBtn', 'Saving to Microsoft Lists…', ['teacherImportResult', 'dashboardStatus'], 'Teacher import failed.', async () => {
                 const input = document.getElementById('teacherImportInput').value.trim();
+                dashboard.logFlowDiagnostics('Import Teachers clicked', { inputPresent: !!input });
                 if (!input) {
                     const message = 'Paste teacher CSV data before importing.';
                     setStatusMessage('teacherImportResult', 'error', message);
@@ -1074,6 +1120,7 @@
                 }
 
                 const result = await dashboard.importTeachers(input);
+                renderHydrationDiagnostics();
                 const savedCount = result.teachers.savedCount;
                 const failedCount = result.teachers.failed.length;
                 const skippedCount = result.prepared.skipped.length;
@@ -1090,26 +1137,36 @@
         });
 
         document.getElementById('addTeacherBtn').addEventListener('click', () => {
-            withBusyButton('addTeacherBtn', 'Saving to Microsoft Lists…', async () => {
+            runDashboardAction('addTeacherBtn', 'Saving to Microsoft Lists…', ['teacherAddMsg', 'dashboardStatus'], 'Teacher was not saved.', async () => {
                 const email = document.getElementById('newTeacherEmail').value.trim();
                 const name = document.getElementById('newTeacherName').value.trim();
-                const classCode = document.getElementById('newTeacherClassCode').value.trim();
+                const classCodeInput = document.getElementById('newTeacherClassCode').value.trim();
                 const role = document.getElementById('newTeacherRole').value;
+                // Mirror Add Student: a blank class defaults to the signed-in teacher's primary class.
+                const classCode = classCodeInput || (role === 'teacher' ? getPrimaryAuthorizedClassCode() : '');
+                dashboard.logFlowDiagnostics('Add Teacher clicked', {
+                    email: dashboard.maskEmailForDiagnostics(email),
+                    namePresent: !!name,
+                    classCodePresent: !!classCode,
+                    classCodeDefaulted: !classCodeInput && !!classCode,
+                    role
+                });
 
                 if (!email || !name) {
-                    const message = 'Teacher Email and Teacher Name are required.';
+                    const message = 'Validation failed: Teacher Email and Teacher Name are required.';
                     setStatusMessage('teacherAddMsg', 'error', message);
                     setStatusMessage('dashboardStatus', 'error', message);
                     return;
                 }
                 if (role === 'teacher' && !classCode) {
-                    const message = 'Class Code is required when adding a teacher.';
+                    const message = 'Validation failed: Class Code is required when adding a teacher.';
                     setStatusMessage('teacherAddMsg', 'error', message);
                     setStatusMessage('dashboardStatus', 'error', message);
                     return;
                 }
 
                 const result = await dashboard.addTeacher(email, name, classCode, role);
+                renderHydrationDiagnostics();
                 if (!result.success) {
                     const error = getResultError(result, 'Unable to add this teacher.');
                     setStatusMessage('teacherAddMsg', 'error', `Teacher was not saved. ${error}`);
@@ -1133,7 +1190,11 @@
             const body = document.getElementById('teacherListBody');
             const teachers = getAuthorizedTeachers();
             if (!teachers.length) {
-                body.innerHTML = '<tr><td colspan="4">No teachers returned from GGR_Teachers for your authorized classes.</td></tr>';
+                const loaded = dashboard.getAllTeachers().length;
+                const message = loaded
+                    ? `${loaded} teacher${loaded === 1 ? '' : 's'} loaded, 0 visible for your classes (${describeAuthorizedClasses(dashboard.getTeacherSession()) || 'none'}).`
+                    : 'No teachers returned from GGR_Teachers.';
+                body.innerHTML = `<tr><td colspan="4">${escHtml(message)}</td></tr>`;
                 return;
             }
             body.innerHTML = teachers.map(t => `<tr>
