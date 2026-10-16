@@ -191,11 +191,21 @@
                 rawBody
             };
         } catch (error) {
+            // fetch() rejects with a TypeError ("Failed to fetch") when the
+            // request is blocked (CORS, DNS, offline) before reaching the flow.
             return {
                 success: false,
+                networkError: isNetworkError(error),
+                errorName: String(error?.name || ''),
                 error: getErrorMessage(error, 'Flow request failed.')
             };
         }
+    }
+
+    function isNetworkError(error) {
+        const message = typeof error === 'string' ? error : String(error?.message || '');
+        return error?.name === 'TypeError'
+            || /failed to fetch|networkerror|network request failed|load failed/i.test(message);
     }
 
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE = globalObj.WA_GOLD_RUSH_POWER_AUTOMATE || {};
@@ -206,6 +216,7 @@
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.postToFlow = postToFlow;
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = callFlow;
     globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.getErrorMessage = getErrorMessage;
+    globalObj.WA_GOLD_RUSH_POWER_AUTOMATE.isNetworkError = isNetworkError;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
@@ -215,6 +226,7 @@
             postToFlow,
             callFlow,
             getErrorMessage,
+            isNetworkError,
             resolveFlowEndpoint,
             isPlaceholderEndpoint
         };

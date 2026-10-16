@@ -39,6 +39,7 @@ class TeacherDashboard {
         this._hydrationListeners = [];
         this._dashboardHydrationInFlight = null;
         this._lastHydrationDiagnostics = {};
+        this._flowDiagnostics = {};
         this.dashboardDiagnosticsEnabled = globalThis.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS === true;
     }
 
@@ -124,54 +125,220 @@ class TeacherDashboard {
         return headers;
     }
 
+    isDashboardDiagnosticsEnabled() {
+        return this.dashboardDiagnosticsEnabled === true
+            || globalThis.WA_GOLD_RUSH_DASHBOARD_DIAGNOSTICS === true;
+    }
+
+    logFlowDiagnostics(stage, details = {}) {
+        if (!this.isDashboardDiagnosticsEnabled()) return;
+        console.info(`[Dashboard Flow] ${stage}`, details);
+    }
+
+    getFlowDiagnostics(flowName) {
+        const entry = (this._flowDiagnostics || {})[flowName];
+        return entry ? { ...entry } : null;
+    }
+
+    getFlowEndpointDiagnostics(flowName) {
+        const endpoint = this.getFlowEndpoint(flowName);
+        return {
+            flowName,
+            configured: this.hasConfiguredFlowEndpoint(flowName),
+            placeholder: /REPLACE-WITH/i.test(endpoint),
+            endpoint: this.redactEndpointForDiagnostics(endpoint)
+        };
+    }
+
+    describePayloadKeys(payload) {
+        if (Array.isArray(payload)) return [`[${payload.length} item(s)]`];
+        return payload && typeof payload === 'object' ? Object.keys(payload) : [];
+    }
+
+    isNetworkFlowError(error) {
+        const name = String(error?.name || '');
+        const message = typeof error === 'string' ? error : String(error?.message || '');
+        return name === 'TypeError'
+            || /failed to fetch|networkerror|network request failed|load failed|cors|access-control-allow-origin/i.test(message);
+    }
+
+    getFlowHttpHint(flowName, status) {
+        if (status === 401 || status === 403) {
+            return 'Check the X-GGR-Key API key and the flow trigger permissions.';
+        }
+        if (status === 404) {
+            return `The trigger URL was likely regenerated; update "${flowName}" in runtime-config.js / shared/flow-endpoints.js.`;
+        }
+        if (status >= 500) {
+            return 'The flow received the request but failed; check its Run History in Power Automate.';
+        }
+        return '';
+    }
+
+    recordFlowDiagnostics(flowName, details = {}) {
+        this._flowDiagnostics = this._flowDiagnostics || {};
+        const entry = { flowName, ...details, at: new Date().toISOString() };
+        this._flowDiagnostics[flowName] = entry;
+        this.logFlowDiagnostics(`${flowName}: ${details.outcome || 'update'}`, entry);
+        return { ...entry };
+    }
+
+    /**
+     * Build a user-facing message that names the stage a flow request failed
+     * at: validation, not sent, network/CORS, HTTP status or flow rejection.
+     */
+    describeFlowFailure(result = {}, fallbackFlowName = '') {
+        const flowName = result.flowName || fallbackFlowName || 'Power Automate flow';
+        const error = String(result.error || '').trim();
+        switch (result.stage) {
+        case 'validation':
+            return `Validation failed: ${error || 'check the entered details.'}`;
+        case 'not_sent': {
+            if (result.reason === 'api_key_missing') {
+                return `Not sent: the Power Automate API key (X-GGR-Key) is missing, so ${flowName} was not called.`;
+            }
+            if (result.reason === 'flow_helper_unavailable') {
+                return `Not sent: the Power Automate helper (shared/power-automate-headers.js) is unavailable, so ${flowName} was not called.`;
+            }
+            if (result.reason === 'endpoint_missing' || result.reason === 'endpoint_placeholder') {
+                return `Not sent: the ${flowName} endpoint is ${result.reason === 'endpoint_placeholder' ? 'still a placeholder' : 'missing'}. Configure "${flowName}" in runtime-config.js / shared/flow-endpoints.js.`;
+            }
+            return `Not sent: ${error || `${flowName} was not called.`}`;
+        }
+        case 'network':
+            return `Network/CORS blocked before reaching Power Automate (${flowName})${error ? `: ${error}` : ''}. Check the trigger URL and that the flow allows CORS and the X-GGR-Key header.`;
+        case 'http': {
+            const detail = error && error !== `HTTP ${result.status}` ? `: ${error}` : '';
+            const hint = this.getFlowHttpHint(flowName, result.status);
+            return `${flowName} returned HTTP ${result.status}${detail}.${hint ? ` ${hint}` : ''}`;
+        }
+        case 'rejected':
+            return `${flowName} received the request but rejected it${error ? `: ${error}` : '.'}`;
+        default:
+            return error || `${flowName} did not confirm the save.`;
+        }
+    }
+
     async postFlowPayload(flowName, payload, options = {}) {
         const endpoint = this.getFlowEndpoint(flowName);
+        const apiKey = this.readDashboardApiKey();
+        // Never record the API key value or the endpoint query string (sig).
+        const baseDiagnostics = {
+            endpoint: this.redactEndpointForDiagnostics(endpoint),
+            apiKeyPresent: !!apiKey,
+            payloadKeys: this.describePayloadKeys(payload)
+        };
+        const notSent = (reason, error, extra = {}) => {
+            const diagnostics = this.recordFlowDiagnostics(flowName, {
+                ...baseDiagnostics,
+                outcome: 'skipped',
+                sent: false,
+                stage: 'not_sent',
+                reason
+            });
+            return {
+                success: false,
+                attempted: false,
+                responseReceived: false,
+                stage: 'not_sent',
+                reason,
+                flowName,
+                error,
+                diagnostics,
+                ...extra
+            };
+        };
+
         if (!endpoint || /REPLACE-WITH/i.test(endpoint)) {
             const error = `Dashboard flow endpoint "${flowName}" is missing or not configured.`;
             console.warn(error);
-            return { success: false, skipped: true, attempted: false, responseReceived: false, error };
+            return notSent(endpoint ? 'endpoint_placeholder' : 'endpoint_missing', error, { skipped: true });
         }
 
-        const apiKey = this.readDashboardApiKey();
         if (!apiKey) {
             const error = 'Power Automate API key is required before authenticated dashboard flows can be sent.';
             console.warn(`[Dashboard] ${error}`);
-            return { success: false, skipped: true, attempted: false, responseReceived: false, error };
+            return notSent('api_key_missing', error, { skipped: true });
         }
 
         const callFlow = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.callFlow;
         if (typeof callFlow !== 'function') {
-            return { success: false, attempted: false, responseReceived: false, error: 'Power Automate flow helper is unavailable.' };
+            return notSent('flow_helper_unavailable', 'Power Automate flow helper is unavailable.');
         }
 
-        const result = await callFlow(flowName, payload, {
-            ...options,
-            endpoints: {
-                ...(options.endpoints || {}),
-                [flowName]: endpoint
-            },
-            apiKey,
-            requireApiKey: true,
-            cache: 'no-store'
+        this.logFlowDiagnostics(`${flowName}: sending`, { flowName, ...baseDiagnostics });
+        let result;
+        try {
+            result = await callFlow(flowName, payload, {
+                ...options,
+                endpoints: {
+                    ...(options.endpoints || {}),
+                    [flowName]: endpoint
+                },
+                apiKey,
+                requireApiKey: true,
+                cache: 'no-store'
+            });
+        } catch (error) {
+            result = {
+                success: false,
+                networkError: this.isNetworkFlowError(error),
+                errorName: String(error?.name || ''),
+                error: String(error?.message || error || 'Flow request failed.')
+            };
+        }
+        result = result && typeof result === 'object' ? result : { success: false, error: 'Flow returned no result.' };
+
+        const responseReceived = typeof result.status === 'number' && result.status >= 100 && result.status <= 599;
+        let stage = 'confirmed';
+        let reason = '';
+        if (!result.success) {
+            if (responseReceived) {
+                stage = 'http';
+                reason = `http_${result.status}`;
+            } else if (result.networkError === true || this.isNetworkFlowError(result.error)) {
+                stage = 'network';
+                reason = 'network_or_cors';
+            } else {
+                stage = 'request_failed';
+                reason = 'request_failed';
+            }
+        } else if (result.data && Object.prototype.hasOwnProperty.call(result.data, 'ok') && result.data.ok === false) {
+            stage = 'rejected';
+            reason = 'flow_rejected';
+        }
+
+        const diagnostics = this.recordFlowDiagnostics(flowName, {
+            ...baseDiagnostics,
+            outcome: stage === 'confirmed' ? 'sent' : 'failed',
+            sent: true,
+            stage,
+            reason,
+            status: responseReceived ? result.status : null,
+            classification: stage === 'network'
+                ? 'network/CORS blocked before reaching Power Automate'
+                : (stage === 'http' ? (this.getFlowHttpHint(flowName, result.status) || 'HTTP error') : stage)
         });
         const attemptedResult = {
             ...result,
             attempted: true,
-            responseReceived: typeof result?.status === 'number' && result.status >= 100 && result.status <= 599
+            responseReceived,
+            stage,
+            reason,
+            flowName,
+            diagnostics
         };
+        if (stage === 'rejected') {
+            return {
+                ...attemptedResult,
+                success: false,
+                responseReceived: true,
+                error: String(result.data.message || result.data.error || 'Flow request was rejected.').trim()
+            };
+        }
         if (!result.success) {
             console.warn(`Dashboard flow "${flowName}" failed.`, result.error || '');
             return attemptedResult;
-        }
-        if (result.data && Object.prototype.hasOwnProperty.call(result.data, 'ok') && result.data.ok === false) {
-            return {
-                success: false,
-                attempted: true,
-                responseReceived: true,
-                status: result.status,
-                data: result.data,
-                error: String(result.data.message || result.data.error || 'Flow request was rejected.').trim()
-            };
         }
         return attemptedResult;
     }
@@ -195,13 +362,13 @@ class TeacherDashboard {
     buildTeacherFlowPayload(teacher = {}) {
         const teacherEmail = String(teacher.email || teacher.teacherEmail || '').trim().toLowerCase();
         const teacherName = String(teacher.name || teacher.teacherName || '').trim();
-        const role = String(teacher.role || 'teacher').trim().toLowerCase() || 'teacher';
+        const role = this.normalizeTeacherRole(teacher.role) || 'teacher';
         return {
             teacherEmail,
             teacherName,
             email: teacherEmail,
             name: teacherName,
-            classCode: String(teacher.classCode || '').trim(),
+            classCode: this.normalizeChoiceText(teacher.classCode),
             role
         };
     }
@@ -284,19 +451,64 @@ class TeacherDashboard {
         };
     }
 
-    readListValue(value) {
-        if (value && typeof value === 'object' && !Array.isArray(value) && 'Value' in value) {
-            return value.Value;
+    /**
+     * Shared SharePoint choice/lookup unwrapper. Accepts plain values,
+     * `{ Value }` / `{ value }` objects (e.g. SPListExpandedReference) and
+     * JSON-string forms of either. Arrays are returned with each entry unwrapped.
+     * Objects without a Value/value property and malformed JSON objects
+     * resolve to undefined so they never render as `[object Object]` or raw JSON.
+     */
+    readListValue(value, depth = 0) {
+        if (depth > 5) return undefined;
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (/^[[{]/.test(trimmed) || /^"[\s\S]*"$/.test(trimmed)) {
+                try {
+                    return this.readListValue(JSON.parse(trimmed), depth + 1);
+                } catch (_) {
+                    // Broken serialized objects are dropped rather than shown as raw JSON.
+                    return /^\{\s*"/.test(trimmed) ? undefined : value;
+                }
+            }
+            return value;
+        }
+        if (Array.isArray(value)) {
+            return value.map(entry => this.readListValue(entry, depth + 1));
+        }
+        if (value && typeof value === 'object') {
+            if ('Value' in value) return this.readListValue(value.Value, depth + 1);
+            if ('value' in value) return this.readListValue(value.value, depth + 1);
+            return undefined;
         }
         return value;
     }
 
+    normalizeChoiceText(value) {
+        const unwrapped = this.readListValue(value);
+        if (Array.isArray(unwrapped)) {
+            return unwrapped.map(entry => this.normalizeChoiceText(entry)).filter(Boolean).join(', ');
+        }
+        if (unwrapped === undefined || unwrapped === null || typeof unwrapped === 'object') return '';
+        return String(unwrapped).trim();
+    }
+
+    /**
+     * Returns 'admin' or 'teacher' for recognised roles, otherwise ''.
+     * Unknown or malformed roles never grant admin access.
+     */
+    normalizeTeacherRole(value) {
+        const role = this.normalizeChoiceText(value).toLowerCase();
+        return role === 'admin' || role === 'teacher' ? role : '';
+    }
+
+    isAdminSession(session = this.getTeacherSession()) {
+        return !!session && this.normalizeTeacherRole(session.role) === 'admin';
+    }
+
     readListText(record, keys = []) {
         for (const key of keys) {
-            const value = this.readListValue(record?.[key]);
-            if (value !== undefined && value !== null && String(value).trim() !== '') {
-                return String(value).trim();
-            }
+            const text = this.normalizeChoiceText(record?.[key]);
+            if (text !== '') return text;
         }
         return '';
     }
@@ -371,7 +583,7 @@ class TeacherDashboard {
             teacher.classCodes ?? teacher.ClassCodes ?? teacher.classCode ?? teacher.ClassCode
         );
         const classCode = classCodes.join(', ');
-        const role = (this.readListText(teacher, ['role', 'Role']) || 'teacher').toLowerCase();
+        const role = this.normalizeTeacherRole(teacher.role ?? teacher.Role) || 'teacher';
         const activeRaw = this.readListValue(teacher?.active ?? teacher?.Active ?? teacher?.IsActive);
         const active = !(activeRaw === false || /^(false|no|0|inactive)$/i.test(String(activeRaw ?? '').trim()));
         return {
@@ -798,7 +1010,13 @@ class TeacherDashboard {
     async syncTeacherToBackend(teacher, options = {}) {
         const payload = this.buildTeacherFlowPayload(teacher);
         if (!payload.teacherEmail || !payload.teacherName) {
-            return { success: false, skipped: true, error: 'Teacher payload is incomplete.' };
+            return {
+                success: false,
+                skipped: true,
+                stage: 'validation',
+                flowName: 'upsertTeacher',
+                error: 'Teacher payload is incomplete.'
+            };
         }
         return this.postFlowPayload('upsertTeacher', payload, options);
     }
@@ -812,7 +1030,14 @@ class TeacherDashboard {
         const failed = [];
         results.forEach((result, index) => {
             if (result?.success) succeeded.push(payloads[index]);
-            else failed.push({ payload: payloads[index], error: result?.error || `${flowName} did not confirm the save.` });
+            else {
+                failed.push({
+                    payload: payloads[index],
+                    stage: result?.stage,
+                    status: result?.status,
+                    error: this.describeFlowFailure(result || {}, flowName)
+                });
+            }
         });
         return {
             success: failed.length === 0,
@@ -826,11 +1051,14 @@ class TeacherDashboard {
 
     async _postBulkToFlow(flowName, wrapperKey, payloads, options = {}) {
         const result = await this.postFlowPayload(flowName, { [wrapperKey]: payloads }, options);
+        const error = result.success ? '' : this.describeFlowFailure(result, flowName);
         return {
             ...result,
+            ...(result.success ? {} : { error }),
             count: payloads.length,
+            fallback: flowName,
             succeeded: result.success ? payloads : [],
-            failed: result.success ? [] : payloads.map(payload => ({ payload, error: result.error || `${flowName} failed.` }))
+            failed: result.success ? [] : payloads.map(payload => ({ payload, stage: result.stage, status: result.status, error }))
         };
     }
 
@@ -857,35 +1085,45 @@ class TeacherDashboard {
             return { success: true, skipped: true, count: 0, succeeded: [], failed: [] };
         }
 
-        if (this.hasConfiguredFlowEndpoint('bulkImportTeachers')) {
+        const upsertEndpoint = this.getFlowEndpointDiagnostics('upsertTeacher');
+        const bulkEndpoint = this.getFlowEndpointDiagnostics('bulkImportTeachers');
+        if (bulkEndpoint.configured) {
+            this.logFlowDiagnostics('teacher sync endpoint chosen', { flowName: 'bulkImportTeachers', endpoint: bulkEndpoint.endpoint, rows: payload.length });
             return this._postBulkToFlow('bulkImportTeachers', 'teachers', payload, options);
         }
-        if (!this.hasConfiguredFlowEndpoint('upsertTeacher')) {
-            console.warn('Dashboard teacher sync endpoints are not configured.');
+        if (!upsertEndpoint.configured) {
+            const error = 'Not sent: neither the upsertTeacher nor the bulkImportTeachers endpoint is configured (missing or placeholder). Configure "upsertTeacher" in runtime-config.js / shared/flow-endpoints.js.';
+            console.warn(`[Dashboard] ${error}`);
+            this.logFlowDiagnostics('teacher sync not sent', { upsertTeacher: upsertEndpoint, bulkImportTeachers: bulkEndpoint, rows: payload.length });
             return {
                 success: false,
                 skipped: true,
+                stage: 'not_sent',
                 count: payload.length,
                 succeeded: [],
-                failed: payload.map(entry => ({ payload: entry, error: 'Teacher sync endpoints are not configured.' })),
-                error: 'Teacher sync endpoints are not configured.'
+                failed: payload.map(entry => ({ payload: entry, stage: 'not_sent', error })),
+                error
             };
         }
 
+        this.logFlowDiagnostics('teacher sync endpoint chosen', { flowName: 'upsertTeacher', endpoint: upsertEndpoint.endpoint, rows: payload.length });
         return this._postEachToFlow('upsertTeacher', payload, options);
     }
 
     normalizeClassCodeList(value) {
-        if (Array.isArray(value)) {
-            return value
-                .map(entry => String(this.readListValue(entry) || '').trim().toUpperCase())
-                .filter(Boolean);
-        }
-
-        return String(this.readListValue(value) || '')
-            .split(/[,\n;]+/)
-            .map(entry => entry.trim().toUpperCase())
-            .filter(Boolean);
+        const unwrapped = this.readListValue(value);
+        const entries = Array.isArray(unwrapped) ? unwrapped : [unwrapped];
+        const codes = [];
+        entries.forEach((entry) => {
+            this.normalizeChoiceText(entry)
+                .split(/[,\n;]+/)
+                .map(code => code.trim().toUpperCase())
+                .filter(Boolean)
+                .forEach((code) => {
+                    if (!codes.includes(code)) codes.push(code);
+                });
+        });
+        return codes;
     }
 
     getTeacherSession() {
@@ -896,16 +1134,18 @@ class TeacherDashboard {
             const parsed = JSON.parse(raw);
             if (!parsed || typeof parsed !== 'object') return null;
 
-            const teacherEmail = String(parsed.teacherEmail || '').trim().toLowerCase();
-            const classCode = String(parsed.classCode || '').trim().toUpperCase();
+            // Sessions cached before role/class normalisation existed may hold
+            // serialized SharePoint references, so normalise again on read.
+            const teacherEmail = this.normalizeChoiceText(parsed.teacherEmail).toLowerCase();
+            const classCode = this.normalizeChoiceText(parsed.classCode).toUpperCase();
             if (!parsed.ok || !teacherEmail || !classCode) return null;
 
             return {
                 ok: true,
                 teacherEmail,
                 classCode,
-                teacherName: String(parsed.teacherName || '').trim(),
-                role: String(parsed.role || '').trim(),
+                teacherName: this.normalizeChoiceText(parsed.teacherName),
+                role: this.normalizeTeacherRole(parsed.role),
                 classCodes: this.normalizeClassCodeList(parsed.classCodes),
                 authenticatedAt: String(parsed.authenticatedAt || '').trim()
             };
@@ -919,8 +1159,8 @@ class TeacherDashboard {
     }
 
     saveTeacherSession(sessionData = {}) {
-        const teacherEmail = String(sessionData.teacherEmail || '').trim().toLowerCase();
-        const classCode = String(sessionData.classCode || '').trim().toUpperCase();
+        const teacherEmail = this.normalizeChoiceText(sessionData.teacherEmail).toLowerCase();
+        const classCode = this.normalizeChoiceText(sessionData.classCode).toUpperCase();
         if (!teacherEmail || !classCode) {
             return this.failureResult('Missing teacher session details.');
         }
@@ -929,8 +1169,8 @@ class TeacherDashboard {
             ok: true,
             teacherEmail,
             classCode,
-            teacherName: String(sessionData.teacherName || '').trim(),
-            role: String(sessionData.role || '').trim(),
+            teacherName: this.normalizeChoiceText(sessionData.teacherName),
+            role: this.normalizeTeacherRole(sessionData.role),
             classCodes: this.normalizeClassCodeList(sessionData.classCodes),
             authenticatedAt: String(sessionData.authenticatedAt || new Date().toISOString()).trim()
         };
@@ -955,7 +1195,7 @@ class TeacherDashboard {
     canTeacherAccessClass(classCode) {
         const session = this.getTeacherSession();
         if (!session) return false;
-        if (session.role.toLowerCase() === 'admin') return true;
+        if (this.isAdminSession(session)) return true;
 
         const requestedClassCode = String(classCode || '').trim().toUpperCase();
         if (!requestedClassCode) return false;
@@ -1006,7 +1246,7 @@ class TeacherDashboard {
             teacherEmail,
             classCode: primaryClassCode,
             teacherName: this.readListText(payload, ['teacherName', 'TeacherName']),
-            role: this.readListText(payload, ['role', 'Role']).toLowerCase(),
+            role: this.normalizeTeacherRole(this.readListText(payload, ['role', 'Role'])),
             classCodes: normalizedClassCodes
         });
 
@@ -1103,20 +1343,22 @@ class TeacherDashboard {
         const teacherNameInput = String(
             teacherData.teacherName || teacherData.TeacherName || teacherData.name || ''
         ).trim();
-        const classCodeInput = String(
+        const classCodeInput = this.normalizeChoiceText(
             teacherData.classCode || teacherData.ClassCode || ''
-        ).trim();
-        const roleInput = String(
+        );
+        const roleInput = this.normalizeChoiceText(
             teacherData.role || teacherData.Role || ''
-        ).trim().toLowerCase();
+        ).toLowerCase();
         const teacherName = String(
-            teacherNameInput || existingTeacher?.name || ''
+            teacherNameInput || this.normalizeChoiceText(existingTeacher?.name) || ''
         ).trim();
         const classCode = String(
-            classCodeInput || existingTeacher?.classCode || ''
+            classCodeInput || this.normalizeChoiceText(existingTeacher?.classCode) || ''
         ).trim();
+        // Existing rows can carry SharePoint reference objects; only a
+        // recognised role is merged so it never fails as "Unknown role".
         const role = String(
-            roleInput || existingTeacher?.role || ''
+            roleInput || this.normalizeTeacherRole(existingTeacher?.role) || ''
         ).trim().toLowerCase();
 
         const ALLOWED_ROLES = new Set(['teacher', 'admin']);
@@ -1492,6 +1734,11 @@ class TeacherDashboard {
     async importTeachers(data, options = {}) {
         const prepared = this.bulkImportTeachers(data);
         const rows = [...prepared.added, ...prepared.updated];
+        this.logFlowDiagnostics('importTeachers validation', {
+            added: prepared.added.length,
+            updated: prepared.updated.length,
+            skipped: prepared.skipped.map(entry => `Row ${entry.row}: ${entry.reason}`)
+        });
         const teacherSync = this._summarizeSyncResult(
             rows.length ? await this.syncTeachersToBackend(rows, options) : {}
         );
@@ -1511,16 +1758,26 @@ class TeacherDashboard {
             { allowAdmin: true, allowPartialUpdates: true, existingTeacher }
         );
 
+        this.logFlowDiagnostics('addTeacher validation', {
+            success: normalized.success === true,
+            error: normalized.success ? '' : normalized.error,
+            existingTeacher: !!existingTeacher,
+            role: normalized.teacher?.role || '',
+            classCodePresent: !!normalized.teacher?.classCode
+        });
         if (!normalized.success) {
-            return normalized;
+            return this.failureResult(
+                this.describeFlowFailure({ stage: 'validation', error: normalized.error }, 'upsertTeacher'),
+                { stage: 'validation', reason: normalized.error }
+            );
         }
 
         const teacher = { id: normalized.teacher.email, ...normalized.teacher };
         const result = await this.syncTeacherToBackend(teacher, options);
         if (!result.success) {
             return this.failureResult(
-                result.error || 'GGR_UpsertTeacher did not confirm the save.',
-                { teacher, status: result.status }
+                this.describeFlowFailure(result, 'upsertTeacher') || 'GGR_UpsertTeacher did not confirm the save.',
+                { teacher, status: result.status, stage: result.stage, reason: result.reason, diagnostics: result.diagnostics }
             );
         }
 
