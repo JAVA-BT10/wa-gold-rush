@@ -194,7 +194,7 @@ class TeacherDashboard {
         case 'validation':
             return `Validation failed: ${error || 'check the entered details.'}`;
         case 'not_sent': {
-            if (result.reason === 'api_key_missing') {
+            if (result.reason === 'ggr_header_missing') {
                 return `Not sent: the Power Automate API key (X-GGR-Key) is missing, so ${flowName} was not called.`;
             }
             if (result.reason === 'flow_helper_unavailable') {
@@ -259,7 +259,7 @@ class TeacherDashboard {
         if (!apiKey) {
             const error = 'Power Automate API key is required before authenticated dashboard flows can be sent.';
             console.warn(`[Dashboard] ${error}`);
-            return notSent('api_key_missing', error, { skipped: true });
+            return notSent('ggr_header_missing', error, { skipped: true });
         }
 
         const callFlow = globalThis.WA_GOLD_RUSH_POWER_AUTOMATE?.callFlow;

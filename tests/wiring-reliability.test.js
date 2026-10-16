@@ -2274,7 +2274,7 @@ const FIVE_TEACHER_ROWS = [
 
 function createDashboardDomHarness(dashboardOverrides = {}) {
     const html = fs.readFileSync(require.resolve('../teacher/dashboard.html'), 'utf8');
-    const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map(match => match[1]);
+    const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)].map(match => match[1]);
     const mainScript = scripts[scripts.length - 1];
     assert.match(mainScript, /const dashboard = new TeacherDashboard\(\);/);
 
@@ -2592,7 +2592,7 @@ test('postFlowPayload diagnostics classify skipped, network and HTTP failures wi
         global.WA_GOLD_RUSH_DASHBOARD_CONFIG.flowEndpoints.upsertTeacher = ENDPOINT;
         global.WA_GOLD_RUSH_POWER_AUTOMATE.getApiKey = () => '';
         const missingKey = await dashboard.postFlowPayload('upsertTeacher', payload);
-        assert.equal(missingKey.reason, 'api_key_missing');
+        assert.equal(missingKey.reason, 'ggr_header_missing');
         assert.equal(dashboard.getFlowDiagnostics('upsertTeacher').apiKeyPresent, false);
         assert.match(dashboard.describeFlowFailure(missingKey), /^Not sent: the Power Automate API key \(X-GGR-Key\) is missing/);
         assert.equal(requests, 0, 'skipped requests never reach fetch');
