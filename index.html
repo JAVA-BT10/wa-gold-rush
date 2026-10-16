@@ -548,10 +548,11 @@
          */
         function isLevelAccessible(level) {
             // Every level, including Level 1, requires a roster-verified session.
-            if (!getStudentSession()) {
+            const session = getStudentSession();
+            if (!session) {
                 return false;
             }
-            if (!level.requiresApproval) {
+            if (!level.requiresApproval || Number(level.number) <= session.assignedLevel) {
                 return true;
             }
             return isCheckpointApproved(level.requiredCheckpointLevel);
@@ -561,10 +562,11 @@
          * Get lock reason for level
          */
         function getLockReason(level) {
-            if (!getStudentSession()) {
+            const session = getStudentSession();
+            if (!session) {
                 return 'Sign in as a student below to play.';
             }
-            if (!level.requiresApproval) {
+            if (!level.requiresApproval || Number(level.number) <= session.assignedLevel) {
                 return null;
             }
             return `Complete Level ${level.requiredCheckpointLevel} checkpoint quiz.`;

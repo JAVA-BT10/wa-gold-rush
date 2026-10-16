@@ -1401,13 +1401,13 @@ test('teacher dashboard writes wait for the flow and re-hydrate before reporting
         }
     });
 
-    const failed = await dashboard.addStudent({ studentCode: 'NEW-1', leaderboardName: 'New', classCode: '6B' });
+    const failed = await dashboard.addStudent({ studentCode: 'NEW-1', leaderboardName: 'New', classCode: '6B', level: 2 });
     assert.equal(failed.success, false);
     assert.deepEqual(calls, ['upsertStudentProfile']);
     assert.equal(dashboard.students.length, 0);
 
     upsertOk = true;
-    const saved = await dashboard.addStudent({ studentCode: 'NEW-1', leaderboardName: 'New', classCode: '6B' });
+    const saved = await dashboard.addStudent({ studentCode: 'NEW-1', leaderboardName: 'New', classCode: '6B', level: 2 });
     assert.equal(saved.success, true);
     assert.deepEqual(calls.slice(1), ['upsertStudentProfile', 'getDashboardData']);
     assert.equal(dashboard.students[0].studentCode, 'NEW-1');
@@ -1978,6 +1978,107 @@ test('student auth login fails when the roster response is incomplete, malformed
     await assert.rejects(() => respond(complete).loginStudent({ classCode: '6b', studentId: '', pin: '1234' }), /required/);
 });
 
+test('roster Level is normalized as assignedLevel and optional progression columns are backward compatible', () => {
+    const api = loadStudentSession();
+    const identity = {
+        studentCode: 'SC-1',
+        studentId: '123456',
+        studentName: 'Alex',
+        leaderboardName: 'Gold',
+        classCode: '6B',
+        ok: true
+    };
+    for (let level = 1; level <= 5; level += 1) {
+        const created = api.createSessionFromLogin({ ...identity, Level: { Value: String(level) } });
+        assert.equal(created.ok, true, `roster Level ${level} is valid`);
+        assert.equal(created.session.assignedLevel, level);
+        assert.equal(created.session.progressedLevel, level);
+        assert.equal(created.session.currentLevel, level);
+    }
+    assert.equal(api.createSessionFromLogin({ ...identity, level: { value: 2 } }).session.assignedLevel, 2);
+    assert.equal(api.createSessionFromLogin({ ...identity, assignedLevel: '2' }).session.assignedLevel, 2);
+    assert.equal(api.createSessionFromLogin({ ...identity, Level: 2, assignedLevel: 3 }).ok, false);
+    assert.equal(api.createSessionFromLogin({ ...identity, Level: 6 }).ok, false);
+    assert.equal(api.createSessionFromLogin(identity).ok, false);
+
+    const progressed = api.createSessionFromLogin({
+        ...identity,
+        Level: 2,
+        ProgressedLevel: { Value: 4 },
+        CurrentLevel: 3
+    });
+    assert.equal(progressed.session.progressedLevel, 4);
+    assert.equal(progressed.session.currentLevel, 3);
+    const invalidOptional = api.createSessionFromLogin({
+        ...identity,
+        Level: 2,
+        progressedLevel: 1,
+        currentLevel: 5
+    });
+    assert.equal(invalidOptional.session.progressedLevel, 2);
+    assert.equal(invalidOptional.session.currentLevel, 2);
+});
+
+test('student login accepts authoritative roster Level and rejects conflicting aliases', async () => {
+    const respond = (data) => {
+        global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+            callFlow: async () => ({ success: true, status: 200, data })
+        };
+        return loadStudentAuth();
+    };
+    const identity = {
+        ok: true,
+        studentCode: 'SC-1',
+        studentId: '123456',
+        studentName: 'Alex',
+        leaderboardName: 'Gold',
+        classCode: '6B',
+        Level: { Value: 2 }
+    };
+    let result = await respond(identity).loginStudent({ classCode: '6B', studentId: '123456', pin: '1234' });
+    assert.equal(result.success, true);
+    assert.equal(result.response.assignedLevel, 2);
+    assert.equal(result.response.progressedLevel, 2);
+    assert.equal(result.response.currentLevel, 2);
+
+    result = await respond({ ...identity, assignedLevel: 3 }).loginStudent({ classCode: '6B', studentId: '123456', pin: '1234' });
+    assert.equal(result.success, false);
+    assert.match(result.error, /conflictingAssignedLevel/);
+});
+
+test('student import initializes assignment/progression only from valid Level 1–5', () => {
+    loadStudentSession();
+    const TeacherDashboard = require('../teacher/dashboard-state.js');
+    const dashboard = new TeacherDashboard();
+    const imported = dashboard.bulkImportStudents(
+        'StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level\nSC-2,Gold,123,Alex,6B,4\nSC-3,Gold,124,Sam,6B,6',
+        'csv'
+    );
+    assert.equal(imported.added.length, 1);
+    assert.equal(imported.added[0].level, 4);
+    assert.equal(imported.added[0].progressedLevel, 4);
+    assert.equal(imported.added[0].currentLevel, 4);
+    assert.equal(imported.skipped.length, 1);
+    assert.match(imported.skipped[0].reason, /Level/);
+    const payload = dashboard.buildStudentFlowPayload(imported.added[0]);
+    assert.equal(payload.Level, 4);
+    assert.equal(payload.ProgressedLevel, 4);
+    assert.equal(payload.CurrentLevel, 4);
+});
+
+test('assigned starting level is playable without fabricated prior checkpoints', () => {
+    const storage = createSessionStorage({}, { assignedLevel: 4, progressedLevel: 4, currentLevel: 4 });
+    global.localStorage = storage;
+    const { LevelAccessGuard } = require('../levels/level-2-tycoon/level-access-guard.js');
+    assert.equal(new LevelAccessGuard(3).isLevelAccessible(), true);
+    assert.equal(new LevelAccessGuard(4).isLevelAccessible(), true);
+    assert.equal(new LevelAccessGuard(5).isLevelAccessible(), false);
+
+    const home = buildHomeLoginHarness({ storage });
+    assert.equal(home.context.isLevelAccessible(home.context.LEVELS.find(level => level.number === 4)), true);
+    assert.equal(home.context.isLevelAccessible(home.context.LEVELS.find(level => level.number === 5)), false);
+});
+
 test('fresh-browser home login calls loginStudent and creates a roster session only on success', async () => {
     const harness = buildHomeLoginHarness({ loginImpl: async () => rosterLoginResponse() });
     assert.equal(harness.context.getStudentSession(), null);
@@ -2235,6 +2336,7 @@ test('Level 2-5 save payload uses session identity, current gameplay level, and 
     assert.equal(scheduled[0].studentCode, 'SC-1');
     assert.equal(scheduled[0].classCode, '6B');
     assert.equal(scheduled[0].level, 3);
+    assert.equal(scheduled[0].currentLevel, 3);
     assert.equal(scheduled[0].rosterAssignedLevel, 4);
     assert.equal(scheduled[0].progressKey, '6B|SC-1|3');
     const markers = JSON.parse(scheduled[0].progressionMarkersJson);
