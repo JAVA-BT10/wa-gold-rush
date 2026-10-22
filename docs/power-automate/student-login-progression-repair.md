@@ -1,5 +1,7 @@
 # Student login and progression deployment guide
 
+> **Per-level architecture (draft):** browser saves are now one slot per Class|Student|Level. The planned server-authoritative revision/idempotency protocol, full student-scoped restore and other future flows are specified in [save-protocol-v2](save-protocol-v2.md), [flow-registry-and-contracts](flow-registry-and-contracts.md) and the [future-state architecture](../architecture/future-state-architecture.md). They are gated OFF and not live-verified.
+
 ## Canonical roster contract
 
 `GGR_Students.Level` is the teacher-assigned starting level from the CSV/JSON

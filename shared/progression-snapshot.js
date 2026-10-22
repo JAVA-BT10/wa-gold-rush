@@ -51,7 +51,26 @@
             approvalStatus: input.approvalStatus || null,
             approverName: input.approverName || null,
             approvalTimestamp: input.approvalTimestamp || null,
-            progressionStateByLevel: input.progressionStateByLevel || {}
+            progressionStateByLevel: input.progressionStateByLevel || {},
+            ...(input.run && typeof input.run === 'object' ? { run: normalizeSnapshotRun(input.run) } : {})
+        };
+    }
+
+    /**
+     * Run identity for the per-level game this snapshot belongs to. The
+     * startingNetWorth baseline is immutable for the run and is null when it
+     * is not known (e.g. a migrated legacy save) — never back-filled.
+     */
+    function normalizeSnapshotRun(run) {
+        const generation = Number(run.generation);
+        const startingNetWorth = run.startingNetWorth === null || run.startingNetWorth === undefined
+            ? null
+            : Number(run.startingNetWorth);
+        return {
+            generation: Number.isInteger(generation) && generation >= 1 ? generation : null,
+            runId: typeof run.runId === 'string' ? run.runId : '',
+            startingNetWorth: Number.isFinite(startingNetWorth) ? startingNetWorth : null,
+            storageSchemaVersion: Number.isInteger(run.storageSchemaVersion) ? run.storageSchemaVersion : null
         };
     }
 

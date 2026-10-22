@@ -256,7 +256,7 @@
                         <option value="3">Level 3</option>
                         <option value="4">Level 4</option>
                         <option value="5">Level 5</option>
-                        <option value="6">Level 6</option>
+                        <option value="6" disabled>Level 6 (planned — not available)</option>
                     </select>
                 </label>
             </div>
@@ -410,9 +410,17 @@
                 <button class="tab-btn" data-level="3">Level 3</button>
                 <button class="tab-btn" data-level="4">Level 4</button>
                 <button class="tab-btn" data-level="5">Level 5</button>
-                <button class="tab-btn" data-level="6">Level 6</button>
+                <button class="tab-btn" data-level="6">Level 6 (planned)</button>
                 <button class="tab-btn" data-level="1">Level 1</button>
             </div>
+            <label>Rank by
+                <select id="leaderboardMetric">
+                    <option value="netWorth" selected>Net worth</option>
+                    <option value="profit">Profit (net worth − starting net worth)</option>
+                    <option value="roi">Return on investment (ROI)</option>
+                </select>
+            </label>
+            <p class="muted">Current standings from each student's saved game for that level. Not an all-time record. Games with no recorded starting net worth cannot be ranked by profit or ROI.</p>
             <div id="leaderboardContent"></div>
         </section>
 
@@ -445,6 +453,8 @@
     <script src="../shared/power-automate-headers.js"></script>
     <script src="../shared/progression-snapshot.js"></script>
     <script src="../shared/student-session.js"></script>
+    <script src="../shared/level-capabilities.js"></script>
+    <script src="../shared/leaderboard.js"></script>
     <script src="dashboard-state.js"></script>
     <script src="../shared/investment-profile.js"></script>
     <script src="checkpoint-approval.js"></script>
@@ -823,20 +833,49 @@
 
         let _activeLeaderboardLevel = 2;
 
+        let _activeLeaderboardMetric = 'netWorth';
+        const LEADERBOARD_EXCLUSION_LABELS = {
+            not_yet_played: 'not played yet',
+            held_for_review: 'held for teacher review',
+            missing_net_worth: 'missing net worth',
+            not_on_authorized_roster: 'not on your roster',
+            class_or_student_missing: 'missing class/student',
+            progress_key_mismatch: 'mismatched record key',
+            duplicate_progress_row: 'duplicate record (latest kept)'
+        };
+
+        function formatLeaderboardValue(metric, value) {
+            if (metric === 'roi') return `${(Number(value) * 100).toFixed(1)}%`;
+            return `$${Number(value).toFixed(2)}`;
+        }
+
         function renderLeaderboardForLevel(level) {
             _activeLeaderboardLevel = Number(level) || 2;
-            const lb = withAuthorizedStudents(() => dashboard.getLevelLeaderboard(_activeLeaderboardLevel));
             const content = document.getElementById('leaderboardContent');
+            document.querySelectorAll('#leaderboardTabs .tab-btn').forEach(btn => {
+                btn.classList.toggle('active', Number(btn.dataset.level) === _activeLeaderboardLevel);
+            });
+            const caps = window.WA_GOLD_RUSH_LEVEL_CAPABILITIES;
+            if (_activeLeaderboardLevel === 6 || (caps && !caps.isPlayableLevel(_activeLeaderboardLevel))) {
+                content.innerHTML = '<p class="muted">Level 6 (Goldfields Mastery) is planned and not yet playable, so it has no leaderboard.</p>';
+                return;
+            }
+            if (_activeLeaderboardLevel === 1) {
+                content.innerHTML = '<p class="muted">Level 1 games are not saved to the class progress list yet, so Level 1 has no leaderboard.</p>';
+                return;
+            }
+            const metric = _activeLeaderboardMetric;
+            const lb = withAuthorizedStudents(() => dashboard.getLevelLeaderboard(_activeLeaderboardLevel, { metric }));
 
             let html = '';
-            if (lb.allTimeRecord) {
-                html += `<p><strong>🏆 All-Time Level ${escHtml(String(level))} Record:</strong>
-                    ${escHtml(lb.allTimeRecord.leaderboardName)} —
-                    $${Number(lb.allTimeRecord.netWorth).toFixed(2)}</p>`;
+            if (lb.topCurrent) {
+                html += `<p><strong>🏆 Top current Level ${escHtml(String(_activeLeaderboardLevel))} score (${escHtml(lb.metricLabel || metric)}):</strong>
+                    ${escHtml(lb.topCurrent.leaderboardName)} —
+                    ${escHtml(formatLeaderboardValue(metric, lb.topCurrent.value))}</p>`;
             }
 
             if (!lb.top20.length) {
-                html += '<p class="muted">No gameplay records for this level yet.</p>';
+                html += '<p class="muted">No played games for this level yet.</p>';
             } else {
                 html += `<table>
                     <thead>
@@ -844,6 +883,7 @@
                             <th>Rank</th>
                             <th>Leaderboard Name</th>
                             <th>Class</th>
+                            <th>${escHtml(lb.metricLabel || 'Net Worth')}</th>
                             <th>Net Worth</th>
                             <th>Round</th>
                             <th>Strategy</th>
@@ -855,21 +895,30 @@
                             <td>${e.rank}</td>
                             <td>${escHtml(e.leaderboardName)}</td>
                             <td>${escHtml(e.classCode || '')}</td>
+                            <td>${escHtml(formatLeaderboardValue(metric, e.value))}</td>
                             <td>$${Number(e.netWorth).toFixed(2)}</td>
-                            <td>${e.round}</td>
+                            <td>${escHtml(String(e.round))}</td>
                             <td>${escHtml(e.strategyLabel || 'N/A')}</td>
                             <td>${escHtml(e.lastPlayed ? new Date(e.lastPlayed).toLocaleString() : 'N/A')}</td>
                         </tr>`).join('')}
                     </tbody>
                 </table>`;
             }
+            const notes = Object.entries(lb.excluded || {})
+                .map(([reason, n]) => `${n} ${escHtml(LEADERBOARD_EXCLUSION_LABELS[reason] || reason)}`);
+            if (lb.unrankableCount) notes.push(`${lb.unrankableCount} without a usable starting net worth for this measure`);
+            if (notes.length) html += `<p class="muted">Not ranked: ${notes.join('; ')}.</p>`;
 
             content.innerHTML = html;
-
-            document.querySelectorAll('.tab-btn').forEach(btn => {
-                btn.classList.toggle('active', Number(btn.dataset.level) === _activeLeaderboardLevel);
-            });
         }
+
+        document.querySelectorAll('#leaderboardTabs .tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => renderLeaderboardForLevel(btn.dataset.level));
+        });
+        document.getElementById('leaderboardMetric')?.addEventListener('change', (event) => {
+            _activeLeaderboardMetric = ['netWorth', 'profit', 'roi'].includes(event.target.value) ? event.target.value : 'netWorth';
+            renderLeaderboardForLevel(_activeLeaderboardLevel);
+        });
 
         function rosterControlName(field, studentId) {
             const safeId = String(studentId ?? '').replace(/[^A-Za-z0-9_-]/g, '_') || 'row';
@@ -891,8 +940,11 @@
                 const si   = escHtml(s.studentId       || s.email    || '');
                 const cc   = escHtml(s.classCode       || '');
                 const level = Number(s.level) || 1;
-                const levelOpts = [1,2,3,4,5,6].map(l =>
-                    `<option value="${l}" ${level === l ? 'selected' : ''}>${l === 1 ? 'L1' : 'L'+l}</option>`
+                // Level 6 is recognised but not assignable until it is built
+                // and deployed; an existing value is shown, never offered.
+                const levelOpts = [1,2,3,4,5,6].map(l => l === 6
+                    ? `<option value="6" ${level === 6 ? 'selected ' : ''}disabled>L6 (planned)</option>`
+                    : `<option value="${l}" ${level === l ? 'selected' : ''}>${l === 1 ? 'L1' : 'L'+l}</option>`
                 ).join('');
                 const fieldAttrs = (field) => {
                     const name = rosterControlName(field, s.id);

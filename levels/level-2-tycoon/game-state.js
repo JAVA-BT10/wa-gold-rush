@@ -45,6 +45,14 @@ class GameState {
         this.approverName = null;
         this.approvalTimestamp = null;
         this.progressionStateByLevel = {};
+
+        // Per-level save run metadata (see shared/level-save-store.js).
+        this.activeRun = null;
+        this.startingNetWorth = null;
+        this.runCreatedAt = null;
+        this.initialCloudState = null;
+        this.saveLocked = false;
+        this.lastSaveResult = null;
     }
 
     async loadConfig(configPath = '../../shared/game-config.json') {
@@ -714,75 +722,155 @@ class GameState {
         InvestmentProfile.recordAction(code, this.assignedLevel, bucket, weight || 1);
     }
 
-    saveToLocalStorage(slotName = 'level2_autosave') {
+    getSaveStore() {
+        const store = typeof globalThis !== 'undefined' ? globalThis.WA_GOLD_RUSH_LEVEL_SAVE_STORE : null;
+        if (store && typeof store.readLevelSave === 'function') return store;
+        if (typeof require === 'function') {
+            try { return require('../../shared/level-save-store.js'); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    getStorage() {
+        return typeof localStorage !== 'undefined' ? localStorage : null;
+    }
+
+    /** {classCode, studentCode} of the identity applied to this game, or null. */
+    getSaveIdentity() {
+        const store = this.getSaveStore();
+        return store
+            ? store.normalizeIdentity({ classCode: this.player?.classCode, studentCode: this.player?.studentCode })
+            : null;
+    }
+
+    /**
+     * Detached snapshot of THIS level's economy. Carries only the identity
+     * needed to prove ownership (no StudentName/StudentID).
+     */
+    captureLevelSnapshot() {
+        this.persistProgressionStateForLevel(this.assignedLevel);
+        const clone = (value) => JSON.parse(JSON.stringify(value));
+        return {
+            level: this.assignedLevel,
+            round: this.round,
+            cash: this.cash,
+            player: {
+                classCode: String(this.player?.classCode || '').trim().toUpperCase(),
+                studentCode: String(this.player?.studentCode || '').trim().toUpperCase(),
+                leaderboardName: this.player?.leaderboardName || '',
+                companyName: this.player?.companyName || ''
+            },
+            ownedMines: clone(this.ownedMines || {}),
+            machinery: clone(Array.isArray(this.machinery) ? this.machinery : []),
+            roundHistory: clone(Array.isArray(this.roundHistory) ? this.roundHistory : []),
+            investmentPlans: clone(this.investmentPlans || {}),
+            totalProfitLoss: typeof this.totalProfitLoss === 'number' && Number.isFinite(this.totalProfitLoss) ? this.totalProfitLoss : 0,
+            progression: clone(this.getProgressionState(this.assignedLevel))
+        };
+    }
+
+    /**
+     * Writes this level's save to its own Class|Student|Level slot and merges
+     * this level's checkpoint evidence into the student's progression ledger.
+     * Never writes the legacy shared `level2_autosave` slot.
+     */
+    saveToLocalStorage() {
+        // Keep the last acknowledged cloud revision (the base for the next
+        // conditional write) but record that this device now has changes the
+        // cloud has not acknowledged.
+        const markLocalChange = (cloud) => {
+            const copy = cloud && typeof cloud === 'object' ? { ...cloud } : { status: 'local_only', revision: null };
+            if (copy.status === 'synced') copy.status = 'pending';
+            return copy;
+        };
         try {
-            this.persistProgressionStateForLevel(this.assignedLevel);
-            const data = {
-                timestamp: new Date().toISOString(),
-                gameState: {
-                    round: this.round,
-                    cash: this.cash,
-                    assignedLevel: this.assignedLevel,
-                    player: this.player,
-                    ownedMines: this.ownedMines,
-                    machinery: this.machinery,
-                    roundHistory: this.roundHistory,
-                    totalProfitLoss: this.totalProfitLoss,
-                    investmentPlans: this.investmentPlans,
-                    checkpointStatus: this.checkpointStatus,
-                    quizAttempts: this.quizAttempts,
-                    approvalStatus: this.approvalStatus,
-                    approverName: this.approverName,
-                    approvalTimestamp: this.approvalTimestamp,
-                    progressionStateByLevel: this.progressionStateByLevel
-                }
-            };
-            localStorage.setItem(slotName, JSON.stringify(data));
-            return true;
+            const store = this.getSaveStore();
+            const storage = this.getStorage();
+            const identity = this.getSaveIdentity();
+            if (!store || !storage || !identity || this.saveLocked) return false;
+            const level = store.normalizeSaveLevel(this.assignedLevel);
+            if (level === null) return false;
+            const snapshot = this.captureLevelSnapshot();
+            const run = this.activeRun || store.ensureLevelRun(storage, identity, level);
+            if (!run) return false;
+            this.activeRun = { generation: run.generation, runId: run.runId };
+            store.recordProgressionEvidence(storage, identity, level, snapshot.progression);
+            const existing = store.readLevelSave(storage, identity, level);
+            const sameRun = existing.status === 'found'
+                && existing.envelope.generation === run.generation
+                && existing.envelope.runId === run.runId;
+            const envelope = store.createEnvelope({
+                identity,
+                level,
+                generation: run.generation,
+                runId: run.runId,
+                startingNetWorth: Number.isFinite(this.startingNetWorth) ? this.startingNetWorth : null,
+                createdAt: sameRun ? existing.envelope.createdAt : (this.runCreatedAt || undefined),
+                cloud: sameRun
+                    ? markLocalChange(existing.envelope.cloud)
+                    : (this.initialCloudState || { status: 'local_only', revision: null }),
+                snapshot
+            });
+            const result = store.writeLevelSave(storage, envelope, { identity, level });
+            this.lastSaveResult = result;
+            return result.ok;
         } catch (error) {
             console.error('Failed to save game state:', error);
             return false;
         }
     }
 
-    loadFromLocalStorage(slotName = 'level2_autosave') {
+    /**
+     * Loads ONLY the save for the applied identity and this.assignedLevel.
+     * The level is never changed by loading. Returns
+     * { success, status: 'found'|'missing'|'invalid'|'unavailable', reason }.
+     */
+    loadFromLocalStorage() {
         try {
-            const raw = localStorage.getItem(slotName);
-            if (!raw) return { success: false, recoveredCash: false };
-            const data = JSON.parse(raw);
-            if (!data.gameState || typeof data.gameState !== 'object') {
-                return { success: false, recoveredCash: false };
+            const store = this.getSaveStore();
+            const storage = this.getStorage();
+            const identity = this.getSaveIdentity();
+            if (!store || !storage) return { success: false, status: 'unavailable', reason: 'storage_unavailable', recoveredCash: false };
+            if (!identity) return { success: false, status: 'invalid', reason: 'identity_invalid', recoveredCash: false };
+            const level = store.normalizeSaveLevel(this.assignedLevel);
+            if (level === null) return { success: false, status: 'invalid', reason: 'level_invalid', recoveredCash: false };
+
+            const ledger = store.readLedger(storage, identity);
+            this.progressionStateByLevel = store.clone(ledger.progressionStateByLevel) || {};
+            const result = store.readLevelSave(storage, identity, level);
+            if (result.status !== 'found') {
+                this.applyProgressionStateForAssignedLevel();
+                return { success: false, status: result.status, reason: result.reason, key: result.key, raw: result.raw, recoveredCash: false };
             }
-
-            const gs = data.gameState;
-            const numericRound = Number(gs.round);
-            this.assignedLevel = this.normalizeLevel(gs.assignedLevel || this.assignedLevel || 2);
-            this.round = Number.isFinite(numericRound) && numericRound >= 1 ? numericRound : 1;
-
-            this.player = gs.player || this.player;
-            this.ownedMines = gs.ownedMines || this.ownedMines;
-            this.machinery = Array.isArray(gs.machinery) ? gs.machinery : [];
-            this.roundHistory = Array.isArray(gs.roundHistory) ? gs.roundHistory : [];
-            this.totalProfitLoss = typeof gs.totalProfitLoss === 'number' ? gs.totalProfitLoss : 0;
-            this.investmentPlans = gs.investmentPlans || {};
-
-            this.progressionStateByLevel = gs.progressionStateByLevel || {};
-            if (!Object.keys(this.progressionStateByLevel).length && (gs.checkpointStatus || gs.approvalStatus || Array.isArray(gs.quizAttempts))) {
-                this.progressionStateByLevel[this.getLevelKey(this.assignedLevel)] = {
-                    ...this.getDefaultProgressionState(),
-                    checkpointStatus: gs.checkpointStatus || null,
-                    quizAttempts: Array.isArray(gs.quizAttempts) ? gs.quizAttempts : [],
-                    approvalStatus: gs.approvalStatus || null,
-                    approverName: gs.approverName || null,
-                    approvalTimestamp: gs.approvalTimestamp || null,
-                    quizScore: Number(gs.quizScore) || null
-                };
+            const envelope = result.envelope;
+            const run = ledger.levelRuns?.[String(level)];
+            if (run && (run.generation !== envelope.generation || run.runId !== envelope.runId)) {
+                this.applyProgressionStateForAssignedLevel();
+                return { success: false, status: 'invalid', reason: 'stale_generation', key: result.key, recoveredCash: false };
             }
+            if (!run) store.adoptLevelRun(storage, envelope);
+
+            const snapshot = store.clone(envelope.snapshot);
+            this.round = snapshot.round;
+            this.ownedMines = snapshot.ownedMines;
+            this.machinery = snapshot.machinery;
+            this.roundHistory = snapshot.roundHistory;
+            this.totalProfitLoss = snapshot.totalProfitLoss;
+            this.investmentPlans = snapshot.investmentPlans;
+            if (snapshot.player?.companyName) this.player.companyName = snapshot.player.companyName;
+            if (snapshot.progression && typeof snapshot.progression === 'object') {
+                const key = this.getLevelKey(level);
+                this.progressionStateByLevel[key] = store.mergeProgressionEvidence(this.progressionStateByLevel[key], snapshot.progression);
+            }
+            this.activeRun = { generation: envelope.generation, runId: envelope.runId };
+            this.startingNetWorth = envelope.startingNetWorth;
+            this.runCreatedAt = envelope.createdAt;
+            this.initialCloudState = store.clone(envelope.cloud);
 
             this.applyProgressionStateForAssignedLevel();
             const activeState = this.getProgressionState(this.assignedLevel);
-            const normalizedCash = this.normalizeLoadedCash(gs.cash, {
-                ...gs,
+            const normalizedCash = this.normalizeLoadedCash(snapshot.cash, {
+                ...snapshot,
                 checkpointStatus: activeState.checkpointStatus,
                 approvalStatus: activeState.approvalStatus,
                 quizAttempts: activeState.quizAttempts
@@ -791,15 +879,57 @@ class GameState {
 
             this.applyLevelConfigAdapter();
             if (normalizedCash.recovered) {
-                this.saveToLocalStorage(slotName);
+                this.saveToLocalStorage();
             }
-            return { success: true, recoveredCash: normalizedCash.recovered };
+            return { success: true, status: 'found', reason: '', recoveredCash: normalizedCash.recovered, migratedFrom: envelope.migratedFrom || null };
         } catch (error) {
             console.error('Failed to load game state:', error);
-            return { success: false, recoveredCash: false };
+            return { success: false, status: 'invalid', reason: 'load_failed', recoveredCash: false };
         }
     }
 
+    /**
+     * First visit to a level (no save): start from that level's configured
+     * defaults under the level's current run and record the run's immutable
+     * starting net worth (baseline for Profit/ROI).
+     */
+    beginLevelRun(options = {}) {
+        const store = this.getSaveStore();
+        const storage = this.getStorage();
+        const identity = this.getSaveIdentity();
+        this.reset();
+        const level = store ? store.normalizeSaveLevel(this.assignedLevel) : null;
+        const run = store && storage && identity && level !== null
+            ? (options.run || store.ensureLevelRun(storage, identity, level))
+            : null;
+        this.activeRun = run ? { generation: run.generation, runId: run.runId } : null;
+        this.startingNetWorth = this.getNetWorth();
+        this.runCreatedAt = new Date().toISOString();
+        this.initialCloudState = { status: options.cloudStatus || 'local_only', revision: null };
+        return this.activeRun;
+    }
+
+    /**
+     * Student restart of THIS level only: archive the current save, advance
+     * the level's run generation and start fresh. Other levels, checkpoint
+     * evidence and earned access are preserved.
+     */
+    restartLevelRun(options = {}) {
+        const store = this.getSaveStore();
+        const storage = this.getStorage();
+        const identity = this.getSaveIdentity();
+        if (!store || !storage || !identity) return { ok: false, reason: 'identity_invalid' };
+        const result = store.resetLevelSave(storage, identity, this.assignedLevel, options);
+        if (!result.ok) return result;
+        this.beginLevelRun({ run: result.run, cloudStatus: 'local_only' });
+        return result;
+    }
+
+    /**
+     * Reset this level's economy to its configured defaults. Checkpoint
+     * evidence (progressionStateByLevel) is shared access evidence and is
+     * deliberately preserved.
+     */
     reset() {
         this.round = 1;
         this.cash = this.getPlayableStartingCash();
@@ -815,12 +945,8 @@ class GameState {
         this.roundHistory = [];
         this.totalProfitLoss = 0;
         this.investmentPlans = {};
-        this.progressionStateByLevel = {};
-        this.checkpointStatus = null;
-        this.quizAttempts = [];
-        this.approvalStatus = null;
-        this.approverName = null;
-        this.approvalTimestamp = null;
+        this.ensureProgressionStateMap();
+        this.applyProgressionStateForAssignedLevel();
     }
 }
 

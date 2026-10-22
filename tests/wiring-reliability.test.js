@@ -14,6 +14,9 @@ function createStorage(initial = {}) {
         },
         removeItem(key) {
             store.delete(key);
+        },
+        __keys() {
+            return [...store.keys()];
         }
     };
 }
@@ -1539,11 +1542,15 @@ function buildStudentGameHarness({ level = 2, storage = createStorage(), extraGl
     vm.createContext(context);
     vm.runInContext([
         read('../shared/student-session.js'),
+        read('../shared/level-capabilities.js'),
+        read('../shared/level-save-store.js'),
+        read('../shared/save-protocol.js'),
         read('../shared/progression-snapshot.js'),
         read('../shared/progression-quiz.js'),
         read('../levels/level-2-tycoon/game-state.js'),
         read('../levels/level-2-tycoon/level-access-guard.js'),
         read('../levels/level-2-tycoon/script.js'),
+        'this.realSyncPlayerRecord = syncPlayerRecord;',
         'syncPlayerRecord = function syncPlayerRecordStub() { this.__syncCalls = (this.__syncCalls || 0) + 1; }.bind(this);',
         'this.__setGameState = (value) => { gameState = value; };',
         'this.__getGameState = () => gameState;',
@@ -1555,20 +1562,26 @@ function buildStudentGameHarness({ level = 2, storage = createStorage(), extraGl
         'this.applyCompetitionSessionToIdentity = applyCompetitionSessionToIdentity;',
         'this.playRound = playRound;',
         'this.showProgressionQuiz = showProgressionQuiz;',
-        'this.saveCompanyName = saveCompanyName;'
+        'this.saveCompanyName = saveCompanyName;',
+        'this.loadLevelGameForSession = loadLevelGameForSession;',
+        'this.getAuthenticatedStudentSession = getAuthenticatedStudentSession;',
+        'this.getLevelLoadState = () => levelLoadState;',
+        'this.getCloudUploadHold = () => cloudUploadHold;',
+        'this.resetGame = resetGame;',
+        'this.loadGame = loadGame;',
+        'this.getAssignedLevelFromUrl = getAssignedLevelFromUrl;',
+        'this.getNextAssignedLevel = getNextAssignedLevel;',
+        'this.getProgressSaveScheduler = getProgressSaveScheduler;'
     ].join('\n'), context);
 
     const config = JSON.parse(read('../shared/game-config.json'));
     const gameState = new context.GameStateClass();
     gameState.originalGameConfig = config;
     gameState.gameConfig = JSON.parse(JSON.stringify(config));
-    gameState.assignedLevel = level;
-    gameState.loadFromLocalStorage();
-    gameState.assignedLevel = level;
-    gameState.applyLevelConfigAdapter();
     context.__setGameState(gameState);
-    context.applyCompetitionSessionToIdentity(false);
-    return { context, gameState, getElement, storage };
+    // Same order as page start: exact Class|Student|Level slot only.
+    const loadResult = context.loadLevelGameForSession(context.getAuthenticatedStudentSession(), level);
+    return { context, gameState, getElement, storage, loadResult };
 }
 
 test('student checkpoint progression: goal opens quiz, pass persists quiz_passed, continue opens next level', async () => {
@@ -1582,10 +1595,14 @@ test('student checkpoint progression: goal opens quiz, pass persists quiz_passed
     assert.equal(getElement('checkpointQuizModal').classList.contains('active'), true);
     assert.equal(gameState.checkpointStatus, 'quiz_available');
 
-    // Passing the quiz persists quiz_passed for Level 2 in the shared autosave slot.
+    // Passing the quiz persists quiz_passed for Level 2 in the student's
+    // progression ledger (shared access evidence) and in the Level 2 save.
     context.displayQuizResults({ passed: true, score: 4, totalQuestions: 5, results: [] }, {});
-    const saved = JSON.parse(storage.getItem('level2_autosave'));
-    const level2State = saved.gameState.progressionStateByLevel['2'];
+    const saveStore = require('../shared/level-save-store.js');
+    const identity = { classCode: '6B', studentCode: 'SC-1' };
+    const level2State = saveStore.readLedger(storage, identity).progressionStateByLevel['2'];
+    assert.equal(saveStore.readLevelSave(storage, identity, 2).envelope.snapshot.progression.checkpointStatus, 'quiz_passed');
+    assert.equal(storage.getItem('level2_autosave'), null, 'the legacy shared slot is never written');
     assert.equal(level2State.checkpointStatus, 'quiz_passed');
     assert.equal(level2State.quizScore, 4);
     assert.ok(level2State.quizPassedAt);
@@ -1673,7 +1690,9 @@ test('cross-device unlock uses getStudentProgress only when configured', async (
     assert.equal(calls[0].name, 'getStudentProgress');
     assert.deepEqual(calls[0].payload, { studentCode: 'sc-1', classCode: '6B', level: 2 });
     assert.equal(LevelAccessGuard.isCheckpointPassed(2, storage), true);
-    assert.equal(JSON.parse(storage.getItem('level2_autosave')).gameState.progressionStateByLevel['2'].quizScore, 5);
+    const ledger = require('../shared/level-save-store.js').readLedger(storage, { classCode: '6B', studentCode: 'SC-1' });
+    assert.equal(ledger.progressionStateByLevel['2'].quizScore, 5);
+    assert.equal(storage.getItem('level2_autosave'), null, 'checkpoint-only hydration never writes an economy save');
 });
 
 test('level progress scheduler whenIdle waits for in-flight and queued saves', async () => {
@@ -2191,6 +2210,7 @@ test('gameplay, quiz, and saves are blocked without an authenticated roster sess
 
     context.displayQuizResults({ passed: true, score: 5, totalQuestions: 5, results: [] }, {});
     assert.equal(storage.getItem('level2_autosave'), null);
+    assert.deepEqual(storage.__keys().filter((key) => key.startsWith('wa_gr_')), []);
     assert.equal(context.__syncCalls, undefined);
 
     global.localStorage = storage;
@@ -2222,7 +2242,12 @@ test('student cannot edit authoritative identity in-game; identity comes only fr
     assert.equal(gameState.player.studentCode, 'SC-1');
     assert.equal(gameState.player.leaderboardName, 'Gold Miner');
     assert.equal(gameState.player.companyName, 'Perth Prospectors');
-    assert.equal(JSON.parse(storage.getItem('level2_autosave')).gameState.player.studentCode, 'SC-1');
+    const saved = require('../shared/level-save-store.js').readLevelSave(storage, { classCode: '6B', studentCode: 'SC-1' }, 2);
+    assert.equal(saved.status, 'found');
+    assert.deepEqual({ ...saved.envelope.owner }, { classCode: '6B', studentCode: 'SC-1' });
+    assert.equal(saved.envelope.snapshot.player.companyName, 'Perth Prospectors');
+    assert.equal(saved.envelope.snapshot.player.studentCode, 'SC-1');
+    assert.equal(Object.prototype.hasOwnProperty.call(saved.envelope.snapshot.player, 'studentName'), false);
 
     const levelHtml = fs.readFileSync(require.resolve('../levels/level-2-tycoon/index.html'), 'utf8');
     for (const id of ['studentCodeInput', 'leaderboardNameInput', 'studentIdInput', 'studentNameInput']) {
@@ -2343,13 +2368,18 @@ test('Level 2-5 save payload uses session identity, current gameplay level, and 
         storage,
         extraGlobals: { SharePointSync: sync }
     });
-    // Replace the stubbed syncPlayerRecord with the real one for this test.
-    const script = fs.readFileSync(require.resolve('../levels/level-2-tycoon/script.js'), 'utf8');
-    const realSync = script.slice(script.indexOf('function syncPlayerRecord() {'), script.indexOf('function syncTeacherDashboardRecord(record) {'));
-    vm.runInContext(`${realSync}\nthis.realSyncPlayerRecord = syncPlayerRecord;\ngetProgressSaveScheduler = () => ({ schedule: (p) => { this.__scheduled.push(p); } });`, Object.assign(context, { __scheduled: scheduled }));
+    // Use the real syncPlayerRecord (captured before the harness stub).
+    vm.runInContext('getProgressSaveScheduler = () => ({ schedule: (p) => { this.__scheduled.push(p); } });', Object.assign(context, { __scheduled: scheduled }));
     gameState.player.companyName = 'Co';
+    // An unplayed (pristine) level game is never uploaded.
+    context.realSyncPlayerRecord();
+    assert.equal(scheduled.length, 0);
+    gameState.round = 2;
+    gameState.roundHistory = [{ round: 1, totalProfit: 0 }];
     context.realSyncPlayerRecord();
     assert.equal(scheduled.length, 1);
+    assert.equal(Object.isFrozen(scheduled[0]), true);
+    assert.equal(scheduled[0].protocolVersion, undefined, 'v2 fields are not sent while saveProtocolV2 is off');
     assert.equal(scheduled[0].studentCode, 'SC-1');
     assert.equal(scheduled[0].classCode, '6B');
     assert.equal(scheduled[0].level, 3);
@@ -2360,6 +2390,8 @@ test('Level 2-5 save payload uses session identity, current gameplay level, and 
     assert.equal(markers.currentLevel, 3);
     assert.equal(markers.rosterAssignedLevel, 4);
     assert.equal(markers.player.leaderboardName, 'Gold Miner');
+    assert.equal(markers.run.generation, 1);
+    assert.equal(typeof markers.run.startingNetWorth, 'number');
 });
 
 // ---------------------------------------------------------------------------
