@@ -27,6 +27,15 @@ function normalizeRosterLevel(record) {
     return api.normalizeRosterLevel(record).assignedLevel;
 }
 
+function getLeaderboardApi() {
+    const globalApi = globalThis.WA_GOLD_RUSH_LEADERBOARD;
+    if (globalApi && typeof globalApi.buildLevelLeaderboard === 'function') return globalApi;
+    if (typeof require === 'function') {
+        try { return require('../shared/leaderboard.js'); } catch (_) { return null; }
+    }
+    return null;
+}
+
 function normalizeOptionalRosterLevel(value) {
     const api = getStudentRosterLevelApi();
     if (!api) return null;
@@ -1992,34 +2001,51 @@ class TeacherDashboard {
     // =========================================================================
 
     /**
-     * Get level-specific leaderboard.
-     * Returns { level, top20, allTimeRecord }
+     * Level-specific leaderboard built from saved per-level progress rows
+     * (Class|Student|Level) joined to the loaded roster — never from roster
+     * Level/CurrentLevel or the latest cross-level summary.
+     * Returns { level, metric, top20, topCurrent, excluded, unrankable, ... }.
+     * `topCurrent` is the best CURRENT standing, not an all-time record.
+     * Rows from this.students (already class-authorised by the flow) only;
+     * client filtering is presentation, not a security control.
      */
-    getLevelLeaderboard(level) {
+    getLevelLeaderboard(level, options = {}) {
         const levelNum = Number(level) || 0;
-        const relevant = this.students
-            .map(s => ({
-                leaderboardName: s.leaderboardName || s.studentCode || 'Unknown',
-                studentCode:     s.studentCode     || s.displayId || '',
-                classCode:       s.classCode       || '',
-                netWorth:        this.toNumber(s.gameState?.netWorth),
-                round:           this.toNumber(s.gameState?.round),
-                strategyLabel:   s.gameState?.strategyLabel || '',
-                lastPlayed:      s.gameState?.lastPlayed || null
-            }));
-
-        const sorted = [...relevant].sort((a, b) => b.netWorth - a.netWorth);
-        const top20 = sorted.slice(0, 20).map((entry, i) => ({ rank: i + 1, ...entry }));
-        const allTimeRecord = sorted[0] || null;
-
-        return { level: levelNum, top20, allTimeRecord };
+        const api = getLeaderboardApi();
+        if (!api) {
+            return { level: levelNum, metric: 'netWorth', top20: [], topCurrent: null, excluded: {}, unrankable: {}, unrankableCount: 0, reason: 'leaderboard_unavailable' };
+        }
+        const students = Array.isArray(this.students) ? this.students : [];
+        const progress = [];
+        students.forEach((student) => {
+            (Array.isArray(student?.progressRecords) ? student.progressRecords : []).forEach((row) => progress.push(row));
+        });
+        const board = api.buildLevelLeaderboard({
+            students,
+            progress,
+            level: levelNum,
+            metric: options.metric,
+            classCodes: options.classCodes,
+            limit: 20
+        });
+        return {
+            level: levelNum,
+            metric: board.metric,
+            metricLabel: board.metricLabel,
+            top20: board.entries,
+            topCurrent: board.top,
+            excluded: board.excluded,
+            unrankable: board.unrankable,
+            unrankableCount: board.unrankableCount,
+            reason: board.reason || ''
+        };
     }
 
     /**
      * Get leaderboards for all levels 1–6.
      */
-    getAllLevelLeaderboards() {
-        return [1, 2, 3, 4, 5, 6].map(l => this.getLevelLeaderboard(l));
+    getAllLevelLeaderboards(options = {}) {
+        return [1, 2, 3, 4, 5, 6].map(l => this.getLevelLeaderboard(l, options));
     }
 
     // =========================================================================

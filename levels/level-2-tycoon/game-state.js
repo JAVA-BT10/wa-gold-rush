@@ -775,6 +775,14 @@ class GameState {
      * Never writes the legacy shared `level2_autosave` slot.
      */
     saveToLocalStorage() {
+        // Keep the last acknowledged cloud revision (the base for the next
+        // conditional write) but record that this device now has changes the
+        // cloud has not acknowledged.
+        const markLocalChange = (cloud) => {
+            const copy = cloud && typeof cloud === 'object' ? { ...cloud } : { status: 'local_only', revision: null };
+            if (copy.status === 'synced') copy.status = 'pending';
+            return copy;
+        };
         try {
             const store = this.getSaveStore();
             const storage = this.getStorage();
@@ -798,7 +806,9 @@ class GameState {
                 runId: run.runId,
                 startingNetWorth: Number.isFinite(this.startingNetWorth) ? this.startingNetWorth : null,
                 createdAt: sameRun ? existing.envelope.createdAt : (this.runCreatedAt || undefined),
-                cloud: sameRun ? existing.envelope.cloud : (this.initialCloudState || { status: 'local_only', revision: null }),
+                cloud: sameRun
+                    ? markLocalChange(existing.envelope.cloud)
+                    : (this.initialCloudState || { status: 'local_only', revision: null }),
                 snapshot
             });
             const result = store.writeLevelSave(storage, envelope, { identity, level });

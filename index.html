@@ -430,6 +430,8 @@
     <script src="shared/flow-endpoints.js"></script>
     <script src="shared/power-automate-headers.js"></script>
     <script src="shared/progression-snapshot.js"></script>
+    <script src="shared/level-capabilities.js"></script>
+    <script src="shared/level-save-store.js"></script>
     <script src="levels/level-2-tycoon/level-access-guard.js"></script>
     <script src="shared/student-session.js"></script>
     <script src="shared/student-auth-client.js"></script>
@@ -490,6 +492,20 @@
                 requiresApproval: true,
                 requiredCheckpointLevel: 4,
                 status: 'available'
+            },
+            {
+                // Recognised but NOT playable: shown so students and teachers
+                // can see what is planned. It never unlocks or links anywhere
+                // until the capability registry marks it playable.
+                id: 6,
+                number: 6,
+                title: 'Goldfields Mastery',
+                description: 'Planned: a historical timeline simulation bringing together history, economics, probability and decision-making.',
+                features: ['🗓️ Historical eras (in design)', '📈 Risk, probability & expected value', '🧭 Not yet available'],
+                url: '',
+                requiresApproval: true,
+                requiredCheckpointLevel: 5,
+                status: 'planned'
             }
         ];
         const TEACHER_DASHBOARD_PATH = 'teacher/dashboard.html';
@@ -525,14 +541,14 @@
         /**
          * When GGR_GetStudentProgress is configured, unlock levels whose
          * checkpoint quiz was passed on another device. Otherwise unlocks remain
-         * same-device (shared level2_autosave slot).
+         * same-device (this student's progression ledger on this device).
          */
         async function refreshRemoteProgression() {
             if (!getStudentSession()) return;
             if (typeof LevelAccessGuard === 'undefined' || !LevelAccessGuard.isRemoteProgressConfigured()) return;
             let changed = false;
             for (const level of LEVELS) {
-                if (!level.requiresApproval || isLevelAccessible(level)) continue;
+                if (!isLevelPlayable(level) || !level.requiresApproval || isLevelAccessible(level)) continue;
                 try {
                     const result = await LevelAccessGuard.hydrateRemoteProgression(level.requiredCheckpointLevel);
                     if (result.unlocked) changed = true;
@@ -544,15 +560,69 @@
         }
 
         /**
+         * Implemented and deployed (capability registry). Planned levels such
+         * as Level 6 are recognised but never accessible.
+         */
+        function isLevelPlayable(level) {
+            if (level.status !== 'available') return false;
+            const caps = window.WA_GOLD_RUSH_LEVEL_CAPABILITIES;
+            return caps ? caps.isPlayableLevel(level.number) : Number(level.number) <= 5;
+        }
+
+        /** Teacher-assigned starting level (or higher unlocked level) from the roster session. */
+        function getRosterEntitledLevel(session) {
+            if (typeof LevelAccessGuard !== 'undefined' && typeof LevelAccessGuard.getRosterEntitledLevel === 'function') {
+                return LevelAccessGuard.getRosterEntitledLevel(session);
+            }
+            return Number(session?.assignedLevel) || 0;
+        }
+
+        /**
+         * Copy the legacy shared device save (if it belongs to this student)
+         * into its own per-level slot. Non-destructive and idempotent: the
+         * original is backed up and never deleted.
+         */
+        function ensureLegacySaveMigration() {
+            const session = getStudentSession();
+            const store = window.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+            if (!session || !store) return;
+            try {
+                store.migrateLegacyAutosave(localStorage, session);
+            } catch (_) {}
+        }
+
+        /**
+         * Start / resume label for a level card, from this student's own save
+         * for that level on this device only.
+         */
+        function describeLevelProgress(level) {
+            const session = getStudentSession();
+            const store = window.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+            const caps = window.WA_GOLD_RUSH_LEVEL_CAPABILITIES;
+            if (!session || !store || !caps || !caps.isSavePipelineLevel(level.number)) return '';
+            let info;
+            try {
+                info = store.describeLevelSave(localStorage, session, level.number);
+            } catch (_) {
+                return 'Saved game status unavailable on this device.';
+            }
+            if (info.status === 'resume') return `Resume: round ${Number(info.round) || 1} (saved on this device).`;
+            if (info.status === 'start') return 'Not started on this device.';
+            if (info.status === 'unavailable') return 'Saved game status unavailable on this device.';
+            return 'This level\'s saved game needs attention — ask your teacher.';
+        }
+
+        /**
          * Check if level is accessible
          */
         function isLevelAccessible(level) {
+            if (!isLevelPlayable(level)) return false;
             // Every level, including Level 1, requires a roster-verified session.
             const session = getStudentSession();
             if (!session) {
                 return false;
             }
-            if (!level.requiresApproval || Number(level.number) <= session.assignedLevel) {
+            if (!level.requiresApproval || Number(level.number) <= getRosterEntitledLevel(session)) {
                 return true;
             }
             return isCheckpointApproved(level.requiredCheckpointLevel);
@@ -562,11 +632,14 @@
          * Get lock reason for level
          */
         function getLockReason(level) {
+            if (!isLevelPlayable(level)) {
+                return 'Planned — not available yet.';
+            }
             const session = getStudentSession();
             if (!session) {
                 return 'Sign in as a student below to play.';
             }
-            if (!level.requiresApproval || Number(level.number) <= session.assignedLevel) {
+            if (!level.requiresApproval || Number(level.number) <= getRosterEntitledLevel(session)) {
                 return null;
             }
             return `Complete Level ${level.requiredCheckpointLevel} checkpoint quiz.`;
@@ -576,22 +649,29 @@
          * Render levels grid
          */
         function renderLevels() {
+            ensureLegacySaveMigration();
             const container = document.getElementById('main-content');
             container.innerHTML = '';
 
             LEVELS.forEach(level => {
+                const isPlanned = !isLevelPlayable(level);
                 const isAccessible = isLevelAccessible(level);
                 const lockReason = getLockReason(level);
                 const cardClass = isAccessible ? '' : 'locked';
-                const statusBadge = isAccessible ? 
-                    '<span class="status-badge status-available">✅ Available</span>' : 
-                    '<span class="status-badge status-locked">🔒 Locked</span>';
-                
+                const statusBadge = isPlanned
+                    ? '<span class="status-badge status-locked">🛠️ Planned</span>'
+                    : isAccessible
+                        ? '<span class="status-badge status-available">✅ Available</span>'
+                        : '<span class="status-badge status-locked">🔒 Locked</span>';
+                const progressText = isAccessible ? describeLevelProgress(level) : '';
+                const playLabel = progressText.startsWith('Resume') ? `Resume Level ${level.number}` : `Play Level ${level.number}`;
+
                 const playButton = isAccessible ? 
-                    `<a href="${level.url}" class="btn-play">Play Level ${level.number}</a>` : 
-                    `<button class="btn-play" disabled>Play Level ${level.number}</button>`;
+                    `<a href="${level.url}" class="btn-play">${playLabel}</a>` : 
+                    `<button class="btn-play" disabled>${isPlanned ? 'Not available yet' : `Play Level ${level.number}`}</button>`;
 
                 const lockMessage = lockReason ? `<div class="lock-message">🔒 ${lockReason}</div>` : '';
+                const progressMessage = progressText ? `<div class="level-description" role="note">${progressText}</div>` : '';
 
                 const card = document.createElement('div');
                 card.className = `level-card ${cardClass}`;
@@ -607,6 +687,7 @@
                         </ul>
                     </div>
                     ${playButton}
+                    ${progressMessage}
                     ${lockMessage}
                 `;
                 container.appendChild(card);

@@ -167,6 +167,9 @@ const LEVEL_LOAD_MESSAGES = {
     recovered: 'A saved game for this level could not be read. It was kept aside for your teacher and a new game was started.',
     unavailable: 'Saving is unavailable on this device. Progress will not be kept.',
     conflict: 'This level\'s saved game changed somewhere else. Reload the page before continuing.',
+    cloud_conflict: 'Your cloud save for this level differs from this device. Playing from this device; cloud saving is paused until your teacher helps reconcile them.',
+    local_only: 'Playing from this device. The cloud save could not be checked, so progress is not yet synced.',
+    restored: 'Restored your saved game for this level from the cloud.',
     error: 'The game could not load your saved progress. Please reload the page.'
 };
 
@@ -183,6 +186,41 @@ function updateLevelSaveStatusLabel() {
 function setLevelLoadState(status, reason = '') {
     levelLoadState = { status, reason };
     updateLevelSaveStatusLabel();
+}
+
+/**
+ * Optional full cloud restore (feature flag `fullCloudRestore`, OFF by
+ * default). Runs after the local slot is loaded and before any upload. It
+ * never overwrites unsent local changes and never treats an unknown cloud
+ * answer (error/timeout/legacy response) as "no cloud save".
+ */
+async function maybeRestoreLevelFromCloud(session, level) {
+    const restore = globalThis.WA_GOLD_RUSH_CLOUD_RESTORE;
+    const store = getLevelSaveStore();
+    if (!restore || !store || !restore.isEnabled() || gameState.saveLocked) return null;
+    const cloud = await restore.fetchLevelSave({ session, level });
+    const local = store.readLevelSave(localStorage, session, level);
+    const decision = restore.reconcile(local, cloud);
+    const protocolOn = !!getSaveProtocolApi()?.isEnabled();
+    if (decision.action === 'adopt_cloud') {
+        const adopted = restore.adoptCloudSave(localStorage, cloud);
+        if (adopted.ok && gameState.loadFromLocalStorage().success) {
+            setLevelLoadState('restored');
+        } else {
+            cloudUploadHold = cloudUploadHold || 'cloud_restore_failed';
+            setLevelLoadState('error', adopted.reason || 'restore_failed');
+            gameState.saveLocked = true;
+        }
+    } else if (decision.action === 'conflict') {
+        cloudUploadHold = cloudUploadHold || 'cloud_conflict';
+        setLevelLoadState('cloud_conflict', decision.reason);
+    } else if (decision.action === 'resume_local_unsynced' || decision.action === 'start_local_unsynced') {
+        // Without server compare-and-swap, an upload could overwrite cloud
+        // progress this device has not seen: hold until the next load.
+        if (!protocolOn) cloudUploadHold = cloudUploadHold || 'cloud_state_unknown';
+        setLevelLoadState('local_only', decision.reason);
+    }
+    return decision;
 }
 
 /**
@@ -369,6 +407,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         // startup cloud upload (a fresh default game must never overwrite
         // unresolved cloud progress).
         loadLevelGameForSession(session, requestedLevel);
+        try {
+            await maybeRestoreLevelFromCloud(session, requestedLevel);
+        } catch (restoreError) {
+            console.warn('[Level2] Cloud restore skipped', restoreError?.message || restoreError);
+        }
         if (!enforceCurrentLevelAccess()) return;
         ensureInvestmentPlansForOwnedMines();
         hydrateIdentityInputs();

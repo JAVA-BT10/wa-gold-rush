@@ -202,11 +202,17 @@
         if (current.status !== 'found') return false;
         const known = current.envelope.cloud?.revision;
         if (Number.isInteger(known) && known >= ack.revision) return true;
+        // A later local save than the acknowledged request means the device
+        // still has unsent changes: keep 'pending' so restore/reconcile never
+        // treats this device as fully synced.
+        const capturedAt = Date.parse(payload.clientTimestampUtc || '');
+        const savedAt = Date.parse(current.envelope.savedAt || '');
+        const newerLocal = Number.isFinite(capturedAt) && Number.isFinite(savedAt) && savedAt > capturedAt;
         return store.updateCloudState(storage, identity, level, {
             generation: payload.runGeneration,
             runId: payload.runId,
             cloud: {
-                status: 'synced',
+                status: newerLocal ? 'pending' : 'synced',
                 revision: ack.revision,
                 lastAcknowledgedSaveRequestId: payload.saveRequestId
             }

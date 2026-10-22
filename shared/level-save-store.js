@@ -528,6 +528,30 @@
     // ------------------------------------------------------------------
 
     /**
+     * Copy the current slot (raw text, unmodified) into this level's archive
+     * before anything replaces it. Keeps the most recent archives only.
+     */
+    function archiveLevelSave(storageInput, identityInput, levelInput, options = {}) {
+        const storage = resolveStorage(storageInput);
+        const identity = normalizeIdentity(identityInput);
+        const level = normalizeSaveLevel(levelInput);
+        if (!storage || !identity || level === null) return { ok: false, reason: 'invalid_request' };
+        let raw = null;
+        try { raw = storage.getItem(buildSaveKey(identity, level)); } catch (_) { return { ok: false, reason: 'storage_read_failed' }; }
+        if (raw === null) return { ok: true, reason: '', archived: false };
+        try {
+            const archiveKey = buildArchiveKey(identity, level);
+            const existing = readJson(storage, archiveKey).value;
+            const archives = Array.isArray(existing) ? existing : [];
+            archives.push({ archivedAt: nowIso(options), reason: options.reason || 'archived', raw });
+            storage.setItem(archiveKey, JSON.stringify(archives.slice(-MAX_ARCHIVES_PER_LEVEL)));
+        } catch (_) {
+            return { ok: false, reason: 'archive_failed' };
+        }
+        return { ok: true, reason: '', archived: true };
+    }
+
+    /**
      * Restart ONE level's economy on this device: archive the current save,
      * advance that level's run generation, and remove only that level's slot.
      * Other levels, checkpoint evidence and roster entitlements are untouched.
@@ -539,19 +563,9 @@
         const level = normalizeSaveLevel(levelInput);
         if (!storage || !identity || level === null) return { ok: false, reason: 'invalid_request' };
         const key = buildSaveKey(identity, level);
-        let raw = null;
-        try { raw = storage.getItem(key); } catch (_) { return { ok: false, reason: 'storage_read_failed' }; }
-        if (raw !== null) {
-            try {
-                const archiveKey = buildArchiveKey(identity, level);
-                const existing = readJson(storage, archiveKey).value;
-                const archives = Array.isArray(existing) ? existing : [];
-                archives.push({ archivedAt: nowIso(options), reason: options.reason || 'student_restart', raw });
-                storage.setItem(archiveKey, JSON.stringify(archives.slice(-MAX_ARCHIVES_PER_LEVEL)));
-            } catch (_) {
-                return { ok: false, reason: 'archive_failed' };
-            }
-        }
+        const archived = archiveLevelSave(storage, identity, level, { ...options, reason: options.reason || 'student_restart' });
+        if (!archived.ok) return { ok: false, reason: archived.reason };
+        const raw = archived.archived ? true : null;
         const ledger = readLedger(storage, identity);
         const runKey = String(level);
         const previous = ledger.levelRuns[runKey];
@@ -738,6 +752,7 @@
         QUARANTINE_KEY,
         normalizeSaveLevel,
         normalizeIdentity,
+        archiveLevelSave,
         buildProgressKey,
         buildSaveKey,
         buildArchiveKey,
