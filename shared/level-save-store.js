@@ -565,7 +565,6 @@
         const key = buildSaveKey(identity, level);
         const archived = archiveLevelSave(storage, identity, level, { ...options, reason: options.reason || 'student_restart' });
         if (!archived.ok) return { ok: false, reason: archived.reason };
-        const raw = archived.archived ? true : null;
         const ledger = readLedger(storage, identity);
         const runKey = String(level);
         const previous = ledger.levelRuns[runKey];
@@ -574,7 +573,7 @@
         ledger.levelRuns[runKey] = run;
         if (!writeLedger(storage, ledger)) return { ok: false, reason: 'ledger_write_failed' };
         try { storage.removeItem(key); } catch (_) { return { ok: false, reason: 'storage_remove_failed' }; }
-        return { ok: true, reason: '', archived: raw !== null, previousRun: previous || null, run };
+        return { ok: true, reason: '', archived: !!archived.archived, previousRun: previous || null, run };
     }
 
     // ------------------------------------------------------------------

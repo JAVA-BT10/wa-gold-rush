@@ -852,7 +852,7 @@
         function renderLeaderboardForLevel(level) {
             _activeLeaderboardLevel = Number(level) || 2;
             const content = document.getElementById('leaderboardContent');
-            document.querySelectorAll('.tab-btn').forEach(btn => {
+            document.querySelectorAll('#leaderboardTabs .tab-btn').forEach(btn => {
                 btn.classList.toggle('active', Number(btn.dataset.level) === _activeLeaderboardLevel);
             });
             const caps = window.WA_GOLD_RUSH_LEVEL_CAPABILITIES;
