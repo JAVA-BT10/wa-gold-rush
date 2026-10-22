@@ -165,6 +165,18 @@ test('malformed or mismatched slot content is quarantined, never loaded, never d
     assert.equal(h.gameState.round, 1);
 });
 
+test('a slot written by an unsupported (e.g. newer) storage schema fails closed and is never replaced', () => {
+    const storage = createSessionStorage();
+    const key = store.buildSaveKey(ID, 2);
+    const future = JSON.stringify({ kind: 'wa_gr_level_save', storageSchemaVersion: 99, owner: ID, level: 2, snapshot: {} });
+    storage.setItem(key, future);
+    const h = buildStudentGameHarness({ level: 2, storage });
+    assert.equal(h.loadResult.status, 'error');
+    assert.equal(h.gameState.saveLocked, true);
+    h.gameState.saveToLocalStorage();
+    assert.equal(storage.getItem(key), future);
+});
+
 test('no default-level coercion: invalid or planned ?level= never maps to another level', () => {
     const storage = createSessionStorage();
     for (const search of ['?level=6', '?level=abc', '?level=2.5', '?level=0', '?level=1']) {

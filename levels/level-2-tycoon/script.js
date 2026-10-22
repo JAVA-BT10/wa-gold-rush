@@ -257,6 +257,13 @@ function loadLevelGameForSession(session, level) {
     } else if (loaded.status === 'missing') {
         gameState.beginLevelRun();
         setLevelLoadState('started');
+    } else if (loaded.status === 'invalid' && loaded.reason === 'storage_schema_unsupported') {
+        // Written by a different (e.g. newer) storage schema: fail closed and
+        // never replace it with a fresh game (rollback safety).
+        gameState.saveLocked = true;
+        gameState.reset();
+        setLevelLoadState('error', loaded.reason);
+        return levelLoadState;
     } else if (loaded.status === 'invalid' && loaded.key) {
         const kept = loaded.raw === undefined || loaded.raw === null
             || store.quarantineRaw(localStorage, loaded.key, loaded.raw, loaded.reason);

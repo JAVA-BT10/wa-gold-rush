@@ -37,6 +37,18 @@ wa-gold-rush/
 | 3 | WA Goldfields | Southern Cross, Coolgardie, Kalgoorlie progression | Unending | Regional strategy |
 | 4 | Advanced | Company mode, random events, advanced risk | Unending | Strategic planning |
 | 5 | Classroom Challenge | Shared local leaderboard + teacher stats/pause | Ongoing | Classroom competition |
+| 6 | Goldfields Mastery (planned) | Historical timeline simulation — **not playable**; recognised but disabled | — | See [Level 6 blueprint](docs/architecture/level-6-goldfields-mastery-blueprint.md) |
+
+## Architecture and planning (draft)
+
+Each student has **one identity** (`GGR_Students`) and an **independent game per level** (one `GGR_StudentProgress` row per `UPPER(ClassCode)|UPPER(StudentCode)|Level`). In the browser each level is saved separately (`wa_gr_level_save_v1|CLASS|STUDENT|LEVEL`); the old shared `level2_autosave` slot is migrated non-destructively and kept as a backup. Tenant-dependent behaviour (save protocol v2, full cloud restore, server leaderboard, level reset, competition snapshots, Level 6 analytics) is behind runtime feature flags that default **OFF**. Nothing in these documents is live-verified.
+
+- [Future-state architecture](docs/architecture/future-state-architecture.md) — identity, per-level saves, migration, restore, leaderboards, competitions, Level 1 assessment, level guide
+- [Flow registry and contracts](docs/power-automate/flow-registry-and-contracts.md) — existing, optional and planned flows
+- [Save protocol v2](docs/power-automate/save-protocol-v2.md) — server revision / compare-and-swap, idempotency receipts, reset generation, test vectors
+- [Level 6 Goldfields Mastery blueprint](docs/architecture/level-6-goldfields-mastery-blueprint.md)
+- [Manual repair template (mixed-level histories)](docs/operations/manual-repair-mixed-history.md)
+- [Staged release, rollback and tenant acceptance matrix](docs/operations/release-and-acceptance.md)
 
 ## Level 1: Basic Mining (Archived)
 
@@ -173,7 +185,7 @@ Frontend flow calls use `WA_GOLD_RUSH_POWER_AUTOMATE.callFlow(...)`, which handl
 
 ### Progress saves
 
-`shared/sharepoint-sync.js` only sends a save when `studentCode`, `classCode`, and the current gameplay `level` (2–5) are valid and match the signed-in session. The canonical `ProgressKey` is `UPPER(ClassCode)|UPPER(StudentCode)|Level`. Invalid or rejected saves (HTTP 400/410/422 or `ok:false`) go to `wa_gr_sync_quarantine` and are not retried. Network errors and timeouts are retried with the same `saveRequestId`. See `docs/power-automate/GGR_SaveProgress-repair-spec.md` for the flow-side checklist.
+Each level is a separate game: saves are captured from that level's own browser slot and sent for that level only (never relabelled from `?level=` or the roster `CurrentLevel`), and no save is uploaded at page start. `shared/sharepoint-sync.js` only sends a save when `studentCode`, `classCode`, and the current gameplay `level` (2–5) are valid and match the signed-in session. The canonical `ProgressKey` is `UPPER(ClassCode)|UPPER(StudentCode)|Level`. Invalid or rejected saves (HTTP 400/410/422 or `ok:false`) go to `wa_gr_sync_quarantine` and are not retried. Network errors and timeouts are retried with the same `saveRequestId`. See `docs/power-automate/GGR_SaveProgress-repair-spec.md` for the flow-side checklist.
 
 #### Power Automate: student/profile upsert flow
 Trigger: **When an HTTP request is received**  
@@ -249,11 +261,12 @@ Validation rules:
 
 ### Level-Specific Leaderboards
 
-Each level (1–6) has its own leaderboard in the Teacher Dashboard:
-- **Top 20** — sorted by net worth
-- **All-Time Level Record** — highest net worth ever for that level
+Each playable level has its own leaderboard in the Teacher Dashboard, built by `shared/leaderboard.js` from that level's **saved progress rows** joined to the authorised roster (never from a student's assigned/current/progressed level or latest cross-level summary). A student who has played Levels 2 and 4 appears on both boards.
+- **Top current** — ranked by net worth (default), profit (`netWorth − StartingNetWorth` for the current run) or ROI; rows without a recorded baseline (or ROI baseline ≤ 0) are listed as unrankable rather than estimated. This is the *current* standing, not an all-time record.
+- Unplayed default rows and rows marked held/under review in `LeaderboardStatus` are excluded; only `LeaderboardName` is shown.
+- Class filtering in the browser is a display filter; class scope must be enforced by the flow.
 
-The in-game classroom leaderboard (Level 2–5 Goldfields Venture) shows public `LeaderboardName`.
+The in-game board on Levels 2–5 is **this device only** (per level) and shows public `LeaderboardName`.
 
 ### Investment Profile
 
@@ -275,4 +288,5 @@ A donut chart and rating label appear on:
 
 - SharePoint sync is disabled until Power Automate endpoints are configured in `shared/sharepoint-sync.js`.
 - Teacher dashboard access is open (no passcode) by default. Set `TEACHER_PASSCODE_MODE = true` and `TEACHER_PASSCODE_STATIC = 'yourpasscode'` in `teacher/dashboard-state.js` to require a passcode.
-- Level 6 is a placeholder card — gameplay not yet implemented.
+- Level 6 (Goldfields Mastery) is recognised but disabled: it cannot be started, assigned or unlocked until it is implemented and its flows are verified.
+- Level 1 is not part of the per-level save pipeline (login only).
