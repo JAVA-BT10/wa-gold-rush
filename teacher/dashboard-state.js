@@ -2025,6 +2025,8 @@ class TeacherDashboard {
             progress,
             level: levelNum,
             metric: options.metric,
+            competitionId: options.competitionId,
+            competitionBaselines: options.competitionBaselines,
             classCodes: options.classCodes,
             limit: 20
         });

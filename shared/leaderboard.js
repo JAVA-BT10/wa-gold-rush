@@ -19,6 +19,7 @@
  *   netWorth – current net worth of this level's game (default)
  *   profit   – netWorth − StartingNetWorth of THIS run
  *   roi      – (netWorth − StartingNetWorth) / StartingNetWorth
+ *   competitionProfit – netWorth − the matching competition baseline (gated)
  * Profit/ROI need a recorded, immutable StartingNetWorth for the run. A
  * missing baseline (e.g. a migrated legacy save) or a non-positive baseline
  * (ROI) makes the row explicitly "unrankable" for that metric — it is never
@@ -32,9 +33,11 @@
     const METRICS = Object.freeze({
         netWorth: Object.freeze({ key: 'netWorth', label: 'Net worth', requiresBaseline: false }),
         profit: Object.freeze({ key: 'profit', label: 'Profit (net worth − starting net worth)', requiresBaseline: true }),
-        roi: Object.freeze({ key: 'roi', label: 'Return on investment (ROI)', requiresBaseline: true })
+        roi: Object.freeze({ key: 'roi', label: 'Return on investment (ROI)', requiresBaseline: true }),
+        competitionProfit: Object.freeze({ key: 'competitionProfit', label: 'Competition profit (net worth − competition baseline)', requiresBaseline: true })
     });
     const HELD_STATUSES = new Set(['held', 'excluded', 'unverified', 'under_review', 'needs_review']);
+    const CONFLICT_STATUSES = new Set(['conflict', 'conflicted', 'revision_conflict', 'generation_stale', 'unresolved']);
     const PLACEHOLDER_NAME = 'Unnamed player';
 
     function unwrap(value) {
@@ -73,12 +76,12 @@
     }
 
     /** Public nickname only; never falls back to the student's real name. */
-    function publicName(student) {
+    function publicName(student, strictPrivacy = false) {
         const explicit = text(student.LeaderboardName ?? student.leaderboardName);
         const realName = text(student.StudentName ?? student.studentName);
         if (!explicit) return PLACEHOLDER_NAME;
         if (realName && explicit.toLowerCase() === realName.toLowerCase()
-            && !text(student.LeaderboardName)) {
+            && (strictPrivacy || !text(student.LeaderboardName))) {
             // Normalised rosters may have copied StudentName into
             // leaderboardName when LeaderboardName was blank.
             return PLACEHOLDER_NAME;
@@ -98,8 +101,16 @@
         return finite(run.startingNetWorth);
     }
 
-    function readLeaderboardStatus(row) {
-        return text(row.leaderboardStatus ?? row.LeaderboardStatus).toLowerCase();
+    function readLeaderboardStatuses(row, competitionMetric = false) {
+        let leaderboardStatus = text(row.leaderboardStatus ?? row.LeaderboardStatus).toLowerCase();
+        if (competitionMetric) leaderboardStatus = leaderboardStatus.replace(/[\s-]+/g, '_');
+        const statuses = [leaderboardStatus];
+        if (competitionMetric) {
+            statuses.push(text(row.reviewStatus ?? row.ReviewStatus).toLowerCase().replace(/[\s-]+/g, '_'));
+            statuses.push(text(row.saveStatus ?? row.SaveStatus).toLowerCase().replace(/[\s-]+/g, '_'));
+            statuses.push(text(row.syncStatus ?? row.SyncStatus).toLowerCase().replace(/[\s-]+/g, '_'));
+        }
+        return statuses;
     }
 
     function computeMetric(metric, netWorth, startingNetWorth) {
@@ -108,6 +119,61 @@
         if (metric === 'profit') return { value: netWorth - startingNetWorth };
         if (startingNetWorth <= 0) return { value: null, unrankable: 'non_positive_baseline' };
         return { value: (netWorth - startingNetWorth) / startingNetWorth };
+    }
+
+    function getCompetitionBaselineApi() {
+        return globalObj.WA_GOLD_RUSH_COMPETITION_BASELINES || null;
+    }
+
+    function competitionRowIssue(row, baseline) {
+        if (baseline.status !== 'active') return 'baseline_not_active';
+        const statuses = [
+            row.saveStatus, row.SaveStatus, row.syncStatus, row.SyncStatus,
+            row.conflictStatus, row.ConflictStatus,
+            row.leaderboardStatus, row.LeaderboardStatus, row.reviewStatus, row.ReviewStatus
+        ].map((status) => text(status).toLowerCase().replace(/[\s-]+/g, '_'));
+        if (statuses.some((status) => CONFLICT_STATUSES.has(status))
+            || row.conflict === true
+            || row.revisionConflict === true
+            || row.generationStale === true) {
+            return 'save_conflict';
+        }
+
+        const baselineGeneration = finite(baseline.baselineGeneration);
+        const currentGeneration = finite(row.runGeneration ?? row.RunGeneration ?? row.generation ?? row.Generation);
+        if (baselineGeneration === null) return 'baseline_generation_missing';
+        if (!Number.isInteger(currentGeneration)) return 'generation_unverified';
+        if (currentGeneration !== baselineGeneration) return 'generation_changed';
+
+        const baselineRevision = finite(baseline.baselineRevision);
+        const currentRevision = finite(row.revision ?? row.Revision ?? row.saveRevision ?? row.SaveRevision);
+        if (baselineRevision === null) return 'baseline_revision_missing';
+        if (!Number.isInteger(currentRevision) || currentRevision < 0) return 'revision_unverified';
+        if (currentRevision < baselineRevision) return 'revision_stale';
+        return '';
+    }
+
+    function rankCompetitionByClass(ranked, limit) {
+        const byClass = new Map();
+        ranked.forEach((entry) => {
+            const group = byClass.get(entry.classCode) || [];
+            group.push(entry);
+            byClass.set(entry.classCode, group);
+        });
+        const entries = [];
+        Array.from(byClass.keys()).sort().forEach((classCode) => {
+            const group = byClass.get(classCode);
+            group.sort((a, b) => (b.value - a.value) || a.leaderboardName.localeCompare(b.leaderboardName));
+            let previousValue = null;
+            let previousRank = 0;
+            group.slice(0, limit).forEach((entry, index) => {
+                const rank = entry.value === previousValue ? previousRank : index + 1;
+                previousValue = entry.value;
+                previousRank = rank;
+                entries.push(Object.freeze({ rank, ...entry }));
+            });
+        });
+        return entries;
     }
 
     function count(map, key) {
@@ -119,7 +185,7 @@
      *   students: roster rows (normalised or raw GGR_Students shape)
      *   progress: per-level progress rows
      *   level: 1–6
-     *   metric: 'netWorth' | 'profit' | 'roi'
+     *   metric: 'netWorth' | 'profit' | 'roi' | 'competitionProfit'
      *   classCodes: optional presentation filter (NOT a security control)
      *   limit: default 20
      */
@@ -131,6 +197,15 @@
         const unrankableReasons = {};
         const base = { level, metric, metricLabel: METRICS[metric].label, entries: [], top: null, excluded, unrankable: unrankableReasons, unrankableCount: 0 };
         if (level === null) return { ...base, reason: 'invalid_level' };
+        if (metric === 'competitionProfit') {
+            const capabilities = globalObj.WA_GOLD_RUSH_LEVEL_CAPABILITIES;
+            if (!capabilities?.isFeatureEnabled?.('competitionLeaderboardMetric', globalObj)
+                || !capabilities?.isFeatureEnabled?.('competitionBaselines', globalObj)) {
+                return { ...base, reason: 'feature_disabled' };
+            }
+            if (!text(input.competitionId)) return { ...base, reason: 'competition_id_required' };
+            if (!getCompetitionBaselineApi()) return { ...base, reason: 'baseline_model_unavailable' };
+        }
 
         const classFilter = Array.isArray(input.classCodes) && input.classCodes.length
             ? new Set(input.classCodes.map((code) => text(code).toUpperCase()).filter(Boolean))
@@ -164,6 +239,11 @@
             const existing = byProgressKey.get(expectedKey);
             if (existing) {
                 count(excluded, 'duplicate_progress_row');
+                if (metric === 'competitionProfit') {
+                    existing.duplicate = true;
+                    byProgressKey.set(expectedKey, existing);
+                    return;
+                }
                 const tExisting = Date.parse(text(existing.row.updatedAt ?? existing.row.Modified)) || 0;
                 const tRow = Date.parse(text(row.updatedAt ?? row.Modified)) || 0;
                 if (tRow <= tExisting) return;
@@ -173,24 +253,57 @@
 
         const ranked = [];
         byProgressKey.forEach(({ row, student, classCode }) => {
-            if (HELD_STATUSES.has(readLeaderboardStatus(row))) { count(excluded, 'held_for_review'); return; }
+            if (metric === 'competitionProfit' && byProgressKey.get(`${classCode}|${text(row.studentCode ?? row.StudentCode).toUpperCase()}|${level}`)?.duplicate) {
+                count(unrankableReasons, 'duplicate_progress_row');
+                return;
+            }
+            if (readLeaderboardStatuses(row, metric === 'competitionProfit')
+                .some((status) => HELD_STATUSES.has(status))) {
+                count(excluded, 'held_for_review');
+                return;
+            }
             const netWorth = finite(row.netWorth ?? row.NetWorth);
             if (netWorth === null) { count(excluded, 'missing_net_worth'); return; }
             const round = finite(row.round ?? row.Round ?? row.currentRound ?? row.CurrentRound);
             if (round === null || round <= 1) { count(excluded, 'not_yet_played'); return; }
-            const startingNetWorth = readStartingNetWorth(row);
-            const computed = computeMetric(metric, netWorth, startingNetWorth);
+            let startingNetWorth = readStartingNetWorth(row);
+            let computed;
+            if (metric === 'competitionProfit') {
+                const baselineResult = getCompetitionBaselineApi().readCompetitionBaseline(input.competitionBaselines, {
+                    competitionId: input.competitionId,
+                    classCode,
+                    level,
+                    studentCode: row.studentCode ?? row.StudentCode
+                });
+                if (!baselineResult.ok) {
+                    count(unrankableReasons, baselineResult.reason || 'invalid_baseline');
+                    return;
+                }
+                if (!baselineResult.found) {
+                    count(unrankableReasons, 'missing_baseline');
+                    return;
+                }
+                const issue = competitionRowIssue(row, baselineResult.baseline);
+                if (issue) {
+                    count(unrankableReasons, issue);
+                    return;
+                }
+                startingNetWorth = baselineResult.baseline.baselineNetWorth;
+                computed = { value: netWorth - startingNetWorth };
+            } else {
+                computed = computeMetric(metric, netWorth, startingNetWorth);
+            }
             if (computed.value === null || !Number.isFinite(computed.value)) {
                 count(unrankableReasons, computed.unrankable || 'not_computable');
                 return;
             }
             ranked.push({
-                leaderboardName: publicName(student),
+                leaderboardName: publicName(student, metric === 'competitionProfit'),
                 classCode,
                 level,
                 value: computed.value,
                 netWorth,
-                startingNetWorth,
+                ...(metric === 'competitionProfit' ? {} : { startingNetWorth }),
                 round,
                 strategyLabel: text(row.strategyLabel ?? row.StrategyLabel),
                 lastPlayed: text(row.updatedAt ?? row.LastPlayedUtc ?? row.Modified) || null
@@ -198,14 +311,19 @@
         });
 
         ranked.sort((a, b) => (b.value - a.value) || a.leaderboardName.localeCompare(b.leaderboardName));
-        let previousValue = null;
-        let previousRank = 0;
-        const entries = ranked.slice(0, limit).map((entry, index) => {
-            const rank = entry.value === previousValue ? previousRank : index + 1;
-            previousValue = entry.value;
-            previousRank = rank;
-            return Object.freeze({ rank, ...entry });
-        });
+        let entries;
+        if (metric === 'competitionProfit') {
+            entries = rankCompetitionByClass(ranked, limit);
+        } else {
+            let previousValue = null;
+            let previousRank = 0;
+            entries = ranked.slice(0, limit).map((entry, index) => {
+                const rank = entry.value === previousValue ? previousRank : index + 1;
+                previousValue = entry.value;
+                previousRank = rank;
+                return Object.freeze({ rank, ...entry });
+            });
+        }
         const unrankableCount = Object.values(unrankableReasons).reduce((sum, n) => sum + n, 0);
         return { ...base, entries, top: entries[0] || null, unrankableCount, rankedCount: ranked.length };
     }

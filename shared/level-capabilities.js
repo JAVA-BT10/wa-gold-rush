@@ -112,7 +112,7 @@
         importAuditLogger: Object.freeze({ name: 'GGR_ImportAuditLogger', status: 'optional_unconfigured', flag: null }),
         resetLevelProgress: Object.freeze({ name: 'GGR_ResetLevelProgress', status: 'planned', flag: 'levelResetFlow' }),
         getLeaderboard: Object.freeze({ name: 'GGR_GetLeaderboard', status: 'planned', flag: 'serverLeaderboard' }),
-        copyCompetitionSnapshot: Object.freeze({ name: 'GGR_CopyCompetitionSnapshot', status: 'planned', flag: 'competitionSnapshots' }),
+        copyCompetitionSnapshot: Object.freeze({ name: 'GGR_CopyCompetitionSnapshot', status: 'planned', flag: 'competitionBaselines' }),
         level6HistoricalResults: Object.freeze({ name: 'GGR_Level6HistoricalResults', status: 'planned', flag: 'level6Analytics' })
     });
 
@@ -126,6 +126,8 @@
         fullCloudRestore: false,
         serverLeaderboard: false,
         levelResetFlow: false,
+        competitionBaselines: false,
+        competitionLeaderboardMetric: false,
         competitionSnapshots: false,
         level6Analytics: false,
         // Policy: when cloud state for a brand-new local level slot cannot be
