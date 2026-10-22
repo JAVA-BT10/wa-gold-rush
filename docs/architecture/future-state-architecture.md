@@ -16,6 +16,7 @@
 > - [Flow registry and contracts](../power-automate/flow-registry-and-contracts.md)
 > - [Save protocol v2 (revision / idempotency / generation)](../power-automate/save-protocol-v2.md)
 > - [Level 6 Goldfields Mastery blueprint](level-6-goldfields-mastery-blueprint.md)
+> - [Competition baseline and freeze runbook](../operations/competition-baselines.md)
 > - [Manual repair template for mixed-level histories](../operations/manual-repair-mixed-history.md)
 > - [Staged release, rollback and tenant acceptance matrix](../operations/release-and-acceptance.md)
 > - Existing: [GGR_SaveProgress repair spec](../power-automate/GGR_SaveProgress-repair-spec.md), [student login/progression guide](../power-automate/student-login-progression-repair.md), [checkpoint approval security](../power-automate/checkpoint-approval-security.md)
@@ -73,6 +74,8 @@ Rules:
   - `fullCloudRestore`
   - `serverLeaderboard`
   - `levelResetFlow`
+  - `competitionBaselines`
+  - `competitionLeaderboardMetric`
   - `competitionSnapshots`
   - `level6Analytics`
   - `holdUnverifiedNewSlotUploads`
@@ -228,9 +231,9 @@ The full specification is in [save-protocol-v2](../power-automate/save-protocol-
 - **Class filtering in the dashboard is display-only.** Server-side class scope must be enforced in `GGR_GetDashboardData` and in the planned `GGR_GetLeaderboard`.
 - **The in-game board is device-only**, labelled "This Device's Leaderboard (this level)". It is not cross-device, because no leaderboard flow exists.
 
-## 9. Competition scope (planned only)
+## 9. Competition scope (additive baseline model; tenant flows planned)
 
-The per-level key keeps Level 2 separate from Level 4. It **cannot** also keep a fresh Level 2 championship run alongside the student's existing Level 2 main game, because one key holds exactly one row.
+The per-level key keeps Level 2 separate from Level 4. It **cannot** also keep a fresh Level 2 championship run alongside the student's existing Level 2 main game, because one key holds exactly one row. The repository now has a separate additive competition-baseline model and a gated competition-profit ranking path; it does not alter or multiply save rows.
 
 Lower-level saves are never silently reset to equalise conditions. A future competition extension needs:
 - a teacher activity/run identity (e.g. `CompetitionId`);
@@ -240,10 +243,10 @@ Lower-level saves are never silently reset to equalise conditions. A future comp
 - an approved archive/reset;
 - frozen result snapshots.
 
-Two candidate designs exist. Both are documented and gated; neither is deployed.
+The baseline model and ranking are implemented and mock-tested, but the tenant stores and flow are not deployed or live-verified. See the [competition runbook](../operations/competition-baselines.md) for the record contract and rollout gates.
 
 - **(a) Separate competition results storage.** A `GGR_CompetitionResults` list receives frozen standings via `GGR_CopyCompetitionSnapshot`. This freezes standings but **cannot** create fresh, equal starts.
-- **(b) Context-extended key.** `CLASS|STUDENT|LEVEL|CONTEXT`, used only for competition contexts. The main-game key stays the canonical three-part key.
+- **(b) Context-extended key.** `CLASS|STUDENT|LEVEL|CONTEXT`, used only for competition contexts. This remains a future extension requiring explicit save/restore/concurrency design; the main-game key stays the canonical three-part key.
 
 ## 10. Level 1 assessment
 

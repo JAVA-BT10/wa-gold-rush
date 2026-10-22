@@ -50,7 +50,7 @@
 | GGR_ImportAuditLogger | `importAuditLogger` | Optional / unconfigured (placeholder) | none | — |
 | GGR_ResetLevelProgress | `resetLevelProgress` | **Planned** | none | `levelResetFlow` |
 | GGR_GetLeaderboard | `getLeaderboard` | **Planned** | none | `serverLeaderboard` |
-| GGR_CopyCompetitionSnapshot | `copyCompetitionSnapshot` | **Planned** | none | `competitionSnapshots` |
+| GGR_CopyCompetitionSnapshot | `copyCompetitionSnapshot` | **Planned** | none | `competitionBaselines`; freeze/close/export also require `competitionSnapshots` |
 | GGR_Level6HistoricalResults | `level6HistoricalResults` | **Planned** | none | `level6Analytics` |
 
 Notes on the optional flows:
@@ -196,14 +196,18 @@ Notes on the optional flows:
 - **Rules:** the same as `shared/leaderboard.js` (implemented and mock-tested client-side), with class scope enforced server-side. The response never contains `StudentName`, `StudentID`, `StudentCode` or credentials.
 - **Gate:** `serverLeaderboard`.
 
-## GGR_CopyCompetitionSnapshot (planned)
+## GGR_CopyCompetitionSnapshot (planned; canonical competition operation path)
 
-- **Request:** `{ competitionId, classCodes, level, metric, scoringVersion, cutoffUtc, rules }`, plus teacher auth.
-- **Effect:**
-  - Copy the ranked rows as they stand at the cutoff into an immutable `GGR_CompetitionResults` record set, with rules and scoring version.
-  - Never modify progress rows.
-  - This **does not** create a separate live game and cannot create equal fresh starts (see architecture §9).
-- **Gate:** `competitionSnapshots`.
+- **Contract:** `ggr.competitionSnapshot.v1`; one canonical flow with `operation` equal to `capture_baseline`, `freeze`, `close`, or `export`.
+- **Request:** `{ contractVersion, operation, competitionId, classCodes, level, metric, scoringVersion, cutoffUtc, rules }`, plus server-verifiable teacher auth.
+- **Baseline record:** `{ competitionId, classCode, level, studentCode, baselineNetWorth, baselineRevision, baselineGeneration, baselineCapturedAt, status }`. The composite identity is competition + class + level + student. Revision and generation may be null in the stored record, but such rows are not competition-rankable until continuity can be verified.
+- **Capture:** the server reads net worth, revision, and generation from the canonical `GGR_StudentProgress` row. It does not accept student-asserted baseline values, and it does not modify the save row.
+- **Freeze:** persist an immutable cutoff snapshot and its scoring version/rules. Later saves cannot change the frozen result. `close` and `export` operate only on a frozen result.
+- **Response:** `{ ok:true, contractVersion, operation, status, competitionId, level, recordCount, snapshotId? }`. Status is `active` (capture), `frozen` (freeze), `closed` (close), or `exported` (export); echo the requested competition and level. Reject or fail closed on authorization failure, held/under-review rows, unresolved conflict, generation mismatch, duplicate key, timeout, or incomplete response. Do not report an unknown result as a successful capture/freeze.
+- **Output privacy:** exports use public leaderboard nicknames and omit `StudentName`, `StudentID`, `StudentCode`, PINs, hashes, and credentials.
+- **Storage:** use one shared competition baseline/results store if needed; never create per-level lists or another live economy. This operation does not create separate competition save slots or equal fresh starts.
+- **Gate:** `competitionBaselines` for baseline capture; `competitionSnapshots` must additionally be ON for freeze, close, and export. Both default OFF. The endpoint must be configured and non-placeholder. Tenant-side teacher/class authorization is mandatory; client flags and URLs are not authentication.
+- **Rollback:** turn both flags OFF. Keep baseline and frozen-result records; do not modify `GGR_StudentProgress` or replay queued saves.
 
 ## GGR_Level6HistoricalResults (planned)
 

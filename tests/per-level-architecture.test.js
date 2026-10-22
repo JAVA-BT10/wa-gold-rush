@@ -24,8 +24,10 @@ const { ReferenceSaveServer } = require('./support/reference-save-server.js');
 
 const store = require('../shared/level-save-store.js');
 const caps = require('../shared/level-capabilities.js');
+const competitionBaselines = require('../shared/competition-baselines.js');
 const leaderboard = require('../shared/leaderboard.js');
 const cloudRestore = require('../shared/cloud-restore.js');
+const competitionSnapshot = require('../shared/competition-snapshot.js');
 
 const ID = Object.freeze({ classCode: '6B', studentCode: 'SC-1' });
 
@@ -757,6 +759,280 @@ test('leaderboard profit/ROI need this run\'s baseline; zero or missing baseline
     const markerRow = row('SC-2', 2, { netWorth: 600, ProgressionMarkersJson: JSON.stringify({ run: { generation: 1, startingNetWorth: 300 } }) });
     assert.equal(leaderboard.readStartingNetWorth(markerRow), 300);
     assert.equal(leaderboard.readStartingNetWorth({ ...markerRow, RunGeneration: 2 }), null, 'baseline from another run is ignored');
+});
+
+function competitionBaseline(studentCode, level, overrides = {}) {
+    return {
+        competitionId: 'term-1',
+        classCode: '6B',
+        level,
+        studentCode,
+        baselineNetWorth: 300,
+        baselineRevision: 1,
+        baselineGeneration: 1,
+        baselineCapturedAt: '2026-10-22T12:00:00.000Z',
+        status: 'active',
+        ...overrides
+    };
+}
+
+test('competition baseline capture and read are additive, level-keyed, and reject held or conflicted saves', () => {
+    const progressRow = row('SC-1', 2, { netWorth: 1400, Revision: 3, RunGeneration: 1 });
+    const captured = competitionBaselines.captureCompetitionBaseline({
+        competitionId: 'term-1',
+        progressRow,
+        baselineCapturedAt: '2026-10-22T12:00:00.000Z'
+    });
+    assert.equal(captured.ok, true);
+    assert.deepEqual(Object.keys(captured.baseline), [
+        'competitionId', 'classCode', 'level', 'studentCode', 'baselineNetWorth',
+        'baselineRevision', 'baselineGeneration', 'baselineCapturedAt', 'status'
+    ]);
+    assert.equal(captured.baseline.baselineRevision, 3);
+    assert.equal(captured.baseline.baselineGeneration, 1);
+    assert.equal(competitionBaselines.readCompetitionBaseline(
+        [captured.baseline, competitionBaseline('SC-1', 4)],
+        { competitionId: 'term-1', classCode: '6B', level: 2, studentCode: 'SC-1' }
+    ).baseline.level, 2);
+    assert.equal(competitionBaselines.readCompetitionBaseline(
+        [captured.baseline, competitionBaseline('SC-1', 4)],
+        { competitionId: 'term-1', classCode: '6B', level: 4, studentCode: 'SC-1' }
+    ).baseline.level, 4);
+    const legacyBaseline = competitionBaselines.captureCompetitionBaseline({
+        competitionId: 'term-1',
+        progressRow: row('SC-2', 2, { netWorth: 900 }),
+        baselineCapturedAt: '2026-10-22T12:00:00.000Z'
+    });
+    assert.equal(legacyBaseline.ok, true);
+    assert.equal(legacyBaseline.baseline.baselineRevision, null);
+    assert.equal(legacyBaseline.baseline.baselineGeneration, null);
+    const frozenBaseline = competitionBaselines.transitionBaselineStatus(captured.baseline, 'frozen');
+    assert.equal(frozenBaseline.baseline.status, 'frozen');
+    assert.equal(competitionBaselines.transitionBaselineStatus(frozenBaseline.baseline, 'active').reason, 'invalid_status_transition');
+    assert.equal(competitionBaselines.captureCompetitionBaseline({
+        competitionId: 'term-1',
+        progressRow: { ...progressRow, ReviewStatus: 'Under Review' },
+        baselineCapturedAt: '2026-10-22T12:00:00.000Z'
+    }).reason, 'held_for_review');
+    assert.equal(competitionBaselines.captureCompetitionBaseline({
+        competitionId: 'term-1',
+        progressRow: { ...progressRow, SaveStatus: 'revision_conflict' },
+        baselineCapturedAt: '2026-10-22T12:00:00.000Z'
+    }).reason, 'save_conflict');
+    assert.equal(competitionBaselines.readCompetitionBaseline(
+        [captured.baseline, captured.baseline],
+        { competitionId: 'term-1', classCode: '6B', level: 2, studentCode: 'SC-1' }
+    ).reason, 'duplicate_baseline');
+});
+
+test('competitionProfit ranks per class and level; missing, held, reset, and conflicted rows never win', () => {
+    global.WA_GOLD_RUSH_RUNTIME_CONFIG = {
+        featureFlags: { competitionBaselines: true, competitionLeaderboardMetric: true }
+    };
+    const students = [
+        ...ROSTER,
+        { studentCode: 'SC-4', classCode: '6B', leaderboardName: 'Reset' },
+        { studentCode: 'SC-5', classCode: '6B', leaderboardName: 'Conflict' },
+        { studentCode: 'SC-6', classCode: '7B', leaderboardName: 'Other class' },
+        { studentCode: 'SC-7', classCode: '6B', leaderboardName: 'No baseline' },
+        { studentCode: 'SC-8', classCode: '6B', leaderboardName: 'Stale revision' }
+    ];
+    const progress = [
+        row('SC-1', 2, { netWorth: 1000, Revision: 2, RunGeneration: 1 }),
+        row('SC-1', 4, { netWorth: 950, Revision: 2, RunGeneration: 1 }),
+        row('SC-2', 2, { netWorth: 2000, Revision: 2, RunGeneration: 1 }),
+        row('SC-3', 2, { netWorth: 3000, Revision: 2, RunGeneration: 1, ReviewStatus: 'Under Review' }),
+        row('SC-4', 2, { netWorth: 4000, Revision: 2, RunGeneration: 2 }),
+        row('SC-5', 2, { netWorth: 5000, Revision: 2, RunGeneration: 1, revisionConflict: true }),
+        { ...row('SC-6', 2, { netWorth: 800, Revision: 2, RunGeneration: 1 }), classCode: '7B', progressKey: '7B|SC-6|2' },
+        row('SC-7', 2, { netWorth: 2000, Revision: 2, RunGeneration: 1 }),
+        row('SC-8', 2, { netWorth: 2000, Revision: 0, RunGeneration: 1 })
+    ];
+    const baselines = [
+        competitionBaseline('SC-1', 2, { baselineNetWorth: 300, baselineRevision: 1 }),
+        competitionBaseline('SC-1', 4, { baselineNetWorth: 900, baselineRevision: 1 }),
+        competitionBaseline('SC-2', 2, { baselineNetWorth: 400, baselineRevision: 1 }),
+        competitionBaseline('SC-4', 2, { baselineNetWorth: 500, baselineRevision: 1 }),
+        competitionBaseline('SC-5', 2, { baselineNetWorth: 500, baselineRevision: 1 }),
+        competitionBaseline('SC-6', 2, { classCode: '7B', baselineNetWorth: 300, baselineRevision: 1 }),
+        competitionBaseline('SC-8', 2, { baselineNetWorth: 500, baselineRevision: 1 })
+    ];
+
+    const level2 = leaderboard.buildLevelLeaderboard({
+        students, progress, level: 2, metric: 'competitionProfit',
+        competitionId: 'term-1', competitionBaselines: baselines
+    });
+    assert.deepEqual(level2.entries.map(({ classCode, rank, leaderboardName, value }) =>
+        [classCode, rank, leaderboardName, value]), [
+        ['6B', 1, 'Nugget', 1600],
+        ['6B', 2, 'Gold Miner', 700],
+        ['7B', 1, 'Other class', 500]
+    ]);
+    assert.equal(level2.unrankable.missing_baseline, 1);
+    assert.equal(level2.unrankable.generation_changed, 1);
+    assert.equal(level2.unrankable.save_conflict, 1);
+    assert.equal(level2.unrankable.revision_stale, 1);
+    assert.equal(level2.excluded.held_for_review, 1);
+    assert.equal(Object.hasOwn(level2.entries[0], 'startingNetWorth'), false);
+
+    const level4 = leaderboard.buildLevelLeaderboard({
+        students, progress, level: 4, metric: 'competitionProfit',
+        competitionId: 'term-1', competitionBaselines: baselines
+    });
+    assert.deepEqual(level4.entries.map((entry) => [entry.level, entry.leaderboardName, entry.value]), [
+        [4, 'Gold Miner', 50]
+    ]);
+    assert.doesNotMatch(JSON.stringify([...level2.entries, ...level4.entries]),
+        /Alex Smith|Sam Lee|123456|654321|SC-[1-8]|studentName|studentId|studentCode/i);
+    const duplicateSave = leaderboard.buildLevelLeaderboard({
+        students,
+        progress: [...progress, row('SC-1', 2, { netWorth: 1100, Revision: 2, RunGeneration: 1 })],
+        level: 2,
+        metric: 'competitionProfit',
+        competitionId: 'term-1',
+        competitionBaselines: baselines
+    });
+    assert.equal(duplicateSave.entries.some((entry) => entry.leaderboardName === 'Gold Miner'), false);
+    assert.equal(duplicateSave.unrankable.duplicate_progress_row, 1);
+    const frozenBaselineBoard = leaderboard.buildLevelLeaderboard({
+        students,
+        progress: [row('SC-1', 2, { netWorth: 1100, Revision: 2, RunGeneration: 1 })],
+        level: 2,
+        metric: 'competitionProfit',
+        competitionId: 'term-1',
+        competitionBaselines: [competitionBaseline('SC-1', 2, { status: 'frozen' })]
+    });
+    assert.equal(frozenBaselineBoard.entries.length, 0);
+    assert.equal(frozenBaselineBoard.unrankable.baseline_not_active, 1);
+});
+
+test('competition ranking flags default OFF without changing existing leaderboard metrics', () => {
+    assert.equal(caps.getFeatureFlags({}).competitionBaselines, false);
+    assert.equal(caps.getFeatureFlags({}).competitionLeaderboardMetric, false);
+    assert.equal(caps.getFeatureFlags({}).competitionSnapshots, false);
+    const input = {
+        students: ROSTER,
+        progress: [row('SC-1', 2, { netWorth: 1300, startingNetWorth: 300 })],
+        level: 2,
+        metric: 'netWorth',
+        competitionId: 'term-1',
+        competitionBaselines: []
+    };
+    const before = leaderboard.buildLevelLeaderboard({ ...input, metric: 'netWorth' });
+    const after = leaderboard.buildLevelLeaderboard(input);
+    assert.deepEqual(after.entries, before.entries);
+    assert.equal(leaderboard.buildLevelLeaderboard({
+        ...input,
+        metric: 'competitionProfit'
+    }).reason, 'feature_disabled');
+});
+
+test('competition rankings replace a nickname matching the real name', () => {
+    global.WA_GOLD_RUSH_RUNTIME_CONFIG = {
+        featureFlags: { competitionBaselines: true, competitionLeaderboardMetric: true }
+    };
+    const privateName = 'Private Student';
+    const board = leaderboard.buildLevelLeaderboard({
+        students: [{
+            studentCode: 'SC-1',
+            classCode: '6B',
+            leaderboardName: privateName,
+            LeaderboardName: privateName,
+            studentName: privateName,
+            StudentName: privateName
+        }],
+        progress: [row('SC-1', 2, { netWorth: 1000, Revision: 2, RunGeneration: 1 })],
+        competitionId: 'term-1',
+        competitionBaselines: [competitionBaseline('SC-1', 2)],
+        level: 2,
+        metric: 'competitionProfit'
+    });
+    assert.equal(board.entries[0].leaderboardName, leaderboard.PLACEHOLDER_NAME);
+    assert.doesNotMatch(JSON.stringify(board.entries), /Private Student|SC-1/i);
+});
+
+test('competition snapshot scaffold does not call an unconfigured or disabled endpoint', async () => {
+    let attempts = 0;
+    const payload = { competitionId: 'term-1', classCodes: ['6B'], level: 2 };
+    const callFlow = async () => { attempts++; return { success: true, data: {} }; };
+    const root = {
+        WA_GOLD_RUSH_LEVEL_CAPABILITIES: caps,
+        WA_GOLD_RUSH_RUNTIME_CONFIG: { featureFlags: { competitionBaselines: true } },
+        WA_GOLD_RUSH_FLOW_ENDPOINTS: {},
+        WA_GOLD_RUSH_POWER_AUTOMATE: { callFlow }
+    };
+    const missing = await competitionSnapshot.requestCompetitionSnapshot('capture_baseline', payload, { root });
+    assert.deepEqual(missing, { ok: false, status: 'unavailable', reason: 'endpoint_unconfigured' });
+    assert.equal(attempts, 0);
+
+    root.WA_GOLD_RUSH_FLOW_ENDPOINTS.copyCompetitionSnapshot = 'REPLACE-WITH-FLOW-URL';
+    const placeholder = await competitionSnapshot.requestCompetitionSnapshot('capture_baseline', payload, { root });
+    assert.equal(placeholder.reason, 'endpoint_unconfigured');
+    assert.equal(attempts, 0);
+
+    root.WA_GOLD_RUSH_FLOW_ENDPOINTS.copyCompetitionSnapshot = 'https://example.test/competition';
+    const freezeDisabled = await competitionSnapshot.requestCompetitionSnapshot('freeze', payload, { root });
+    assert.equal(freezeDisabled.reason, 'feature_disabled');
+    assert.equal(attempts, 0);
+
+    root.WA_GOLD_RUSH_RUNTIME_CONFIG.featureFlags.competitionBaselines = false;
+    const disabled = await competitionSnapshot.requestCompetitionSnapshot('capture_baseline', payload, { root });
+    assert.equal(disabled.reason, 'feature_disabled');
+    assert.equal(attempts, 0);
+});
+
+test('competition snapshot calls require flags and return no private flow fields', async () => {
+    let request;
+    const root = {
+        WA_GOLD_RUSH_LEVEL_CAPABILITIES: caps,
+        WA_GOLD_RUSH_RUNTIME_CONFIG: {
+            featureFlags: { competitionBaselines: true, competitionSnapshots: true }
+        },
+        WA_GOLD_RUSH_FLOW_ENDPOINTS: { copyCompetitionSnapshot: 'https://example.test/competition' },
+        WA_GOLD_RUSH_POWER_AUTOMATE: {
+            callFlow: async (name, payload) => {
+                request = { name, payload };
+                return {
+                    success: true,
+                    data: {
+                        ok: true,
+                        contractVersion: competitionSnapshot.CONTRACT_VERSION,
+                        operation: 'freeze',
+                        status: 'frozen',
+                        competitionId: 'term-1',
+                        level: 2,
+                        recordCount: 2,
+                        StudentName: 'Private Name',
+                        StudentID: '123456',
+                        StudentCode: 'SC-1'
+                    }
+                };
+            }
+        }
+    };
+    const frozen = await competitionSnapshot.requestCompetitionSnapshot(
+        'freeze', { competitionId: 'term-1', classCodes: ['6B'], level: 2 }, { root }
+    );
+    assert.equal(request.name, 'copyCompetitionSnapshot');
+    assert.equal(request.payload.contractVersion, competitionSnapshot.CONTRACT_VERSION);
+    assert.equal(frozen.status, 'frozen');
+    assert.equal(frozen.recordCount, 2);
+    assert.doesNotMatch(JSON.stringify(frozen), /Private Name|123456|SC-1|studentName|studentId|studentCode/i);
+});
+
+test('competition snapshot timeout fails closed', async () => {
+    const root = {
+        WA_GOLD_RUSH_LEVEL_CAPABILITIES: caps,
+        WA_GOLD_RUSH_RUNTIME_CONFIG: { featureFlags: { competitionBaselines: true } },
+        WA_GOLD_RUSH_FLOW_ENDPOINTS: { copyCompetitionSnapshot: 'https://example.test/competition' },
+        WA_GOLD_RUSH_POWER_AUTOMATE: { callFlow: () => new Promise(() => {}) }
+    };
+    const result = await competitionSnapshot.requestCompetitionSnapshot(
+        'capture_baseline',
+        { competitionId: 'term-1', classCodes: ['6B'], level: 2 },
+        { root, timeoutMs: 1 }
+    );
+    assert.deepEqual(result, { ok: false, status: 'unavailable', reason: 'flow_timeout' });
 });
 
 test('teacher dashboard getLevelLeaderboard filters by level and labels current (not all-time) standings', () => {
