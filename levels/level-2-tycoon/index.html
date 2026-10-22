@@ -92,6 +92,7 @@
                 <section class="panel-section">
                     <h2>🏢 Company & Student Identity</h2>
                     <p id="competition-status" class="competition-status">Checking student sign-in…</p>
+                    <p id="levelSaveStatus" class="panel-note" role="status" aria-live="polite">Loading your saved game for this level…</p>
                     <p id="cloudSaveStatus" class="panel-note">Cloud save status: idle</p>
                     <p id="studentLoginHint" class="panel-note">Your identity comes from your class roster and cannot be edited here. Only the company name can be changed.</p>
                     <div class="identity-grid">
@@ -154,7 +155,7 @@
                 </section>
 
                 <section class="panel-section">
-                    <h2>🏆 Local Classroom Leaderboard</h2>
+                    <h2>🏆 This Device's Leaderboard (this level)</h2>
                     <p id="competition-lock-message" class="competition-lock-message hidden"></p>
                     <div id="leaderboard-summary" class="leaderboard-summary"></div>
                     <div id="leaderboard-list"></div>
@@ -163,8 +164,8 @@
                 <!-- CONTROLS -->
                 <section class="panel-section">
                     <button id="saveButton" class="btn-secondary">💾 Save Game</button>
-                    <button id="loadButton" class="btn-secondary">📂 Load Game</button>
-                    <button id="resetButton" class="btn-danger">🔄 New Game</button>
+                    <button id="loadButton" class="btn-secondary">📂 Reload Saved Game</button>
+                    <button id="resetButton" class="btn-danger">🔄 Restart This Level</button>
                 </section>
             </div>
         </div>
@@ -251,6 +252,9 @@
     </script>
     <script src="../../shared/flow-endpoints.js"></script>
     <script src="../../shared/student-session.js"></script>
+    <script src="../../shared/level-capabilities.js"></script>
+    <script src="../../shared/level-save-store.js"></script>
+    <script src="../../shared/save-protocol.js"></script>
     <script src="game-state.js"></script>
     <script src="level-access-guard.js"></script>
     <script src="../../shared/power-automate-headers.js"></script>

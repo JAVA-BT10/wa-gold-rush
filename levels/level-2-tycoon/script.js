@@ -3,9 +3,12 @@
  * Levels 2–5 progression condensed into one playable mode.
  */
 
+// Legacy device-wide records (one per device, not per level). No longer
+// written; kept untouched for compatibility. See DEVICE_LEVEL_BOARD_KEY.
 const CLASS_RECORDS_KEY = 'wa_gold_rush_class_records';
+// Device-only per-level board: one public row per Class|Student|Level.
+const DEVICE_LEVEL_BOARD_KEY = 'wa_gr_device_level_board_v1';
 const PAUSE_STATE_KEY = 'wa_gold_rush_pause_state';
-const PLAYER_KEY_STORAGE = 'wa_gold_rush_player_key';
 const STRICT_MODE_KEY = 'wa_gold_rush_strict_mode';
 const TEACHER_DASHBOARD_KEY = 'teacher_dashboard';
 const STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
@@ -20,6 +23,9 @@ let currentMineForInvestment = null;
 let pendingPurchase = null;
 let cloudSaveStatusListenerBound = false;
 let progressSaveScheduler = null;
+// Why cloud uploads for this level are held on this device ('' = not held).
+let cloudUploadHold = '';
+let levelLoadState = { status: 'loading', reason: '' };
 
 function createProgressSaveScheduler(options = {}) {
     const activeSaves = new Map();
@@ -63,6 +69,10 @@ function createProgressSaveScheduler(options = {}) {
     }
 
     return {
+        /** Drop a not-yet-started save for a key (e.g. after a level restart). */
+        discardPending(progressKey) {
+            pendingSaves.delete(String(progressKey || '').trim());
+        },
         schedule(payload) {
             const progressKey = resolveProgressKey(payload);
             if (!progressKey) {
@@ -120,23 +130,120 @@ function requireAuthenticatedStudent() {
     return session;
 }
 
-function isAutosaveOwnedBySession(session) {
-    try {
-        const data = JSON.parse(localStorage.getItem('level2_autosave') || 'null');
-        if (typeof LevelAccessGuard !== 'undefined' && typeof LevelAccessGuard.isAutosaveOwnedBy === 'function') {
-            return LevelAccessGuard.isAutosaveOwnedBy(data?.gameState, session);
-        }
-        const ownerCode = String(data?.gameState?.player?.studentCode || '').trim().toUpperCase();
-        return !!ownerCode && ownerCode === session.studentCode.toUpperCase();
-    } catch (_) {
-        return false;
-    }
+function getLevelSaveStore() {
+    const store = globalThis.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+    return store && typeof store.readLevelSave === 'function' ? store : null;
 }
 
+function getLevelCapabilitiesApi() {
+    const api = globalThis.WA_GOLD_RUSH_LEVEL_CAPABILITIES;
+    return api && typeof api.isPlayableLevel === 'function' ? api : null;
+}
+
+function getSaveProtocolApi() {
+    const api = globalThis.WA_GOLD_RUSH_SAVE_PROTOCOL;
+    return api && typeof api.isEnabled === 'function' ? api : null;
+}
+
+/**
+ * Level requested by the page URL (the per-request selected game level).
+ * Missing ?level= is the Level 2 entry point; an invalid or unsupported
+ * value returns null and is never coerced to another level's save.
+ */
 function getAssignedLevelFromUrl() {
     const params = new URLSearchParams(window.location.search);
-    const level = Number(params.get('level'));
-    return [2, 3, 4, 5].includes(level) ? level : 2;
+    const raw = params.get('level');
+    if (raw === null) return 2;
+    const text = String(raw).trim();
+    if (!/^\d+$/.test(text)) return null;
+    const level = Number(text);
+    return [2, 3, 4, 5].includes(level) ? level : null;
+}
+
+const LEVEL_LOAD_MESSAGES = {
+    loading: 'Loading your saved game for this level…',
+    resumed: 'Resumed your saved game for this level (saved on this device).',
+    started: 'New game for this level, started from this level\'s starting settings.',
+    recovered: 'A saved game for this level could not be read. It was kept aside for your teacher and a new game was started.',
+    unavailable: 'Saving is unavailable on this device. Progress will not be kept.',
+    conflict: 'This level\'s saved game changed somewhere else. Reload the page before continuing.',
+    error: 'The game could not load your saved progress. Please reload the page.'
+};
+
+function updateLevelSaveStatusLabel() {
+    const el = document.getElementById('levelSaveStatus');
+    if (!el) return;
+    const base = LEVEL_LOAD_MESSAGES[levelLoadState.status] || LEVEL_LOAD_MESSAGES.error;
+    const hold = cloudUploadHold
+        ? ' Cloud saving for this level is paused on this device until your teacher reviews an earlier save.'
+        : '';
+    el.textContent = `${base}${hold}`;
+}
+
+function setLevelLoadState(status, reason = '') {
+    levelLoadState = { status, reason };
+    updateLevelSaveStatusLabel();
+}
+
+/**
+ * Load the exact Class|Student|Level save for the signed-in student and the
+ * requested level. Must run after access is resolved and before any cloud
+ * sync. Never relabels another level's economy and never uploads at startup.
+ *
+ * - found   → resume that level's game
+ * - missing → first visit: start from that level's configured defaults
+ * - invalid → keep a copy aside (quarantine), then start fresh
+ * The legacy shared slot is migrated (non-destructively) first.
+ */
+function loadLevelGameForSession(session, level) {
+    const store = getLevelSaveStore();
+    gameState.assignedLevel = level;
+    gameState.applyLevelConfigAdapter?.();
+    applyCompetitionSessionToIdentity(false);
+    cloudUploadHold = '';
+    if (!store) {
+        gameState.saveLocked = true;
+        gameState.reset();
+        setLevelLoadState('unavailable', 'save_store_unavailable');
+        return levelLoadState;
+    }
+    let migration = null;
+    try {
+        migration = store.migrateLegacyAutosave(localStorage, session);
+    } catch (error) {
+        migration = { status: 'skipped', reason: 'migration_failed' };
+    }
+    const loaded = gameState.loadFromLocalStorage();
+    if (loaded.success) {
+        setLevelLoadState('resumed', loaded.migratedFrom ? 'migrated_legacy' : '');
+    } else if (loaded.status === 'missing') {
+        gameState.beginLevelRun();
+        setLevelLoadState('started');
+    } else if (loaded.status === 'invalid' && loaded.key) {
+        const kept = loaded.raw === undefined || loaded.raw === null
+            || store.quarantineRaw(localStorage, loaded.key, loaded.raw, loaded.reason);
+        if (!kept) {
+            gameState.saveLocked = true;
+            gameState.reset();
+            setLevelLoadState('error', 'quarantine_failed');
+            return levelLoadState;
+        }
+        gameState.beginLevelRun();
+        setLevelLoadState('recovered', loaded.reason);
+    } else {
+        gameState.saveLocked = true;
+        gameState.reset();
+        setLevelLoadState(loaded.status === 'unavailable' ? 'unavailable' : 'error', loaded.reason);
+        return levelLoadState;
+    }
+    cloudUploadHold = store.getUploadHold(localStorage, session, level) || '';
+    if (!cloudUploadHold && levelLoadState.status !== 'resumed'
+        && getLevelCapabilitiesApi()?.isFeatureEnabled?.('holdUnverifiedNewSlotUploads')) {
+        cloudUploadHold = 'unverified_new_slot';
+    }
+    levelLoadState.migration = migration;
+    updateLevelSaveStatusLabel();
+    return levelLoadState;
 }
 
 function getAssignedLevelLabel(level) {
@@ -146,7 +253,7 @@ function getAssignedLevelLabel(level) {
         4: 'Level 4 Advanced Operations Mode',
         5: 'Level 5 Classroom Challenge Mode'
     };
-    return labels[level] || 'Level 2 Goldfields Venture Mode';
+    return labels[level] || 'Level unavailable';
 }
 
 function updateAssignedLevelBadge() {
@@ -232,7 +339,16 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (!session) return;
 
     gameState = new GameState();
-    gameState.assignedLevel = getAssignedLevelFromUrl();
+    const requestedLevel = getAssignedLevelFromUrl();
+    if (requestedLevel === null) {
+        // Unknown/unsupported level link (including planned Level 6): never
+        // fall back to another level's game.
+        alert('That level is not available. Returning to the Home page.');
+        window.location.href = '../../index.html?error=level_locked';
+        return;
+    }
+    gameState.assignedLevel = requestedLevel;
+    setLevelLoadState('loading');
 
     const configPath = resolveConfigPath();
     if (!configPath) {
@@ -249,24 +365,17 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (!(await resolveCurrentLevelAccess())) return;
 
     try {
-        // The autosave slot is shared per device: only load it when it belongs
-        // to the signed-in roster student, never another student's progress.
-        if (isAutosaveOwnedBySession(session)) {
-            gameState.loadFromLocalStorage();
-        } else {
-            gameState.reset();
-        }
+        // Only this student's save for THIS level is ever loaded; there is no
+        // startup cloud upload (a fresh default game must never overwrite
+        // unresolved cloud progress).
+        loadLevelGameForSession(session, requestedLevel);
         if (!enforceCurrentLevelAccess()) return;
-        gameState.assignedLevel = getAssignedLevelFromUrl();
-        gameState.applyLevelConfigAdapter?.();
         ensureInvestmentPlansForOwnedMines();
-        applyCompetitionSessionToIdentity(false);
         hydrateIdentityInputs();
         setupEventListeners();
         updatePauseStateFromStorage();
         updateAssignedLevelBadge();
         updateAllUI();
-        syncPlayerRecord();
         if (typeof SharePointSync !== 'undefined') {
             updateCloudSaveStatusLabel(SharePointSync.getCloudSaveStatus?.() || 'idle');
             if (!cloudSaveStatusListenerBound) {
@@ -279,11 +388,13 @@ document.addEventListener('DOMContentLoaded', async function() {
         updateInvestmentProfilePanel();
     } catch (err) {
         console.error('Level 2 init error:', err);
-        // Attempt to recover by resetting to a clean state and re-running setup
+        // Show defaults but never persist them over an unreadable save.
         try {
+            gameState.saveLocked = true;
             gameState.reset();
-            gameState.assignedLevel = getAssignedLevelFromUrl();
+            gameState.assignedLevel = requestedLevel;
             gameState.applyLevelConfigAdapter?.();
+            setLevelLoadState('error', 'init_failed');
             if (!enforceCurrentLevelAccess()) return;
             ensureInvestmentPlansForOwnedMines();
             applyCompetitionSessionToIdentity(false);
@@ -296,7 +407,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             console.error('Level 2 recovery failed:', recoveryErr);
             const minesContainer = document.getElementById('mines-container');
             if (minesContainer) {
-                minesContainer.innerHTML = '<p class="empty-state">Game failed to initialize. Please refresh the page or click "New Game".</p>';
+                minesContainer.innerHTML = '<p class="empty-state">Game failed to initialize. Please refresh the page.</p>';
             }
         }
     }
@@ -341,12 +452,40 @@ function setupEventListeners() {
             handleStudentSessionChange();
             return;
         }
-        if ((event.key === STRICT_MODE_KEY) || (event.key === TEACHER_DASHBOARD_KEY) || (event.key === CLASS_RECORDS_KEY)) {
+        if (handleLevelSaveStorageChange(event.key)) {
+            return;
+        }
+        if ((event.key === STRICT_MODE_KEY) || (event.key === TEACHER_DASHBOARD_KEY) || (event.key === DEVICE_LEVEL_BOARD_KEY)) {
             applyCompetitionSessionToIdentity(false);
             updateCompetitionStatus();
             renderLeaderboard();
         }
     });
+}
+
+/**
+ * Another tab changed this student's save for THIS level, or restarted it:
+ * stop writing (no last-writer-wins overwrite) and ask for a reload.
+ * Returns true when the key was handled.
+ */
+function handleLevelSaveStorageChange(key) {
+    const store = getLevelSaveStore();
+    const identity = gameState?.getSaveIdentity?.();
+    if (!store || !identity || !key) return false;
+    if (key === store.buildLedgerKey(identity)) {
+        const run = store.readLedger(localStorage, identity).levelRuns?.[String(gameState.assignedLevel)];
+        if (run && gameState.activeRun && (run.generation !== gameState.activeRun.generation || run.runId !== gameState.activeRun.runId)) {
+            gameState.saveLocked = true;
+            setLevelLoadState('conflict', 'restarted_elsewhere');
+        }
+        return true;
+    }
+    if (key === store.buildSaveKey(identity, gameState.assignedLevel)) {
+        gameState.saveLocked = true;
+        setLevelLoadState('conflict', 'changed_elsewhere');
+        return true;
+    }
+    return false;
 }
 
 function ensureInvestmentPlansForOwnedMines() {
@@ -561,7 +700,9 @@ function renderLeaderboard() {
         lockMessage.classList.add('hidden');
         lockMessage.textContent = '';
     }
-    const records = getClassRecords();
+    // Device-only board for the level being played: rows saved on THIS
+    // device for this class and level. It is not a cross-device class board.
+    const records = getDeviceLevelRecords(competition.session?.classCode, gameState?.assignedLevel);
     const leaderboard = [...records].sort((a, b) => b.netWorth - a.netWorth).slice(0, 10);
     const wealthiest = leaderboard[0];
     const avgWealth = records.length ? records.reduce((s, r) => s + r.netWorth, 0) / records.length : 0;
@@ -570,16 +711,17 @@ function renderLeaderboard() {
 
     if (leaderboardSummary) {
         leaderboardSummary.innerHTML = `
-            Wealthiest: ${wealthiest ? `${escapeHtml(wealthiest.companyName)} ($${wealthiest.netWorth.toFixed(2)})` : 'N/A'}<br>
-            Most mines: ${mostMines ? `${escapeHtml(mostMines.companyName)} (${mostMines.minesOwned})` : 'N/A'}<br>
-            Most profitable strategy: ${profitable ? `${escapeHtml(profitable.companyName)} (${escapeHtml(profitable.strategyLabel || 'Balanced')})` : 'N/A'}<br>
-            Average class wealth: $${avgWealth.toFixed(2)}
+            <em>Level ${escapeHtml(gameState?.assignedLevel)} games saved on this device only.</em><br>
+            Wealthiest: ${wealthiest ? `${escapeHtml(wealthiest.leaderboardName || wealthiest.companyName)} ($${wealthiest.netWorth.toFixed(2)})` : 'N/A'}<br>
+            Most mines: ${mostMines ? `${escapeHtml(mostMines.leaderboardName || mostMines.companyName)} (${mostMines.minesOwned})` : 'N/A'}<br>
+            Most profitable strategy: ${profitable ? `${escapeHtml(profitable.leaderboardName || profitable.companyName)} (${escapeHtml(profitable.strategyLabel || 'Balanced')})` : 'N/A'}<br>
+            Average wealth (this device): $${avgWealth.toFixed(2)}
         `;
     }
 
     if (!leaderboardList) return;
     if (!leaderboard.length) {
-        leaderboardList.innerHTML = '<p class="empty-state">No classroom records yet.</p>';
+        leaderboardList.innerHTML = '<p class="empty-state">No games for this level saved on this device yet.</p>';
         return;
     }
     leaderboardList.innerHTML = leaderboard.map((record, index) => `
@@ -604,8 +746,14 @@ function getCurrentProgressionGoal() {
     return gameState?.gameConfig?.progressionCheckpoint?.levels?.[levelKey] ?? null;
 }
 
+/**
+ * Next level a passed checkpoint leads to, capped to levels that are
+ * implemented and deployed (Level 5 → planned Level 6 returns null).
+ */
 function getNextAssignedLevel() {
     const currentLevel = Number(gameState?.assignedLevel || 2);
+    const caps = getLevelCapabilitiesApi();
+    if (caps) return caps.getNextPlayableLevel(currentLevel);
     return currentLevel < 5 ? currentLevel + 1 : null;
 }
 
@@ -1252,7 +1400,9 @@ function applyCompetitionSessionToIdentity(updateInputs = true) {
 function handleStudentSessionChange() {
     const session = getAuthenticatedStudentSession();
     const playerCode = String(gameState?.player?.studentCode || '').trim().toUpperCase();
-    if (!session || session.studentCode.toUpperCase() !== playerCode) {
+    const playerClass = String(gameState?.player?.classCode || '').trim().toUpperCase();
+    if (!session || session.studentCode.toUpperCase() !== playerCode
+        || String(session.classCode || '').trim().toUpperCase() !== playerClass) {
         if (session && typeof window.location.reload === 'function') {
             window.location.reload();
             return;
@@ -1336,33 +1486,53 @@ function logoutCompetitionSession() {
     window.location.href = buildStudentLoginUrl();
 }
 
-function getOrCreatePlayerKey() {
-    let key = localStorage.getItem(PLAYER_KEY_STORAGE);
-    if (!key) {
-        key = (typeof crypto !== 'undefined' && crypto.randomUUID)
-            ? crypto.randomUUID()
-            : `player_${Date.now()}_${(() => {
-                if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-                    return Array.from(crypto.getRandomValues(new Uint32Array(2))).join('_');
-                }
-                return `${Math.random().toString(36).slice(2, 12)}_${Math.random().toString(36).slice(2, 12)}`;
-            })()}`;
-        localStorage.setItem(PLAYER_KEY_STORAGE, key);
-    }
-    return key;
-}
-
-function getClassRecords() {
+function getDeviceBoardRecords() {
     try {
-        const records = JSON.parse(localStorage.getItem(CLASS_RECORDS_KEY));
-        return Array.isArray(records) ? records : [];
+        const records = JSON.parse(localStorage.getItem(DEVICE_LEVEL_BOARD_KEY));
+        return Array.isArray(records) ? records.filter((record) => record && typeof record === 'object') : [];
     } catch (error) {
         return [];
     }
 }
 
-function saveClassRecords(records) {
-    localStorage.setItem(CLASS_RECORDS_KEY, JSON.stringify(records));
+function getDeviceLevelRecords(classCode, level) {
+    const classKey = String(classCode || '').trim().toUpperCase();
+    return getDeviceBoardRecords().filter((record) => record.classCode === classKey
+        && Number(record.level) === Number(level)
+        && Number.isFinite(Number(record.netWorth)))
+        .map((record) => ({ ...record, netWorth: Number(record.netWorth), minesOwned: Number(record.minesOwned) || 0, averageRoundProfit: Number(record.averageRoundProfit) || 0 }));
+}
+
+/**
+ * One public row per Class|Student|Level on this device. Only public fields
+ * are kept (no StudentName/StudentID) because devices are shared.
+ */
+function upsertDeviceLevelRecord(record) {
+    const records = getDeviceBoardRecords().filter((existing) => existing.progressKey !== record.progressKey);
+    records.push(record);
+    try {
+        localStorage.setItem(DEVICE_LEVEL_BOARD_KEY, JSON.stringify(records.slice(-200)));
+    } catch (_) {}
+}
+
+function removeDeviceLevelRecord(progressKey) {
+    const records = getDeviceBoardRecords();
+    const filtered = records.filter((record) => record.progressKey !== progressKey);
+    if (filtered.length === records.length) return;
+    try {
+        localStorage.setItem(DEVICE_LEVEL_BOARD_KEY, JSON.stringify(filtered));
+    } catch (_) {}
+}
+
+/**
+ * A level game that has not been played yet (round 1, no history, no quiz
+ * attempt). Its defaults are never uploaded: they could overwrite real
+ * cloud progress whose state this device does not know.
+ */
+function isPristineLevelGame() {
+    const history = Array.isArray(gameState?.roundHistory) ? gameState.roundHistory : [];
+    const attempts = gameState?.getProgressionState?.(gameState.assignedLevel)?.quizAttempts;
+    return Number(gameState?.round) <= 1 && history.length === 0 && !(Array.isArray(attempts) && attempts.length);
 }
 
 function calculateStrategyLabel() {
@@ -1385,9 +1555,8 @@ function syncPlayerRecord() {
     // Saves are only built from the authenticated roster session identity.
     const session = requireAuthenticatedStudent();
     if (!session) return;
+    if (gameState.saveLocked || isPristineLevelGame()) return;
 
-    const playerKey = getOrCreatePlayerKey();
-    const records = getClassRecords();
     const totalRounds = Math.max(1, gameState.round - 1);
 
     const studentCode     = session.studentCode;
@@ -1447,39 +1616,41 @@ function syncPlayerRecord() {
         approvalStatus: progressionState.approvalStatus || null,
         approverName: progressionState.approverName || null,
         approvalTimestamp: progressionState.approvalTimestamp || null,
-        progressionStateByLevel
+        progressionStateByLevel,
+        run: {
+            generation: gameState.activeRun?.generation,
+            runId: gameState.activeRun?.runId,
+            startingNetWorth: gameState.startingNetWorth,
+            storageSchemaVersion: getLevelSaveStore()?.STORAGE_SCHEMA_VERSION
+        }
     };
     const progressionSnapshot = typeof buildProgressionSnapshot === 'function'
         ? buildProgressionSnapshot(progressionSnapshotInput)
         : progressionSnapshotInput;
 
-    const record = {
-        playerKey,
-        studentCode,
-        leaderboardName,
-        studentId,
-        studentName,
-        classCode,
-        companyName: gameState.player.companyName || DEFAULT_COMPANY_NAME,
-        level: gameState.assignedLevel,
-        round: gameState.round,
-        cash: gameState.cash,
-        netWorth: gameState.getNetWorth(),
-        minesOwned: gameState.getOwnedMines().length,
-        machineryOwned: Array.isArray(gameState.machinery) ? gameState.machinery.length : 0,
-        totalProfitLoss: gameState.totalProfitLoss,
-        averageRoundProfit: gameState.totalProfitLoss / totalRounds,
-        strategyLabel: calculateStrategyLabel(),
-        investmentProfile,
-        gameState: progressionSnapshot,
-        updatedAt: new Date().toISOString()
-    };
+    const progressKey = getLevelSaveStore()?.buildProgressKey({ classCode, studentCode }, gameState.assignedLevel) || '';
+    if (progressKey) {
+        upsertDeviceLevelRecord({
+            progressKey,
+            classCode,
+            level: gameState.assignedLevel,
+            leaderboardName,
+            companyName: gameState.player.companyName || DEFAULT_COMPANY_NAME,
+            round: gameState.round,
+            netWorth: gameState.getNetWorth(),
+            minesOwned: gameState.getOwnedMines().length,
+            averageRoundProfit: gameState.totalProfitLoss / totalRounds,
+            strategyLabel: calculateStrategyLabel(),
+            updatedAt: new Date().toISOString()
+        });
+    }
 
-    const index = records.findIndex(r => r.playerKey === playerKey);
-    if (index >= 0) records[index] = record;
-    else records.push(record);
-    saveClassRecords(records);
-    syncTeacherDashboardRecord(record);
+    // Cloud uploads for this level are held while an earlier device save
+    // still needs review (fail closed).
+    if (cloudUploadHold) {
+        updateCloudSaveStatusLabel('paused for teacher review');
+        return;
+    }
 
     // Non-blocking SharePoint sync
     if (typeof SharePointSync !== 'undefined') {
@@ -1490,7 +1661,18 @@ function syncPlayerRecord() {
         if (typeof SharePointSync.buildProgressPayload !== 'function') return;
         // level = the level being played (from the page URL); rosterAssignedLevel
         // = the GGR_Students assignment. They are deliberately kept separate.
+        const protocol = getSaveProtocolApi();
+        const v2Fields = protocol && protocol.isEnabled() && gameState.activeRun
+            ? {
+                protocolVersion: protocol.PROTOCOL_VERSION,
+                runGeneration: gameState.activeRun.generation,
+                runId: gameState.activeRun.runId,
+                startingNetWorth: gameState.startingNetWorth,
+                storageSchemaVersion: getLevelSaveStore()?.STORAGE_SCHEMA_VERSION
+            }
+            : {};
         const progressPayload = SharePointSync.buildProgressPayload({
+            ...v2Fields,
             studentCode,
             classCode,
             level: gameState.assignedLevel,
@@ -1507,17 +1689,9 @@ function syncPlayerRecord() {
             needsSupport,
             supportReason: needsSupport ? 'checkpoint_quiz_retry' : ''
         });
-        getProgressSaveScheduler().schedule(progressPayload);
-    }
-}
-
-function syncTeacherDashboardRecord(record) {
-    if (typeof TeacherDashboard === 'undefined') return;
-    const dashboard = new TeacherDashboard();
-    dashboard.loadFromLocalStorage();
-    const updated = dashboard.syncFromPlayerRecord(record);
-    if (updated) {
-        dashboard.saveToLocalStorage();
+        // Captured now and frozen: later gameplay, URL changes or a pending
+        // request can never relabel or mutate this save.
+        getProgressSaveScheduler().schedule(Object.freeze(progressPayload));
     }
 }
 
@@ -1563,32 +1737,30 @@ function saveGame() {
     if (!requireAuthenticatedStudent()) return;
     saveCompanyName(false);
     const result = gameState.saveToLocalStorage();
-    alert(result ? '✅ Game saved successfully!' : '❌ Error saving game.');
+    alert(result ? '✅ Game saved on this device for this level.' : '❌ Error saving game.');
 }
 
+/**
+ * Reload THIS level's own save from this device. It never loads another
+ * level's game and never changes the level being played.
+ */
 function loadGame() {
     const session = requireAuthenticatedStudent();
     if (!session) return;
-    if (!confirm('Load saved game? This will overwrite current progress.')) return;
-    if (!isAutosaveOwnedBySession(session)) {
-        alert('❌ No save data found for your account on this device.');
+    if (!confirm(`Reload your saved Level ${gameState.assignedLevel} game from this device? Unsaved changes will be lost.`)) return;
+    const store = getLevelSaveStore();
+    const found = store ? store.readLevelSave(localStorage, session, gameState.assignedLevel) : { status: 'unavailable' };
+    if (found.status !== 'found') {
+        alert(`❌ No saved Level ${gameState.assignedLevel} game found for your account on this device.`);
         return;
     }
     const result = gameState.loadFromLocalStorage();
     if (!result.success) {
-        alert('❌ No save data found');
+        alert('❌ The saved game could not be loaded.');
         return;
     }
-    const savedLevel = gameState.assignedLevel;
-    const urlLevel = getAssignedLevelFromUrl();
-    if (savedLevel !== urlLevel && !confirm(
-        `This save was created on Level ${savedLevel}, but you are playing Level ${urlLevel}. Continue with Level ${urlLevel}?`
-    )) {
-        // Keep the saved level — already restored by loadFromLocalStorage
-    } else {
-        gameState.assignedLevel = urlLevel;
-    }
-    gameState.applyLevelConfigAdapter?.();
+    gameState.saveLocked = false;
+    setLevelLoadState('resumed');
     if (!enforceCurrentLevelAccess()) return;
     ensureInvestmentPlansForOwnedMines();
     applyCompetitionSessionToIdentity(false);
@@ -1596,30 +1768,44 @@ function loadGame() {
     updateAssignedLevelBadge();
     updateAllUI();
     closeAllModals();
-    syncPlayerRecord();
     alert('✅ Game loaded successfully!');
 }
 
-function removePlayerRecord(playerKey) {
-    const records = getClassRecords();
-    const filtered = records.filter(r => r.playerKey !== playerKey);
-    saveClassRecords(filtered);
-}
-
+/**
+ * Restart ONLY the level being played. Other levels' games, checkpoint
+ * evidence and earned access are kept. The previous game is archived on this
+ * device and any queued cloud saves for it are withdrawn so they can never be
+ * replayed over the new game.
+ */
 function resetGame() {
-    if (!requireAuthenticatedStudent()) return;
-    if (!confirm('Start a new game? All progress will be lost.')) return;
-    const playerKey = getOrCreatePlayerKey();
-    gameState.assignedLevel = getAssignedLevelFromUrl();
-    gameState.reset();
+    const session = requireAuthenticatedStudent();
+    if (!session) return;
+    const level = gameState.assignedLevel;
+    if (!confirm(`Restart Level ${level}? Your Level ${level} game will start again from the beginning. Your other levels and unlocked levels are kept.`)) return;
+    const result = gameState.restartLevelRun({ reason: 'student_restart' });
+    if (!result.ok) {
+        alert('❌ Could not restart this level safely (the previous game could not be archived). Nothing was changed.');
+        return;
+    }
+    gameState.saveLocked = false;
+    const progressKey = getLevelSaveStore()?.buildProgressKey(session, level) || '';
+    if (progressKey) {
+        getProgressSaveScheduler().discardPending?.(progressKey);
+        if (typeof SharePointSync !== 'undefined' && typeof SharePointSync.discardQueuedForProgressKey === 'function') {
+            SharePointSync.discardQueuedForProgressKey(progressKey, 'superseded_by_reset');
+        }
+        removeDeviceLevelRecord(progressKey);
+    }
+    if (typeof InvestmentProfile !== 'undefined' && typeof InvestmentProfile.resetLevel === 'function') {
+        InvestmentProfile.resetLevel(session.studentCode, level);
+    }
     gameState.applyLevelConfigAdapter?.();
-    localStorage.removeItem('level2_autosave');
-    removePlayerRecord(playerKey);
     applyCompetitionSessionToIdentity(false);
     hydrateIdentityInputs();
+    gameState.saveToLocalStorage();
+    setLevelLoadState('started', 'restarted');
     updateAssignedLevelBadge();
     updateAllUI();
     closeAllModals();
-    syncPlayerRecord();
-    alert('✅ New game started!');
+    alert(`✅ Level ${level} restarted.`);
 }

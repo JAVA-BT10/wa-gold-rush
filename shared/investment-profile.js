@@ -164,6 +164,18 @@ const InvestmentProfile = (() => {
     }
 
     /**
+     * Clear the profile for ONE student/level (used when that level's game is
+     * restarted). Other levels' profiles are untouched.
+     */
+    function resetLevel(studentCode, level) {
+        const data = _load();
+        const key = _key(studentCode, level);
+        if (!Object.prototype.hasOwnProperty.call(data, key)) return;
+        delete data[key];
+        _save(data);
+    }
+
+    /**
      * Render a mini donut chart into a <canvas> element.
      * @param {HTMLCanvasElement} canvas
      * @param {string} studentCode
@@ -236,6 +248,7 @@ const InvestmentProfile = (() => {
         compute,
         getBuckets,
         mergeBuckets,
+        resetLevel,
         renderChart,
         legendHtml
     };

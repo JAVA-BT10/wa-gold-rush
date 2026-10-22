@@ -4,11 +4,16 @@
  */
 
 class LevelAccessGuard {
+    // Legacy shared slot: read-only fallback for checkpoint evidence. New
+    // evidence lives in the per-student progression ledger (level-save-store).
     static AUTOSAVE_KEY = 'level2_autosave';
     static STUDENT_SESSION_KEY = 'wa_gold_rush_student_session';
 
     constructor(assignedLevel = 2) {
-        this.assignedLevel = Number(assignedLevel) || 2;
+        // The requested level is never coerced: an invalid or unavailable
+        // level (e.g. planned Level 6) is simply not accessible.
+        const level = Number(assignedLevel);
+        this.assignedLevel = Number.isInteger(level) ? level : null;
     }
 
     getRequiredCheckpointLevel() {
@@ -23,6 +28,44 @@ class LevelAccessGuard {
             try { return require('../../shared/student-session.js'); } catch (_) { return null; }
         }
         return null;
+    }
+
+    static getStoreApi(globalObj) {
+        const root = globalObj || (typeof window !== 'undefined' ? window : globalThis);
+        const api = root?.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+        if (api && typeof api.readProgressionEvidence === 'function') return api;
+        if (typeof require === 'function') {
+            try { return require('../../shared/level-save-store.js'); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    static getCapabilitiesApi(globalObj) {
+        const root = globalObj || (typeof window !== 'undefined' ? window : globalThis);
+        const api = root?.WA_GOLD_RUSH_LEVEL_CAPABILITIES;
+        if (api && typeof api.isPlayableLevel === 'function') return api;
+        if (typeof require === 'function') {
+            try { return require('../../shared/level-capabilities.js'); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    /** Recognized AND playable (implemented + deployed) levels only. */
+    static isPlayableLevel(level) {
+        const caps = LevelAccessGuard.getCapabilitiesApi();
+        if (caps) return caps.isPlayableLevel(level);
+        return [1, 2, 3, 4, 5].includes(Number(level));
+    }
+
+    /**
+     * Highest level the roster already entitles this student to: the
+     * teacher-assigned starting level (GGR_Students.Level) or the recorded
+     * highest unlocked level (ProgressedLevel), whichever is higher.
+     */
+    static getRosterEntitledLevel(session) {
+        const assigned = Number(session?.assignedLevel) || 0;
+        const progressed = Number(session?.progressedLevel) || 0;
+        return Math.max(assigned, progressed);
     }
 
     static resolveStorage(storage) {
@@ -50,16 +93,32 @@ class LevelAccessGuard {
     }
 
     /**
-     * Reads the per-level checkpoint state from the shared Level 2–5 autosave
-     * slot. The game (script.js → GameState.saveToLocalStorage) and the home
-     * page level cards read/write this exact shape, so all three agree.
-     * Requires an authenticated student session that owns the autosave.
+     * Reads one level's checkpoint evidence for the signed-in student from the
+     * per-student progression ledger written by the game
+     * (GameState.saveToLocalStorage). The game, the home page level cards and
+     * this guard all use this reader, so they agree. Falls back (read-only) to
+     * the legacy shared autosave slot when the ledger has no pass recorded.
      */
     static readSavedProgressionState(requiredLevel, storage) {
         try {
             const store = LevelAccessGuard.resolveStorage(storage);
             const session = LevelAccessGuard.readStudentSession(store);
             if (!session) return null;
+            const saveStore = LevelAccessGuard.getStoreApi();
+            const ledgerState = saveStore
+                ? saveStore.readProgressionEvidence(store, session, requiredLevel)
+                : null;
+            if (ledgerState?.checkpointStatus === 'quiz_passed') return ledgerState;
+            const legacyState = LevelAccessGuard.readLegacyProgressionState(requiredLevel, store, session);
+            if (legacyState?.checkpointStatus === 'quiz_passed') return legacyState;
+            return ledgerState || legacyState;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    static readLegacyProgressionState(requiredLevel, store, session) {
+        try {
             const raw = store?.getItem(LevelAccessGuard.AUTOSAVE_KEY);
             if (!raw) return null;
             const data = JSON.parse(raw);
@@ -111,10 +170,13 @@ class LevelAccessGuard {
     }
 
     /**
-     * Fetches the student's saved progress from Microsoft Lists (via the
-     * getStudentProgress flow) and, if the required level's checkpoint quiz is
-     * recorded as passed there, mirrors that state into the local autosave slot
-     * so the game, home page, and this guard all read the same saved state.
+     * Checkpoint-only compatibility mode of GGR_GetStudentProgress: fetches the
+     * student's saved progress and, if the required level's checkpoint quiz is
+     * recorded as passed there, merges that evidence (monotonically) into the
+     * student's progression ledger so the game, home page and this guard all
+     * read the same state. It never restores or overwrites any level economy;
+     * full-snapshot restore is a separate, capability-gated path
+     * (shared/cloud-restore.js).
      */
     static async hydrateRemoteProgression(requiredLevel, options = {}) {
         const root = options.globalObj || (typeof window !== 'undefined' ? window : globalThis);
@@ -165,48 +227,18 @@ class LevelAccessGuard {
             .find((fields) => fields?.checkpointStatus === 'quiz_passed');
         if (!passed) return { unlocked: false, reason: 'not_passed' };
 
-        try {
-            const raw = storage?.getItem(LevelAccessGuard.AUTOSAVE_KEY);
-            const parsed = raw ? JSON.parse(raw) : {};
-            const ownedBySession = LevelAccessGuard.isAutosaveOwnedBy(parsed?.gameState, session);
-            // Another student's (or an unowned) autosave is never merged into.
-            const data = ownedBySession ? parsed : {};
-            const gameState = ownedBySession
-                ? data.gameState
-                : {
-                    player: {
-                        studentCode: session.studentCode,
-                        leaderboardName: session.leaderboardName,
-                        studentId: session.studentId,
-                        studentName: session.studentName,
-                        classCode: session.classCode
-                    }
-                };
-            const byLevel = gameState.progressionStateByLevel && typeof gameState.progressionStateByLevel === 'object'
-                ? gameState.progressionStateByLevel
-                : {};
-            const levelKey = String(level);
-            byLevel[levelKey] = {
-                ...(byLevel[levelKey] || {}),
-                checkpointStatus: 'quiz_passed',
-                quizScore: passed.quizScore ?? byLevel[levelKey]?.quizScore ?? null,
-                quizPassedAt: passed.quizPassedAt || byLevel[levelKey]?.quizPassedAt || null,
-                quizAttempts: Array.isArray(byLevel[levelKey]?.quizAttempts) && byLevel[levelKey].quizAttempts.length
-                    ? byLevel[levelKey].quizAttempts
-                    : (Array.isArray(passed.quizAttempts) ? passed.quizAttempts : []),
-                approvalStatus: passed.approvalStatus || byLevel[levelKey]?.approvalStatus || null,
-                approverName: passed.approverName || byLevel[levelKey]?.approverName || null,
-                approvalTimestamp: passed.approvalTimestamp || byLevel[levelKey]?.approvalTimestamp || null
-            };
-            gameState.progressionStateByLevel = byLevel;
-            storage.setItem(LevelAccessGuard.AUTOSAVE_KEY, JSON.stringify({
-                ...data,
-                timestamp: data?.timestamp || new Date().toISOString(),
-                gameState
-            }));
-        } catch (error) {
-            return { unlocked: false, reason: 'storage_failed', error: error?.message || String(error) };
-        }
+        const saveStore = LevelAccessGuard.getStoreApi(root);
+        if (!saveStore) return { unlocked: false, reason: 'storage_failed', error: 'Save store unavailable.' };
+        const recorded = saveStore.recordProgressionEvidence(storage, session, level, {
+            checkpointStatus: 'quiz_passed',
+            quizScore: passed.quizScore ?? null,
+            quizPassedAt: passed.quizPassedAt || null,
+            quizAttempts: Array.isArray(passed.quizAttempts) ? passed.quizAttempts : [],
+            approvalStatus: passed.approvalStatus || null,
+            approverName: passed.approverName || null,
+            approvalTimestamp: passed.approvalTimestamp || null
+        });
+        if (!recorded) return { unlocked: false, reason: 'storage_failed', error: 'Could not record progression evidence.' };
         return { unlocked: true, reason: 'flow' };
     }
 
@@ -231,7 +263,10 @@ class LevelAccessGuard {
         if (!session) {
             return false;
         }
-        if (this.assignedLevel <= session.assignedLevel || this.assignedLevel <= 2) {
+        if (!LevelAccessGuard.isPlayableLevel(this.assignedLevel)) {
+            return false;
+        }
+        if (this.assignedLevel <= LevelAccessGuard.getRosterEntitledLevel(session) || this.assignedLevel <= 2) {
             return true;
         }
         const state = this.getSavedProgressionState(this.getRequiredCheckpointLevel());
@@ -243,7 +278,12 @@ class LevelAccessGuard {
         if (!session) {
             return 'You must sign in with your Class Code, Student ID and PIN before playing.';
         }
-        if (this.assignedLevel <= session.assignedLevel || this.assignedLevel <= 2) {
+        if (!LevelAccessGuard.isPlayableLevel(this.assignedLevel)) {
+            return this.assignedLevel === null
+                ? 'That level link is not valid.'
+                : `Level ${this.assignedLevel} is not available yet.`;
+        }
+        if (this.assignedLevel <= LevelAccessGuard.getRosterEntitledLevel(session) || this.assignedLevel <= 2) {
             return null;
         }
 
@@ -325,18 +365,22 @@ function showAccessDeniedModal(message) {
     document.body.appendChild(modal);
 }
 
+/**
+ * Level requested by the Level 2–5 page URL. A missing ?level= means the
+ * default Level 2 entry point; a present but invalid/unsupported value
+ * returns null (never coerced to another level's save).
+ */
 function getAssignedLevelFromPageUrl() {
     try {
         const params = new URLSearchParams(window.location.search);
-        const level = Number(params.get('level'));
-        if ([2, 3, 4, 5].includes(level)) {
-            return level;
-        }
-        const pathMatch = String(window.location.pathname || '').match(/level-(\d+)/);
-        const pathLevel = Number(pathMatch?.[1]);
-        return [2, 3, 4, 5].includes(pathLevel) ? pathLevel : 2;
+        const raw = params.get('level');
+        if (raw === null) return 2;
+        const text = String(raw).trim();
+        if (!/^\d+$/.test(text)) return null;
+        const level = Number(text);
+        return [2, 3, 4, 5].includes(level) ? level : null;
     } catch (_) {
-        return 2;
+        return null;
     }
 }
 

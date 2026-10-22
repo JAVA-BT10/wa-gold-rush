@@ -98,11 +98,46 @@ const SharePointSync = (() => {
      */
     function _createPostError(message, syncOutcome = 'failure', result) {
         const error = new Error(String(message || 'Progress sync failed.'));
-        error.syncOutcome = ['unknown', 'rejected'].includes(syncOutcome) ? syncOutcome : 'failure';
+        error.syncOutcome = ['unknown', 'rejected', 'conflict', 'stale_generation', 'unconfirmed'].includes(syncOutcome)
+            ? syncOutcome
+            : 'failure';
         if (result !== undefined) {
             error.result = result;
         }
         return error;
+    }
+
+    function _resolveSaveProtocol() {
+        const globalApi = (typeof globalThis !== 'undefined' ? globalThis : window).WA_GOLD_RUSH_SAVE_PROTOCOL;
+        if (globalApi && typeof globalApi.classifyResponse === 'function') return globalApi;
+        if (typeof require === 'function') {
+            try { return require('./save-protocol.js'); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    function _isV2(payload) {
+        return payload?.protocolVersion === 2;
+    }
+
+    /** Queue coalescing key: ProgressKey (legacy) or ProgressKey + run generation (v2). */
+    function _queueKey(payload) {
+        const protocol = _resolveSaveProtocol();
+        if (_isV2(payload) && protocol) return protocol.coalesceKey(payload);
+        return String(payload?.progressKey || '').trim();
+    }
+
+    /**
+     * v2 requests are either sealed (baseRevision assigned, sent at least
+     * once, immutable) or pending (latest local capture, not yet sent). One of
+     * each may be queued per key; a pending capture never replaces a sealed
+     * request whose outcome is still unknown.
+     */
+    function _queueSlotKey(item) {
+        const key = _queueKey(item?.payload);
+        if (!key) return '';
+        if (!_isV2(item?.payload)) return key;
+        return `${key}#${item.payload.baseRevision === undefined ? 'pending' : 'sealed'}`;
     }
 
     function _logProgress(event, payload, details = {}) {
@@ -170,6 +205,13 @@ const SharePointSync = (() => {
             if (!validation.ok) {
                 return { invalid: { item: { ...item, payload }, reason: `invalid_identity:${validation.errors.join(',')}` } };
             }
+            if (_isV2(payload)) {
+                const protocol = _resolveSaveProtocol();
+                const v2 = protocol ? protocol.validateV2Fields(payload) : { ok: false, errors: ['protocol_unavailable'] };
+                if (!v2.ok) {
+                    return { invalid: { item: { ...item, payload }, reason: `invalid_v2:${v2.errors.join(',')}` } };
+                }
+            }
         }
 
         if (type === 'profile' && !payload.studentCode) return { invalid: { item, reason: 'invalid_identity:studentCode' } };
@@ -195,13 +237,14 @@ const SharePointSync = (() => {
                 continue;
             }
             const item = result.item;
-            if (item.type === 'progress' && item.payload?.progressKey) {
-                const existingIndex = progressIndexes.get(item.payload.progressKey);
+            const slotKey = item.type === 'progress' ? _queueSlotKey(item) : '';
+            if (slotKey) {
+                const existingIndex = progressIndexes.get(slotKey);
                 if (typeof existingIndex === 'number') {
                     normalized[existingIndex] = item;
                     continue;
                 }
-                progressIndexes.set(item.payload.progressKey, normalized.length);
+                progressIndexes.set(slotKey, normalized.length);
             }
             normalized.push(item);
         }
@@ -272,8 +315,9 @@ const SharePointSync = (() => {
             payloadSchemaVersion: QUEUE_SCHEMA_VERSION
         };
         let coalesced = false;
-        if (type === 'progress' && payload?.progressKey) {
-            const existingIndex = queue.findIndex(item => item.type === 'progress' && item.payload?.progressKey === payload.progressKey);
+        const slotKey = type === 'progress' ? _queueSlotKey(queueItem) : '';
+        if (slotKey) {
+            const existingIndex = queue.findIndex(item => item.type === 'progress' && _queueSlotKey(item) === slotKey);
             if (existingIndex >= 0) {
                 queue[existingIndex] = queueItem;
                 coalesced = true;
@@ -337,6 +381,19 @@ const SharePointSync = (() => {
                 })();
             if (timedOut) {
                 throw _createPostError(`Timed out after ${timeoutMs}ms`, 'unknown', result);
+            }
+            if (options.protocolV2) {
+                const protocol = _resolveSaveProtocol();
+                const v2 = protocol
+                    ? protocol.classifyResponse(payload, result)
+                    : { outcome: 'unconfirmed', code: 'protocol_unavailable' };
+                if (v2.outcome === 'confirmed') return { ...result, v2 };
+                if (v2.outcome !== 'defer') {
+                    const outcome = v2.outcome === 'unconfirmed' ? 'unconfirmed' : v2.outcome;
+                    const error = _createPostError(`v2 ${v2.outcome}${v2.code ? `: ${v2.code}` : ''}`, outcome, result);
+                    error.v2 = v2;
+                    throw error;
+                }
             }
             if (!result.success) {
                 const errorMessage = result.error || `HTTP ${result.status || 0}`;
@@ -480,7 +537,7 @@ const SharePointSync = (() => {
         const progressionMarkersJson = opts.progressionMarkersJson
             ? (typeof opts.progressionMarkersJson === 'string' ? opts.progressionMarkersJson : JSON.stringify(opts.progressionMarkersJson))
             : '';
-        return {
+        const payload = {
             studentCode,
             classCode,
             level,
@@ -509,6 +566,65 @@ const SharePointSync = (() => {
             clientTimestampUtc: telemetry.clientTimestampUtc,
             clientVersion: telemetry.clientVersion
         };
+        // Protocol v2 fields are only present when the caller explicitly built
+        // a v2 capture (feature flag on). Legacy payloads are unchanged and
+        // legacy queued items are never upgraded.
+        if (opts.protocolVersion !== 2) return payload;
+        const protocol = _resolveSaveProtocol();
+        if (!protocol) return payload;
+        Object.assign(payload, protocol.buildV2Fields(opts));
+        if (Object.prototype.hasOwnProperty.call(opts, 'baseRevision')) {
+            payload.baseRevision = Number.isInteger(opts.baseRevision) ? opts.baseRevision : (opts.baseRevision === null ? null : NaN);
+        }
+        payload.contentHash = protocol.computeContentHash(payload);
+        return payload;
+    }
+
+    function _findQueuedForKey(queue, key) {
+        return queue.filter((item) => item.type === 'progress' && _queueKey(item.payload) === key);
+    }
+
+    /**
+     * Handle a non-legacy v2 outcome. Returns a result object, or null when
+     * the caller should continue with the retry/queue path.
+     */
+    function _handleV2Outcome(error, payload) {
+        const protocol = _resolveSaveProtocol();
+        const outcome = error?.syncOutcome;
+        if (outcome === 'conflict') {
+            protocol?.recordConflict(localStorage, payload, error.v2 || {});
+            _logProgress('revision conflict (held for reconciliation)', payload, { code: error.v2?.code || '' });
+            _dispatchCloudSaveStatus('cloud save conflict: reload to review');
+            return { ok: false, queued: false, conflict: true, reason: 'revision_conflict', progressKey: payload.progressKey, saveRequestId: payload.saveRequestId };
+        }
+        if (outcome === 'stale_generation' || outcome === 'unconfirmed') {
+            const reason = outcome === 'stale_generation' ? 'generation_stale' : `protocol_unconfirmed:${error.v2?.code || ''}`;
+            _quarantine({ item: { type: 'progress', payload, queuedAt: new Date().toISOString(), attempts: 1 }, reason });
+            _dispatchCloudSaveStatus(outcome === 'stale_generation' ? 'cloud save superseded by reset' : 'cloud save not verified');
+            return { ok: false, queued: false, rejected: true, quarantined: true, reason, progressKey: payload.progressKey, saveRequestId: payload.saveRequestId };
+        }
+        return null;
+    }
+
+    /**
+     * Remove every queued progress item for a ProgressKey (e.g. after the
+     * student restarts that level). Items are moved to quarantine, never
+     * silently dropped, and can never be replayed over the new run.
+     */
+    function discardQueuedForProgressKey(progressKey, reason = 'superseded_by_reset') {
+        const key = String(progressKey || '').trim();
+        if (!key) return 0;
+        const queue = _loadQueue();
+        const keep = [];
+        const removed = [];
+        queue.forEach((item) => {
+            if (item.type === 'progress' && item.payload?.progressKey === key) removed.push({ item, reason });
+            else keep.push(item);
+        });
+        if (!removed.length) return 0;
+        _quarantine(removed);
+        _saveQueue(keep);
+        return removed.length;
     }
 
     // -------------------------------------------------------------------------
@@ -558,25 +674,61 @@ const SharePointSync = (() => {
             _dispatchCloudSaveStatus('cloud save blocked: sign in again');
             return { ok: false, queued: false, rejected: true, reason: auth.reason };
         }
+        let sendPayload = payload;
+        const isV2 = _isV2(payload);
+        if (isV2) {
+            const protocol = _resolveSaveProtocol();
+            const v2Validation = protocol ? protocol.validateV2Fields(payload) : { ok: false, errors: ['protocol_unavailable'] };
+            if (!v2Validation.ok || !protocol.isEnabled()) {
+                _logProgress('blocked (v2 unavailable)', payload, { errors: v2Validation.errors || [] });
+                return { ok: false, queued: false, held: true, reason: 'protocol_v2_unavailable' };
+            }
+            const key = _queueKey(payload);
+            if (protocol.hasConflict(localStorage, key)) {
+                _dispatchCloudSaveStatus('cloud save conflict: reload to review');
+                return { ok: false, queued: false, held: true, reason: 'revision_conflict', progressKey: payload.progressKey };
+            }
+            if (_findQueuedForKey(_loadQueue(), key).length) {
+                // Never race an unresolved request for the same game: wait.
+                const queued = _enqueue('progress', payload);
+                _startRetryLoop();
+                _dispatchCloudSaveStatus('locally saved with retry pending');
+                return { ok: false, queued: true, waitingForPrevious: true, queueLength: queued.queueLength, progressKey: payload.progressKey };
+            }
+            const sealed = protocol.seal(payload, localStorage);
+            if (!sealed.ok) {
+                _quarantine({ item: { type: 'progress', payload, queuedAt: new Date().toISOString(), attempts: 0 }, reason: `unsealable:${sealed.reason}` });
+                return { ok: false, queued: false, rejected: true, reason: sealed.reason };
+            }
+            sendPayload = sealed.payload;
+        }
         _dispatchCloudSaveStatus('saving');
-        _logProgress('save attempt', payload);
+        _logProgress('save attempt', sendPayload);
         try {
-            const result = await _post(CONFIG.progressEndpointKey, payload, {
-                timeoutMs: CONFIG.progressRequestTimeoutMs
+            const result = await _post(CONFIG.progressEndpointKey, sendPayload, {
+                timeoutMs: CONFIG.progressRequestTimeoutMs,
+                protocolV2: isV2
             });
-            _logProgress('save success', payload, {
-                httpStatus: result.status
+            if (isV2) _resolveSaveProtocol()?.recordAcknowledgement(localStorage, sendPayload, result.v2);
+            _logProgress('save success', sendPayload, {
+                httpStatus: result.status,
+                ...(isV2 ? { revision: result.v2?.revision, deduplicated: !!result.v2?.deduplicated } : {})
             });
             _dispatchCloudSaveStatus('saved to cloud');
             return {
                 ok: true,
-                progressKey: payload.progressKey,
-                saveRequestId: payload.saveRequestId
+                progressKey: sendPayload.progressKey,
+                saveRequestId: sendPayload.saveRequestId,
+                ...(isV2 ? { revision: result.v2?.revision } : {})
             };
         } catch (err) {
+            if (isV2) {
+                const handled = _handleV2Outcome(err, sendPayload);
+                if (handled) return handled;
+            }
             if (err?.syncOutcome === 'rejected') {
                 _quarantine({
-                    item: { type: 'progress', payload, queuedAt: new Date().toISOString(), attempts: 1 },
+                    item: { type: 'progress', payload: sendPayload, queuedAt: new Date().toISOString(), attempts: 1 },
                     reason: `rejected:${err?.message || 'Flow rejected the save.'}`
                 });
                 _dispatchCloudSaveStatus('cloud save rejected');
@@ -587,16 +739,16 @@ const SharePointSync = (() => {
                     quarantined: true,
                     reason: 'flow_rejected',
                     error: err?.message || 'Flow rejected the save.',
-                    progressKey: payload.progressKey,
-                    saveRequestId: payload.saveRequestId
+                    progressKey: sendPayload.progressKey,
+                    saveRequestId: sendPayload.saveRequestId
                 };
             }
             const unknownOutcome = err?.syncOutcome === 'unknown';
-            _logProgress(unknownOutcome ? 'timeout/unknown outcome' : 'save failure', payload, {
+            _logProgress(unknownOutcome ? 'timeout/unknown outcome' : 'save failure', sendPayload, {
                 error: err?.message || 'Progress sync failed.'
             });
-            const queued = _enqueue('progress', payload);
-            _logProgress('queueing', payload, {
+            const queued = _enqueue('progress', sendPayload);
+            _logProgress('queueing', sendPayload, {
                 coalesced: queued.coalesced,
                 queueLength: queued.queueLength,
                 verificationPending: unknownOutcome
@@ -607,8 +759,8 @@ const SharePointSync = (() => {
                 ok: false,
                 queued: true,
                 unknownOutcome,
-                progressKey: payload.progressKey,
-                saveRequestId: payload.saveRequestId
+                progressKey: sendPayload.progressKey,
+                saveRequestId: sendPayload.saveRequestId
             };
         }
     }
@@ -624,11 +776,16 @@ const SharePointSync = (() => {
 
         const remaining = [];
         const rejected = [];
+        const blockedV2Keys = new Set();
+        const protocol = _resolveSaveProtocol();
+        const v2Enabled = !!protocol && protocol.isEnabled();
         let finalFailure = false;
+        let conflicted = false;
         for (const item of queue) {
             const endpointKey = item.type === 'profile' ? CONFIG.profileEndpointKey : CONFIG.progressEndpointKey;
             const url = _resolveEndpoint(endpointKey);
             if (!url) { remaining.push(item); continue; }
+            const isV2 = item.type === 'progress' && _isV2(item.payload);
             if (item.type === 'progress') {
                 const validation = validateProgressPayload(item.payload);
                 if (!validation.ok) {
@@ -641,6 +798,38 @@ const SharePointSync = (() => {
                     remaining.push(item);
                     continue;
                 }
+                if (isV2 && !v2Enabled) {
+                    // Rollback safety: never replay a v2 request through a
+                    // legacy (non-conditional) save path. Held, not deleted.
+                    remaining.push(item);
+                    continue;
+                }
+                if (!isV2 && v2Enabled) {
+                    // Never blindly upgrade or replay a legacy capture once v2
+                    // conditional writes are active.
+                    rejected.push({ item, reason: 'legacy_item_held_v2_active' });
+                    continue;
+                }
+                if (isV2) {
+                    const key = _queueKey(item.payload);
+                    if (blockedV2Keys.has(key) || protocol.hasConflict(localStorage, key)) {
+                        remaining.push(item);
+                        continue;
+                    }
+                    if (item.payload.baseRevision === undefined) {
+                        const sealed = protocol.seal(item.payload, localStorage);
+                        if (!sealed.ok) {
+                            if (sealed.reason === 'generation_mismatch') {
+                                rejected.push({ item, reason: 'superseded_by_reset' });
+                            } else {
+                                remaining.push(item);
+                                blockedV2Keys.add(key);
+                            }
+                            continue;
+                        }
+                        item.payload = sealed.payload;
+                    }
+                }
             }
             try {
                 if (item.type === 'progress') {
@@ -650,9 +839,10 @@ const SharePointSync = (() => {
                 }
                 // The queued payload (including its saveRequestId) is re-sent
                 // unchanged so the flow can de-duplicate unknown-outcome retries.
-                await _post(endpointKey, item.payload, item.type === 'progress'
-                    ? { timeoutMs: CONFIG.progressRequestTimeoutMs }
+                const result = await _post(endpointKey, item.payload, item.type === 'progress'
+                    ? { timeoutMs: CONFIG.progressRequestTimeoutMs, protocolV2: isV2 }
                     : {});
+                if (isV2) protocol.recordAcknowledgement(localStorage, item.payload, result.v2);
                 if (item.type === 'progress') {
                     _logProgress('retry success', item.payload, {
                         attempts: Number(item.attempts || 0) + 1
@@ -660,6 +850,17 @@ const SharePointSync = (() => {
                 }
             } catch (error) {
                 item.attempts = (item.attempts || 0) + 1;
+                if (isV2) {
+                    const handled = _handleV2Outcome(error, item.payload);
+                    if (handled) {
+                        if (handled.conflict) {
+                            conflicted = true;
+                            blockedV2Keys.add(_queueKey(item.payload));
+                        }
+                        continue;
+                    }
+                    blockedV2Keys.add(_queueKey(item.payload));
+                }
                 if (error?.syncOutcome === 'rejected') {
                     rejected.push({ item, reason: `rejected:${error?.message || 'Flow rejected the save.'}` });
                     continue;
@@ -685,7 +886,9 @@ const SharePointSync = (() => {
             clearInterval(_retryTimer);
             _retryTimer = null;
         }
-        if (finalFailure) {
+        if (conflicted) {
+            _dispatchCloudSaveStatus('cloud save conflict: reload to review');
+        } else if (finalFailure) {
             _dispatchCloudSaveStatus('cloud save failed');
         } else if (rejected.length) {
             _dispatchCloudSaveStatus('cloud save rejected');
@@ -748,6 +951,7 @@ const SharePointSync = (() => {
         syncProfile,
         syncProgress,
         retryQueue,
+        discardQueuedForProgressKey,
         queueLength,
         getQuarantine,
         quarantineLength,
