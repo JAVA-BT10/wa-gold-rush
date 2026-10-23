@@ -74,9 +74,29 @@ Record the date, the tester (role), the redacted evidence location, and pass/fai
 
 ## Repository test evidence (mock only)
 
-Command: `node --test` (from the repository root).
+Command: `node --test tests/*.test.js` (from the repository root).
 
 - `tests/wiring-reliability.test.js` covers the existing behaviour (updated for per-level slots).
 - `tests/per-level-architecture.test.js` covers the per-level architecture, the reference save server, gated sync/restore, leaderboards and Level 6 gating.
+- `tests/competition-validation.test.js` covers wrapped review/conflict markers and strict snapshot count validation.
+- `tests/pipeline-validation.test.js` exercises the actual validation-only build and deployment test gates without tenant secrets.
+
+PRs build and verify a validation-only Pages artifact without tenant secrets, then run all regression suites. Deployable main revisions build and verify the deployment artifact, run the same required tests, then upload and deploy that artifact. Failed builds or tests block deployment; PR and non-main artifacts are not deployed.
+
+### Reliability-hardening boundaries
+
+Terminology meanings are recorded here without changing repository field names:
+
+- `YearLevel` = teacher-assigned starting game level.
+- `CurrentLevel` = level currently being played.
+- `ProgressedLevel` = highest authorized playable level.
+
+This PR makes no YearLevel migration, no AssignedLevel refactor, and no naming changes. Existing repository contracts, canonical `Class|Student|Level` identities, and browser storage key formats are preserved. There are no SharePoint schema or Power Automate contract changes, progression/teacher-approval policy changes, or tenant deployment logic.
+
+Live tenant SharePoint/flow mappings remain under verification. Repository contract tests do not establish live tenant column mappings; tenant mapping evidence and acceptance remain separate from this hardening work.
+
+All capability flags remain default OFF, including Save Protocol V2, Cloud Restore, and competition capabilities. Level 6 remains recognized but non-playable, non-assignable, and outside the save pipeline.
+
+Upload holds prevent future dispatch for the affected key, including retries. They do not cancel or undo requests already dispatched.
 
 Results are recorded in the PR description.

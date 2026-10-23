@@ -296,6 +296,14 @@
     }
 
     function writeLevelSave(storageInput, envelope, expected = {}) {
+        const validation = validateEnvelope(envelope, expected);
+        if (!validation.ok) return { ok: false, reason: validation.reason };
+        const protection = getLevelWriteProtection(storageInput, validation.identity, validation.level);
+        if (protection) return { ok: false, reason: protection };
+        return persistLevelSave(storageInput, envelope, expected);
+    }
+
+    function persistLevelSave(storageInput, envelope, expected) {
         const storage = resolveStorage(storageInput);
         if (!storage) return { ok: false, reason: 'storage_unavailable' };
         const validation = validateEnvelope(envelope, expected);
@@ -343,7 +351,9 @@
             return { ok: false, reason: 'stale_generation' };
         }
         envelope.cloud = { ...(envelope.cloud || {}), ...clone(update.cloud || {}) };
-        return writeLevelSave(storage, envelope, { identity: identityInput, level: levelInput });
+        // This path changes only cloud metadata on the validated current
+        // envelope; recording a conflict must not rewrite its economy/run.
+        return persistLevelSave(storage, envelope, { identity: identityInput, level: levelInput });
     }
 
     // ------------------------------------------------------------------
@@ -493,6 +503,11 @@
 
     /** Current run (generation + runId) for a level, created on first use. */
     function ensureLevelRun(storageInput, identityInput, levelInput, options = {}) {
+        if (getLevelWriteProtection(storageInput, identityInput, levelInput)) return null;
+        return ensureLevelRunUnchecked(storageInput, identityInput, levelInput, options);
+    }
+
+    function ensureLevelRunUnchecked(storageInput, identityInput, levelInput, options = {}) {
         const storage = resolveStorage(storageInput);
         const identity = normalizeIdentity(identityInput);
         const level = normalizeSaveLevel(levelInput);
@@ -513,6 +528,7 @@
         const storage = resolveStorage(storageInput);
         const validation = validateEnvelope(envelope);
         if (!storage || !validation.ok) return false;
+        if (getLevelWriteProtection(storage, validation.identity, validation.level)) return false;
         const ledger = readLedger(storage, validation.identity);
         const key = String(validation.level);
         const current = ledger.levelRuns[key];
@@ -562,6 +578,8 @@
         const identity = normalizeIdentity(identityInput);
         const level = normalizeSaveLevel(levelInput);
         if (!storage || !identity || level === null) return { ok: false, reason: 'invalid_request' };
+        const protection = getLevelWriteProtection(storage, identity, level);
+        if (protection) return { ok: false, reason: protection };
         const key = buildSaveKey(identity, level);
         const archived = archiveLevelSave(storage, identity, level, { ...options, reason: options.reason || 'student_restart' });
         if (!archived.ok) return { ok: false, reason: archived.reason };
@@ -649,8 +667,11 @@
         const finish = (status, reason, level = null, extra = {}) => {
             const marker = { hash, status, reason, level, processedAt: nowIso(options) };
             const latest = readLedger(storage, identity);
+            Object.entries(ledger.progressionStateByLevel).forEach(([key, state]) => {
+                latest.progressionStateByLevel[key] = mergeProgressionEvidence(latest.progressionStateByLevel[key], state);
+            });
             latest.legacyMigration = marker;
-            writeLedger(storage, latest);
+            if (!writeLedger(storage, latest)) return { status: 'skipped', reason: 'ledger_write_failed', level };
             return { status, reason, level, ...extra };
         };
 
@@ -671,14 +692,16 @@
             Object.entries(gs.progressionStateByLevel).forEach(([levelKey, state]) => {
                 const evidenceLevel = normalizeSaveLevel(levelKey);
                 if (evidenceLevel !== null && isPlainObject(state)) {
-                    recordProgressionEvidence(storage, identity, evidenceLevel, state);
+                    ledger.progressionStateByLevel[String(evidenceLevel)] = mergeProgressionEvidence(
+                        ledger.progressionStateByLevel[String(evidenceLevel)], state
+                    );
                 }
             });
         }
 
         if (level === null) return finish('needs_review', 'unsupported_level');
         if (!isPlainObject(gs.progressionStateByLevel) && (gs.checkpointStatus || gs.approvalStatus)) {
-            recordProgressionEvidence(storage, identity, level, {
+            ledger.progressionStateByLevel[String(level)] = mergeProgressionEvidence(ledger.progressionStateByLevel[String(level)], {
                 checkpointStatus: gs.checkpointStatus || null,
                 quizAttempts: Array.isArray(gs.quizAttempts) ? gs.quizAttempts : [],
                 approvalStatus: gs.approvalStatus || null,
@@ -689,10 +712,21 @@
         if (!ownerClass) return finish('needs_review', 'missing_class', level);
 
         const target = readLevelSave(storage, identity, level);
-        if (target.status !== 'missing') return finish('preserved_existing', `target_${target.status}`, level);
+        if (target.status === 'unavailable') return { status: 'skipped', reason: target.reason, level };
+        if (target.status !== 'missing') {
+            return target.status === 'found' && target.envelope.migratedFrom?.hash === hash
+                ? finish('migrated', '', level)
+                : finish('preserved_existing', `target_${target.status}`, level);
+        }
 
-        const run = ensureLevelRun(storage, identity, level, options);
-        if (!run) return finish('skipped', 'ledger_write_failed', level);
+        // Verified legacy ownership may resolve an earlier legacy review hold,
+        // but cannot bypass an unrelated cloud conflict.
+        const hold = getUploadHold(storage, identity, level);
+        if (hold && !hold.startsWith('legacy_') && hold !== 'unverified_new_slot') {
+            return { status: 'skipped', reason: hold, level };
+        }
+        const run = ensureLevelRunUnchecked(storage, identity, level, options);
+        if (!run) return { status: 'skipped', reason: 'ledger_write_failed', level };
         const envelope = createEnvelope({
             identity,
             level,
@@ -704,8 +738,8 @@
             migratedFrom: { key: LEGACY_AUTOSAVE_KEY, hash, savedAt: typeof data.timestamp === 'string' ? data.timestamp : null },
             now: nowIso(options)
         });
-        const written = writeLevelSave(storage, envelope, { identity, level });
-        if (!written.ok) return finish('skipped', written.reason, level);
+        const written = persistLevelSave(storage, envelope, { identity, level });
+        if (!written.ok) return { status: 'skipped', reason: written.reason, level };
         return finish('migrated', '', level);
     }
 
@@ -718,9 +752,29 @@
         const level = normalizeSaveLevel(levelInput);
         if (level === null) return 'level_invalid';
         const ledger = readLedger(storageInput, identityInput);
+        const runHold = ledger.levelRuns[String(level)]?.cloudUploadHold;
+        if (typeof runHold === 'string' && runHold) return runHold;
         const marker = ledger.legacyMigration;
         if (marker && marker.status === 'needs_review' && marker.reason !== 'class_mismatch' && marker.level === level) {
             return `legacy_${marker.reason || 'needs_review'}`;
+        }
+        return '';
+    }
+
+    function getLevelWriteProtection(storageInput, identityInput, levelInput) {
+        const hold = getUploadHold(storageInput, identityInput, levelInput);
+        if (hold && hold !== 'unverified_new_slot') return hold;
+        const current = readLevelSave(storageInput, identityInput, levelInput);
+        if (current.status !== 'found' && current.status !== 'missing') return current.reason || current.status;
+        if (current.status === 'found') {
+            const ledger = readLedger(storageInput, identityInput);
+            const run = ledger.levelRuns[String(current.envelope.level)];
+            if (run && (run.generation !== current.envelope.generation || run.runId !== current.envelope.runId)) {
+                return 'stale_generation';
+            }
+            if (['conflict', 'hold', 'held', 'stale_generation'].includes(current.envelope.cloud?.status)) {
+                return `cloud_${current.envelope.cloud.status}`;
+            }
         }
         return '';
     }
@@ -780,6 +834,7 @@
         resetLevelSave,
         migrateLegacyAutosave,
         getUploadHold,
+        getLevelWriteProtection,
         describeLevelSave
     };
 

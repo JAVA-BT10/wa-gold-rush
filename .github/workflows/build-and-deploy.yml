@@ -1,6 +1,7 @@
 name: Build and Deploy to GitHub Pages
 
 on:
+  pull_request:
   push:
     branches: ["main"]
   workflow_dispatch:
@@ -11,7 +12,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -23,8 +24,9 @@ jobs:
 
       - name: Generate runtime config
         env:
-          WA_GGR_API_KEY: ${{ secrets.WA_GGR_API_KEY }}
-          WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL: ${{ secrets.WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL }}
+          WA_GGR_API_KEY: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.WA_GGR_API_KEY || '' }}
+          WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL || '' }}
+          WA_GGR_VALIDATION_ONLY: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
           WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}
           WA_GGR_PAGES_BUILD_DIR: pages-dist
         run: |
@@ -36,6 +38,9 @@ jobs:
 
           api_key = os.environ.get("WA_GGR_API_KEY", "").strip()
           approval_url = os.environ.get("WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL", "").strip()
+          if os.environ.get("WA_GGR_VALIDATION_ONLY") == "true":
+              api_key = "validation-only-not-a-key"
+              approval_url = ""
           flow_endpoints = {"saveCheckpointApproval": approval_url}
           if not api_key:
               raise SystemExit("WA_GGR_API_KEY secret is required to deploy teacher/runtime-config.js")
@@ -195,10 +200,15 @@ jobs:
                   raise SystemExit("Packaged Pages artifact runtime config does not match the generated file")
           PY
 
+      - name: Run regression tests
+        run: node --test tests/*.test.js
+
       - name: Setup Pages
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/configure-pages@v5
 
       - name: Upload Pages artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
           path: pages-dist
@@ -206,6 +216,7 @@ jobs:
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

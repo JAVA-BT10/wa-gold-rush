@@ -1,19 +1,30 @@
 (function initCompetitionBaselines(globalObj) {
     const STATUSES = Object.freeze(['active', 'frozen', 'closed']);
     const HELD_STATUSES = new Set(['held', 'excluded', 'unverified', 'under_review', 'under-review', 'needs_review']);
-    const CONFLICT_STATUSES = new Set(['conflict', 'conflicted', 'revision_conflict', 'generation_stale', 'unresolved']);
+    const CONFLICT_STATUSES = new Set(['conflict', 'conflicted', 'revision_conflict', 'generation_stale', 'stale_generation', 'unresolved']);
+
+    function unwrap(value) {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            if ('Value' in value) return value.Value;
+            if ('value' in value) return value.value;
+        }
+        return value;
+    }
 
     function text(value) {
+        value = unwrap(value);
         return value === null || value === undefined ? '' : String(value).trim();
     }
 
     function number(value) {
-        if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
+        value = unwrap(value);
+        if (!['number', 'string'].includes(typeof value) || text(value) === '') return null;
         const parsed = Number(value);
         return Number.isFinite(parsed) ? parsed : null;
     }
 
     function nullableCounter(value) {
+        value = unwrap(value);
         if (value === null || value === undefined || value === '') return null;
         const parsed = number(value);
         return Number.isInteger(parsed) && parsed >= 0 ? parsed : NaN;
@@ -26,14 +37,6 @@
 
     function readValue(record, lower, upper) {
         return record?.[lower] ?? record?.[upper];
-    }
-
-    function status(record, keys) {
-        for (const key of keys) {
-            const value = text(record?.[key]).toLowerCase().replace(/[\s-]+/g, '_');
-            if (value) return value;
-        }
-        return '';
     }
 
     function normalizeBaselineRecord(record = {}) {
@@ -90,14 +93,15 @@
 
     function captureCompetitionBaseline({ competitionId, progressRow, baselineCapturedAt } = {}) {
         if (!progressRow || typeof progressRow !== 'object') return { ok: false, reason: 'progress_missing' };
-        const reviewStatus = status(progressRow, ['reviewStatus', 'ReviewStatus']);
-        const leaderboardStatus = status(progressRow, ['leaderboardStatus', 'LeaderboardStatus']);
-        const saveStatus = status(progressRow, ['saveStatus', 'SaveStatus']);
-        if (HELD_STATUSES.has(reviewStatus) || HELD_STATUSES.has(leaderboardStatus) || HELD_STATUSES.has(saveStatus)) {
+        const statuses = [
+            'reviewStatus', 'ReviewStatus', 'leaderboardStatus', 'LeaderboardStatus',
+            'saveStatus', 'SaveStatus', 'syncStatus', 'SyncStatus', 'conflictStatus', 'ConflictStatus'
+        ].map((key) => text(progressRow[key]).toLowerCase().replace(/[\s-]+/g, '_'));
+        if (statuses.some((value) => HELD_STATUSES.has(value))) {
             return { ok: false, reason: 'held_for_review' };
         }
-        if (CONFLICT_STATUSES.has(reviewStatus) || CONFLICT_STATUSES.has(leaderboardStatus) || CONFLICT_STATUSES.has(saveStatus)
-            || progressRow.conflict === true || progressRow.revisionConflict === true) {
+        if (statuses.some((value) => CONFLICT_STATUSES.has(value))
+            || progressRow.conflict === true || progressRow.revisionConflict === true || progressRow.generationStale === true) {
             return { ok: false, reason: 'save_conflict' };
         }
         return normalizeBaselineRecord({

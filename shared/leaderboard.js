@@ -37,7 +37,7 @@
         competitionProfit: Object.freeze({ key: 'competitionProfit', label: 'Competition profit (net worth − competition baseline)', requiresBaseline: true })
     });
     const HELD_STATUSES = new Set(['held', 'excluded', 'unverified', 'under_review', 'needs_review']);
-    const CONFLICT_STATUSES = new Set(['conflict', 'conflicted', 'revision_conflict', 'generation_stale', 'unresolved']);
+    const CONFLICT_STATUSES = new Set(['conflict', 'conflicted', 'revision_conflict', 'generation_stale', 'stale_generation', 'unresolved']);
     const PLACEHOLDER_NAME = 'Unnamed player';
 
     function unwrap(value) {

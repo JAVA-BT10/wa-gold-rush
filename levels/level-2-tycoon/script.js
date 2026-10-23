@@ -188,6 +188,20 @@ function setLevelLoadState(status, reason = '') {
     updateLevelSaveStatusLabel();
 }
 
+function protectCloudSave(reason, session, level) {
+    if (!cloudUploadHold || cloudUploadHold === 'unverified_new_slot') {
+        cloudUploadHold = reason;
+    }
+    gameState.saveLocked = true;
+    const store = getLevelSaveStore();
+    const ledger = store?.readLedger(localStorage, session);
+    const run = ledger?.levelRuns?.[String(level)];
+    if (run && (!run.cloudUploadHold || run.cloudUploadHold === 'unverified_new_slot')) {
+        run.cloudUploadHold = cloudUploadHold;
+        store.writeLedger(localStorage, ledger);
+    }
+}
+
 /**
  * Optional full cloud restore (feature flag `fullCloudRestore`, OFF by
  * default). Runs after the local slot is loaded and before any upload. It
@@ -202,23 +216,34 @@ async function maybeRestoreLevelFromCloud(session, level) {
     const local = store.readLevelSave(localStorage, session, level);
     const decision = restore.reconcile(local, cloud);
     const protocolOn = !!getSaveProtocolApi()?.isEnabled();
+    let safeReconcile = ['resume_local', 'start_new', 'upload_local_create'].includes(decision.action);
     if (decision.action === 'adopt_cloud') {
         const adopted = restore.adoptCloudSave(localStorage, cloud);
         if (adopted.ok && gameState.loadFromLocalStorage().success) {
+            safeReconcile = true;
             setLevelLoadState('restored');
         } else {
-            cloudUploadHold = cloudUploadHold || 'cloud_restore_failed';
+            protectCloudSave('cloud_restore_failed', session, level);
             setLevelLoadState('error', adopted.reason || 'restore_failed');
-            gameState.saveLocked = true;
         }
     } else if (decision.action === 'conflict') {
-        cloudUploadHold = cloudUploadHold || 'cloud_conflict';
+        protectCloudSave('cloud_conflict', session, level);
         setLevelLoadState('cloud_conflict', decision.reason);
     } else if (decision.action === 'resume_local_unsynced' || decision.action === 'start_local_unsynced') {
         // Without server compare-and-swap, an upload could overwrite cloud
         // progress this device has not seen: hold until the next load.
-        if (!protocolOn) cloudUploadHold = cloudUploadHold || 'cloud_state_unknown';
+        if (!protocolOn) protectCloudSave('cloud_state_unknown', session, level);
         setLevelLoadState('local_only', decision.reason);
+    }
+    if (safeReconcile && cloudUploadHold === 'unverified_new_slot') {
+        const ledger = store.readLedger(localStorage, session);
+        const run = ledger.levelRuns?.[String(level)];
+        if (run?.cloudUploadHold === 'unverified_new_slot') {
+            delete run.cloudUploadHold;
+            if (!store.writeLedger(localStorage, ledger)) return decision;
+        }
+        cloudUploadHold = store.getUploadHold(localStorage, session, level) || '';
+        updateLevelSaveStatusLabel();
     }
     return decision;
 }
@@ -230,7 +255,7 @@ async function maybeRestoreLevelFromCloud(session, level) {
  *
  * - found   → resume that level's game
  * - missing → first visit: start from that level's configured defaults
- * - invalid → keep a copy aside (quarantine), then start fresh
+ * - invalid → preserve the slot and lock writes until it is resolved
  * The legacy shared slot is migrated (non-destructively) first.
  */
 function loadLevelGameForSession(session, level) {
@@ -255,26 +280,13 @@ function loadLevelGameForSession(session, level) {
     if (loaded.success) {
         setLevelLoadState('resumed', loaded.migratedFrom ? 'migrated_legacy' : '');
     } else if (loaded.status === 'missing') {
-        gameState.beginLevelRun();
-        setLevelLoadState('started');
-    } else if (loaded.status === 'invalid' && loaded.reason === 'storage_schema_unsupported') {
-        // Written by a different (e.g. newer) storage schema: fail closed and
-        // never replace it with a fresh game (rollback safety).
-        gameState.saveLocked = true;
-        gameState.reset();
-        setLevelLoadState('error', loaded.reason);
-        return levelLoadState;
-    } else if (loaded.status === 'invalid' && loaded.key) {
-        const kept = loaded.raw === undefined || loaded.raw === null
-            || store.quarantineRaw(localStorage, loaded.key, loaded.raw, loaded.reason);
-        if (!kept) {
+        if (!gameState.beginLevelRun()) {
+            cloudUploadHold = store.getUploadHold(localStorage, session, level) || '';
             gameState.saveLocked = true;
-            gameState.reset();
-            setLevelLoadState('error', 'quarantine_failed');
+            setLevelLoadState('error', 'run_start_failed');
             return levelLoadState;
         }
-        gameState.beginLevelRun();
-        setLevelLoadState('recovered', loaded.reason);
+        setLevelLoadState('started');
     } else {
         gameState.saveLocked = true;
         gameState.reset();
@@ -1141,6 +1153,7 @@ function saveMinePlan() {
         return;
     }
     gameState.investmentPlans[currentMineForInvestment.id] = plan;
+    gameState.currentRunActivity = true;
     gameState.saveToLocalStorage();
     closeAllModals();
     updateAllUI();
@@ -1582,7 +1595,19 @@ function removeDeviceLevelRecord(progressKey) {
 function isPristineLevelGame() {
     const history = Array.isArray(gameState?.roundHistory) ? gameState.roundHistory : [];
     const attempts = gameState?.getProgressionState?.(gameState.assignedLevel)?.quizAttempts;
-    return Number(gameState?.round) <= 1 && history.length === 0 && !(Array.isArray(attempts) && attempts.length);
+    if (gameState?.currentRunActivity === true || Number(gameState?.round) > 1 || history.length) return false;
+    if (Number(gameState?.cash) !== gameState?.getPlayableStartingCash?.()
+        || Number(gameState?.totalProfitLoss || 0) !== 0
+        || gameState?.machinery?.length) return false;
+    const mines = Object.entries(gameState?.ownedMines || {}).filter(([, mine]) => mine?.owned);
+    if (mines.length !== 1 || mines[0][0] !== 'southern_cross' || mines[0][1].upgrades?.length) return false;
+    if (Object.values(gameState?.investmentPlans || {}).some((plan) =>
+        Object.values(plan || {}).some((amount) => Number(amount) !== 0))) return false;
+    // Historical checkpoint evidence is shared across runs. Older snapshots
+    // without the optional activity signal can use dated current-run attempts.
+    const createdAt = Date.parse(gameState?.runCreatedAt);
+    return gameState?.currentRunActivity === false || !Number.isFinite(createdAt)
+        || !(Array.isArray(attempts) && attempts.some((attempt) => Date.parse(attempt?.timestamp) >= createdAt));
 }
 
 function calculateStrategyLabel() {
@@ -1712,15 +1737,11 @@ function syncPlayerRecord() {
         // level = the level being played (from the page URL); rosterAssignedLevel
         // = the GGR_Students assignment. They are deliberately kept separate.
         const protocol = getSaveProtocolApi();
-        const v2Fields = protocol && protocol.isEnabled() && gameState.activeRun
-            ? {
-                protocolVersion: protocol.PROTOCOL_VERSION,
-                runGeneration: gameState.activeRun.generation,
-                runId: gameState.activeRun.runId,
-                startingNetWorth: gameState.startingNetWorth,
-                storageSchemaVersion: getLevelSaveStore()?.STORAGE_SCHEMA_VERSION
-            }
-            : {};
+        const v2Fields = buildProgressSyncOptions(protocol);
+        if (!v2Fields) {
+            updateCloudSaveStatusLabel('paused for teacher review');
+            return;
+        }
         const progressPayload = SharePointSync.buildProgressPayload({
             ...v2Fields,
             studentCode,
@@ -1743,6 +1764,24 @@ function syncPlayerRecord() {
         // request can never relabel or mutate this save.
         getProgressSaveScheduler().schedule(Object.freeze(progressPayload));
     }
+}
+
+function buildProgressSyncOptions(protocol = getSaveProtocolApi()) {
+    if (!protocol?.isEnabled()) return {};
+    const run = gameState?.activeRun;
+    const store = getLevelSaveStore();
+    if (!Number.isInteger(run?.generation) || run.generation < 1
+        || typeof run.runId !== 'string' || !run.runId.trim()
+        || !Number.isFinite(gameState.startingNetWorth)
+        || protocol.PROTOCOL_VERSION !== 2
+        || store?.STORAGE_SCHEMA_VERSION !== 1) return null;
+    return {
+        protocolVersion: protocol.PROTOCOL_VERSION,
+        runGeneration: run.generation,
+        runId: run.runId,
+        startingNetWorth: gameState.startingNetWorth,
+        storageSchemaVersion: store.STORAGE_SCHEMA_VERSION
+    };
 }
 
 function updateInvestmentProfilePanel() {
@@ -1809,7 +1848,6 @@ function loadGame() {
         alert('❌ The saved game could not be loaded.');
         return;
     }
-    gameState.saveLocked = false;
     setLevelLoadState('resumed');
     if (!enforceCurrentLevelAccess()) return;
     ensureInvestmentPlansForOwnedMines();
@@ -1831,13 +1869,17 @@ function resetGame() {
     const session = requireAuthenticatedStudent();
     if (!session) return;
     const level = gameState.assignedLevel;
+    if (gameState.getRunProtectionReason()
+        || (cloudUploadHold && cloudUploadHold !== 'unverified_new_slot')) {
+        alert('❌ This save is protected. Reload or ask your teacher to resolve it before restarting.');
+        return;
+    }
     if (!confirm(`Restart Level ${level}? Your Level ${level} game will start again from the beginning. Your other levels and unlocked levels are kept.`)) return;
     const result = gameState.restartLevelRun({ reason: 'student_restart' });
     if (!result.ok) {
         alert('❌ Could not restart this level safely (the previous game could not be archived). Nothing was changed.');
         return;
     }
-    gameState.saveLocked = false;
     const progressKey = getLevelSaveStore()?.buildProgressKey(session, level) || '';
     if (progressKey) {
         getProgressSaveScheduler().discardPending?.(progressKey);

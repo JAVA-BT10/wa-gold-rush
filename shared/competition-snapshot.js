@@ -91,7 +91,11 @@
             || Number(data.level) !== Number(payload.level)) {
             return unavailable('invalid_response');
         }
-        const recordCount = Number(data.recordCount ?? data.recordsCaptured);
+        const rawCount = Object.prototype.hasOwnProperty.call(data, 'recordCount') ? data.recordCount : data.recordsCaptured;
+        if (!['number', 'string'].includes(typeof rawCount) || String(rawCount).trim() === '') {
+            return unavailable('invalid_response');
+        }
+        const recordCount = Number(rawCount);
         if (!Number.isInteger(recordCount) || recordCount < 0) return unavailable('invalid_response');
 
         const response = {
