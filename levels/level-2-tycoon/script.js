@@ -280,6 +280,16 @@ function loadLevelGameForSession(session, level) {
     if (loaded.success) {
         setLevelLoadState('resumed', loaded.migratedFrom ? 'migrated_legacy' : '');
     } else if (loaded.status === 'missing') {
+        const migrationFailed = migration?.status === 'backup_failed'
+            || (migration?.status === 'skipped' && [
+                'storage_read_failed', 'storage_write_failed', 'ledger_write_failed', 'migration_failed'
+            ].includes(migration.reason));
+        if (migrationFailed && (migration.level == null || migration.level === level)) {
+            gameState.saveLocked = true;
+            setLevelLoadState('unavailable', migration.reason);
+            levelLoadState.migration = migration;
+            return levelLoadState;
+        }
         if (!gameState.beginLevelRun()) {
             cloudUploadHold = store.getUploadHold(localStorage, session, level) || '';
             gameState.saveLocked = true;
