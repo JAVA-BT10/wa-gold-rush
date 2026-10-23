@@ -12,6 +12,7 @@ const buildBlocks = [...workflow.matchAll(/          python - <<'PY'\n([\s\S]*?)
 
 test('PR builds and exact-revision deployments cannot bypass regression tests', () => {
     assert.match(workflow, /\non:\n  pull_request:\n/);
+    assert.match(workflow, /group: pages-\$\{\{ github.ref \}\}/);
     assert.match(workflow, /- name: Run regression tests\n        run: node --test tests\/\*\.test\.js/);
     assert.doesNotMatch(workflow, /continue-on-error|if:\s*(?:\$\{\{\s*)?always\(\)/);
     assert.ok(workflow.indexOf('Verify Pages artifact contents') < workflow.indexOf('Run regression tests'));
