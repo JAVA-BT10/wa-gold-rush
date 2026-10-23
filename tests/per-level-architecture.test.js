@@ -156,15 +156,15 @@ test('envelope validation rejects identity, class and level mismatches before an
     assert.equal(storage.getItem(store.buildSaveKey(ID, 4)), null);
 });
 
-test('malformed or mismatched slot content is quarantined, never loaded, never deleted silently', () => {
+test('malformed or mismatched slot content is protected and never replaced silently', () => {
     const storage = createSessionStorage();
     const key = store.buildSaveKey(ID, 2);
     storage.setItem(key, '{not json');
     const h = buildStudentGameHarness({ level: 2, storage });
-    assert.equal(h.loadResult.status, 'recovered');
-    const quarantine = JSON.parse(storage.getItem(store.QUARANTINE_KEY));
-    assert.equal(quarantine[0].raw, '{not json');
-    assert.equal(h.gameState.round, 1);
+    assert.equal(h.loadResult.status, 'error');
+    assert.equal(storage.getItem(key), '{not json');
+    assert.equal(h.gameState.saveToLocalStorage(), false);
+    assert.equal(storage.getItem(key), '{not json');
 });
 
 test('a slot written by an unsupported (e.g. newer) storage schema fails closed and is never replaced', () => {
@@ -330,7 +330,8 @@ test('ambiguous legacy records need review and hold cloud uploads for that level
         level2_autosave: legacyAutosave({ player: { studentCode: 'SC-1' } })
     }, { assignedLevel: 3 });
     const h = buildStudentGameHarness({ level: 3, storage });
-    assert.equal(h.loadResult.status, 'started');
+    assert.equal(h.loadResult.status, 'error');
+    assert.equal(store.readLevelSave(storage, ID, 3).status, 'missing');
     assert.equal(h.context.getCloudUploadHold(), 'legacy_missing_class');
     assert.equal(store.readLedger(storage, ID).legacyMigration.status, 'needs_review');
     const l2 = buildStudentGameHarness({ level: 2, storage });
@@ -346,7 +347,9 @@ test('held or pristine games are never uploaded; v2 fields only when the flag is
     const scheduled = [];
     const h = buildStudentGameHarness({ level: 3, storage, stubSync: false, extraGlobals: { SharePointSync: { buildProgressPayload: (p) => p } } });
     vm.runInContext('getProgressSaveScheduler = () => ({ schedule: (p) => { this.__scheduled.push(p); } });', Object.assign(h.context, { __scheduled: scheduled }));
-    playSomeRounds(h.gameState, { round: 3, cash: 10 });
+    h.gameState.round = 3;
+    h.gameState.cash = 10;
+    h.gameState.roundHistory = [{ round: 2, totalProfit: 10 }];
     vm.runInContext('syncPlayerRecord()', h.context);
     assert.equal(scheduled.length, 0, 'held by legacy review');
 
@@ -1119,4 +1122,532 @@ test('home page level cards run legacy migration and use roster entitlement plus
         assert.ok(levelPage.indexOf(script) > 0 && levelPage.indexOf(script) < levelPage.indexOf('game-state.js'), `${script} loads before game-state.js`);
     }
     assert.match(levelPage, /id="levelSaveStatus"[^>]*role="status"/);
+});
+
+// AC2, AC5, AC8, AC9 Regression Tests
+test('AC2: sealed v2 requests in queue are not replaced by new enqueue (prevent race)', async () => {
+    const server = new ReferenceSaveServer();
+    enableV2(server, { dropResponse: () => true });
+    const storage = createSessionStorage();
+    const run = seedLocalSave(storage);
+    global.localStorage = storage;
+    const sync = loadSync();
+
+    await sync.syncProgress(v2Opts(run, { currentRound: 3 }));
+    assert.equal(sync.queueLength(), 1);
+    const queue1 = JSON.parse(storage.getItem('wa_gr_sync_queue'));
+    assert.equal(queue1[0].payload.baseRevision, null);
+
+    await sync.syncProgress(v2Opts(run, { currentRound: 9 }));
+    assert.equal(sync.queueLength(), 2, 'AC2: new pending appended, sealed preserved');
+    const queue2 = JSON.parse(storage.getItem('wa_gr_sync_queue'));
+    assert.equal(queue2[0].payload.baseRevision, null);
+    assert.equal(queue2[1].payload.baseRevision, undefined);
+});
+
+test('AC5: legacy upload holds are scoped to the recorded level', () => {
+    const storage = createSessionStorage(
+        { level2_autosave: legacyAutosave({ player: { studentCode: 'SC-1' } }) },
+        { assignedLevel: 3 }
+    );
+    store.migrateLegacyAutosave(storage, ID);
+    assert.equal(store.getUploadHold(storage, ID, 3), 'legacy_missing_class');
+    assert.equal(store.getUploadHold(storage, ID, 2), '');
+});
+
+test('AC8: unconfirmed saves mark cloud state unknown without recording revision', async () => {
+    global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: { saveProtocolV2: true } };
+    global.WA_GOLD_RUSH_FLOW_ENDPOINTS = { saveProgress: 'https://example.com/save' };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE = {
+        callFlow: async () => ({ success: true, status: 200, data: { ok: true } }),
+        resolveFlowEndpoint: (key) => global.WA_GOLD_RUSH_FLOW_ENDPOINTS[key] || ''
+    };
+    const storage = createSessionStorage();
+    const run = seedLocalSave(storage);
+    global.localStorage = storage;
+    const sync = loadSync();
+
+    const result = await sync.syncProgress(v2Opts(run));
+    assert.match(result.reason, /unconfirmed/);
+
+    const env = store.readLevelSave(storage, ID, 2).envelope;
+    assert.equal(env.cloud.revision, null, 'AC8: revision not recorded from unconfirmed');
+    assert.equal(env.cloud.status, 'unknown', 'AC8: status reset');
+});
+
+test('AC9: v2 queue items held (not replayed) when v2 disabled during retry', async () => {
+    const server = new ReferenceSaveServer();
+    enableV2(server, { dropResponse: () => true });
+    const storage = createSessionStorage();
+    const run = seedLocalSave(storage);
+    global.localStorage = storage;
+    const sync = loadSync();
+
+    await sync.syncProgress(v2Opts(run));
+    assert.equal(sync.queueLength(), 1);
+    const itemBefore = JSON.parse(storage.getItem('wa_gr_sync_queue'))[0];
+
+    global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: {} };
+    const callsBefore = server.log.length;
+
+    await sync.retryQueue();
+    assert.equal(server.log.length, callsBefore, 'AC9: no server call during rollback');
+    assert.equal(sync.queueLength(), 1);
+
+    const itemAfter = JSON.parse(storage.getItem('wa_gr_sync_queue'))[0];
+    assert.equal(itemAfter.payload.saveRequestId, itemBefore.payload.saveRequestId);
+});
+
+function deferred() {
+    let resolve;
+    const promise = new Promise((done) => { resolve = done; });
+    return { promise, resolve };
+}
+
+function ackFor(payload, revision = 1) {
+    return { success: true, status: 200, data: {
+        ok: true, protocolVersion: 2, saveRequestId: payload.saveRequestId,
+        progressKey: payload.progressKey, runGeneration: payload.runGeneration, revision
+    } };
+}
+
+test('retry drains serialize and preserve enqueue during await with immutable sealed IDs', async () => {
+    enableV2(new ReferenceSaveServer());
+    const storage = createSessionStorage();
+    const run = seedLocalSave(storage);
+    global.localStorage = storage;
+    const sync = loadSync();
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: false, status: 503 });
+    const first = await sync.syncProgress(v2Opts(run));
+    const waiting = deferred();
+    const sent = [];
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = (key, payload) => {
+        sent.push(payload);
+        return waiting.promise;
+    };
+    const drain = sync.retryQueue();
+    assert.equal(sync.retryQueue(), drain);
+    await sync.syncProgress(v2Opts(run, { currentRound: 8 }));
+    await sync.syncProgress(v2Opts(run, { currentRound: 9 }));
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].saveRequestId, first.saveRequestId);
+    assert.equal(JSON.parse(storage.getItem('wa_gr_sync_queue'))[0].payload.baseRevision, null);
+    waiting.resolve(ackFor(sent[0]));
+    await drain;
+    const pending = JSON.parse(storage.getItem('wa_gr_sync_queue'));
+    assert.equal(pending.length, 1, 'new capture survives completion of the old drain');
+    assert.equal(pending[0].payload.currentRound, 9);
+    assert.equal(pending[0].payload.baseRevision, undefined);
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async (key, payload) => {
+        assert.equal(payload.baseRevision, 1);
+        assert.equal(payload.saveRequestId, pending[0].payload.saveRequestId);
+        return ackFor(payload, 2);
+    };
+    await sync.retryQueue();
+    assert.equal(sync.queueLength(), 0);
+});
+
+test('simultaneous captures persist the sealed request and coalesce only pending state', async () => {
+    enableV2(new ReferenceSaveServer());
+    const storage = createSessionStorage();
+    const run = seedLocalSave(storage);
+    global.localStorage = storage;
+    const waiting = deferred();
+    const sent = [];
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = (key, payload) => {
+        sent.push(payload);
+        return waiting.promise;
+    };
+    const sync = loadSync();
+    const first = sync.syncProgress(v2Opts(run));
+    await Promise.all([
+        sync.syncProgress(v2Opts(run, { currentRound: 5 })),
+        sync.syncProgress(v2Opts(run, { currentRound: 6 }))
+    ]);
+    await sync.retryQueue();
+    assert.equal(sent.length, 1, 'captures and drains never race the active request');
+    const items = JSON.parse(storage.getItem('wa_gr_sync_queue'));
+    assert.equal(items.length, 2);
+    assert.equal(items[0].payload.saveRequestId, sent[0].saveRequestId);
+    assert.equal(items[1].payload.currentRound, 6);
+    waiting.resolve(ackFor(sent[0]));
+    await first;
+    assert.equal(sync.queueLength(), 1);
+});
+
+for (const success of [true, false]) {
+    for (const retry of [true, false]) {
+        test(`discard during pending ${retry ? 'retry' : 'direct save'} ${success ? 'success' : 'failure'} never resurrects old captures`, async () => {
+            enableV2(new ReferenceSaveServer());
+            const storage = createSessionStorage();
+            const run = seedLocalSave(storage);
+            global.localStorage = storage;
+            const sync = loadSync();
+            if (retry) {
+                global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: false, status: 503 });
+                await sync.syncProgress(v2Opts(run));
+                await sync.syncProgress(v2Opts(run, { currentRound: 8 }));
+            }
+            const waiting = deferred();
+            let calls = 0;
+            let active;
+            global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = (key, payload) => {
+                calls += 1;
+                active = payload;
+                return waiting.promise;
+            };
+            const drain = retry ? sync.retryQueue() : sync.syncProgress(v2Opts(run));
+            assert.equal(sync.discardQueuedForProgressKey('6B|SC-1|2'), retry ? 2 : 1);
+            waiting.resolve(success ? ackFor(active) : { success: false, status: 503 });
+            await drain;
+            await sync.retryQueue();
+            assert.equal(calls, 1);
+            assert.equal(sync.queueLength(), 0);
+            assert.equal(store.readLevelSave(storage, ID, 2).envelope.cloud.revision, null);
+        });
+    }
+}
+
+test('dispatch and retry respect per-level ledger holds and conflicts without blocking unrelated games', async () => {
+    const server = new ReferenceSaveServer();
+    enableV2(server);
+    const storage = createSessionStorage({}, { assignedLevel: 3 });
+    const run = seedLocalSave(storage);
+    global.localStorage = storage;
+    const sync = loadSync();
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: false, status: 503 });
+    await sync.syncProgress(v2Opts(run));
+    const ledger = store.readLedger(storage, ID);
+    ledger.levelRuns['2'].cloudUploadHold = 'cloud_conflict';
+    store.writeLedger(storage, ledger);
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = server.transport();
+    assert.equal((await sync.syncProgress(v2Opts(run))).reason, 'cloud_conflict');
+    await sync.retryQueue();
+    assert.equal(server.log.length, 0);
+    assert.equal(sync.queueLength(), 1);
+    const other = validCloudSave(3);
+    store.adoptLevelRun(storage, other);
+    store.writeLevelSave(storage, other);
+    assert.equal((await sync.syncProgress(v2Opts({ generation: 1, runId: other.runId }, { level: 3 }))).ok, true);
+    assert.equal(server.log.length, 1);
+    const updated = store.readLedger(storage, ID);
+    updated.levelRuns['2'].cloudUploadHold = '';
+    store.writeLedger(storage, updated);
+    require('../shared/save-protocol.js').recordConflict(storage, JSON.parse(storage.getItem('wa_gr_sync_queue'))[0].payload);
+    await sync.retryQueue();
+    assert.equal(server.log.length, 1);
+});
+
+test('strict v2 metadata never falls back to a legacy dispatch', async () => {
+    const server = new ReferenceSaveServer();
+    enableV2(server);
+    const storage = createSessionStorage();
+    const run = seedLocalSave(storage);
+    global.localStorage = storage;
+    const sync = loadSync();
+    for (const field of ['runGeneration', 'runId', 'storageSchemaVersion']) {
+        for (const value of [undefined, null, '', false, field === 'runId' ? ' ' : '1']) {
+            assert.equal((await sync.syncProgress(v2Opts(run, { [field]: value }))).ok, false, `${field}=${String(value)}`);
+        }
+    }
+    assert.equal(server.log.length, 0);
+    assert.equal(sync.queueLength(), 0);
+    assert.equal((await sync.syncProgress(v2Opts(run))).ok, true);
+});
+
+test('missing and mismatched v2 acknowledgement fields are never confirmed; exact acknowledgements confirm', () => {
+    const protocol = require('../shared/save-protocol.js');
+    const payload = v2Request();
+    const good = ackFor(payload);
+    const fields = {
+        ok: [false, 'true', null], protocolVersion: [1, '2', null],
+        saveRequestId: ['other', '', null], progressKey: ['6B|SC-1|3', '', null],
+        runGeneration: [2, '1', 1.5, null], revision: [0, '1', 1.5, null]
+    };
+    for (const [field, values] of Object.entries(fields)) {
+        for (const value of [undefined, ...values]) {
+            const response = { ...good, data: { ...good.data, [field]: value } };
+            if (value === undefined) delete response.data[field];
+            const outcome = protocol.classifyResponse(payload, response).outcome;
+            assert.notEqual(outcome, 'confirmed', `${field}=${String(value)}`);
+            if (field !== 'ok' || value !== false) assert.equal(outcome, 'unconfirmed');
+        }
+    }
+    assert.equal(protocol.classifyResponse(payload, good).outcome, 'confirmed');
+});
+
+test('unconfirmed retry stays unverified after completion and unrelated subsequent successes', async () => {
+    enableV2(new ReferenceSaveServer());
+    const storage = createSessionStorage({}, { assignedLevel: 3 });
+    const run = seedLocalSave(storage);
+    global.localStorage = storage;
+    const sync = loadSync();
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: false, status: 503 });
+    await sync.syncProgress(v2Opts(run));
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: true, status: 200, data: { ok: true } });
+    await sync.retryQueue();
+    assert.equal(sync.queueLength(), 0);
+    assert.equal(sync.getCloudSaveStatus(), 'cloud save not verified');
+    const other = validCloudSave(3);
+    store.adoptLevelRun(storage, other);
+    store.writeLevelSave(storage, other);
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async (key, payload) => ackFor(payload);
+    await sync.syncProgress(v2Opts({ generation: 1, runId: other.runId }, { level: 3 }));
+    assert.equal(sync.getCloudSaveStatus(), 'cloud save not verified');
+    await sync.syncProgress(v2Opts(run));
+    assert.equal(sync.getCloudSaveStatus(), 'saved to cloud');
+});
+
+for (const failure of ['backup', 'target', 'initial_ledger', 'final_ledger']) {
+    test(`legacy migration retries ${failure} failure without marking incomplete work processed`, () => {
+        const raw = legacyAutosave();
+        const storage = createSessionStorage({ level2_autosave: raw });
+        const originalSet = storage.setItem.bind(storage);
+        let fail = true;
+        let targetWritten = false;
+        storage.setItem = (key, value) => {
+            if (fail && ((failure === 'backup' && key === store.LEGACY_BACKUP_KEY)
+                || (failure === 'target' && key === store.buildSaveKey(ID, 3))
+                || (failure === 'initial_ledger' && key === store.buildLedgerKey(ID))
+                || (failure === 'final_ledger' && targetWritten && key === store.buildLedgerKey(ID)))) {
+                throw new Error('injected write failure');
+            }
+
+            originalSet(key, value);
+            if (key === store.buildSaveKey(ID, 3)) targetWritten = true;
+        };
+        assert.notEqual(store.migrateLegacyAutosave(storage, ID).status, 'migrated');
+        assert.equal(store.readLedger(storage, ID).legacyMigration, null);
+        if (failure === 'final_ledger') assert.equal(store.readLevelSave(storage, ID, 3).status, 'found');
+        fail = false;
+        assert.equal(store.migrateLegacyAutosave(storage, ID).status, 'migrated');
+        assert.equal(store.readProgressionEvidence(storage, ID, 2).checkpointStatus, 'quiz_passed');
+        assert.equal(store.migrateLegacyAutosave(storage, ID).status, 'already_processed');
+        assert.equal(storage.getItem('level2_autosave'), raw);
+    });
+}
+
+test('queue capacity never evicts a sealed unknown-outcome request', async () => {
+    enableV2(new ReferenceSaveServer());
+    const storage = createSessionStorage();
+    const run = seedLocalSave(storage);
+    global.localStorage = storage;
+    const sync = loadSync();
+    sync.configure({ maxQueueSize: 1 });
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: false, status: 504 });
+    const first = await sync.syncProgress(v2Opts(run));
+    const result = await sync.syncProgress(v2Opts(run, { currentRound: 9 }));
+    assert.equal(result.queued, false);
+    assert.equal(result.reason, 'queue_capacity');
+    const items = JSON.parse(storage.getItem('wa_gr_sync_queue'));
+    assert.equal(items.length, 1);
+    assert.equal(items[0].payload.saveRequestId, first.saveRequestId);
+    assert.ok(sync.getQuarantine().some((entry) => entry.reason === 'queue_capacity'));
+});
+
+test('unconfirmed acknowledgement preserves the last confirmed base revision', async () => {
+    enableV2(new ReferenceSaveServer());
+    const storage = createSessionStorage();
+    const run = seedLocalSave(storage, { cloud: { status: 'synced', revision: 7 } });
+    global.localStorage = storage;
+    const sync = loadSync();
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: true, status: 200, data: { ok: true } });
+    await sync.syncProgress(v2Opts(run));
+    const envelope = store.readLevelSave(storage, ID, 2).envelope;
+    assert.equal(envelope.cloud.revision, 7);
+    assert.equal(envelope.cloud.status, 'unknown');
+});
+
+test('retry reevaluates a key hold immediately after awaiting an unrelated game', async () => {
+    enableV2(new ReferenceSaveServer());
+    const storage = createSessionStorage({}, { assignedLevel: 3 });
+    const run = seedLocalSave(storage);
+    const other = validCloudSave(3);
+    store.adoptLevelRun(storage, other);
+    store.writeLevelSave(storage, other);
+    global.localStorage = storage;
+    const sync = loadSync();
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: false, status: 503 });
+    await sync.syncProgress(v2Opts({ generation: 1, runId: other.runId }, { level: 3 }));
+    await sync.syncProgress(v2Opts(run));
+    const waiting = deferred();
+    const sent = [];
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = (key, payload) => {
+        sent.push(payload);
+        return waiting.promise;
+    };
+    const drain = sync.retryQueue();
+    const ledger = store.readLedger(storage, ID);
+    ledger.levelRuns['2'].cloudUploadHold = 'cloud_restore_failed';
+    store.writeLedger(storage, ledger);
+    waiting.resolve(ackFor(sent[0]));
+    await drain;
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].level, 3);
+    assert.equal(sync.queueLength(), 1);
+});
+
+test('v2 dispatch fails closed when the sealed request cannot be persisted', async () => {
+    const server = new ReferenceSaveServer();
+    enableV2(server);
+    const storage = createSessionStorage();
+    const run = seedLocalSave(storage);
+    global.localStorage = storage;
+    const sync = loadSync();
+    const originalSet = storage.setItem.bind(storage);
+    storage.setItem = (key, value) => {
+        if (key === 'wa_gr_sync_queue') throw new Error('injected queue failure');
+        originalSet(key, value);
+    };
+    assert.equal((await sync.syncProgress(v2Opts(run))).reason, 'queue_write_failed');
+    assert.equal(server.log.length, 0);
+});
+
+test('nested v2 application rejection is never reported as a confirmed save', async () => {
+    enableV2(new ReferenceSaveServer());
+    const storage = createSessionStorage();
+    const run = seedLocalSave(storage);
+    global.localStorage = storage;
+    const sync = loadSync();
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({
+        success: true, status: 200, data: { body: { ok: false, message: 'rejected' } }
+    });
+    const result = await sync.syncProgress(v2Opts(run));
+    assert.equal(result.ok, false);
+    assert.equal(sync.queueLength(), 0);
+    assert.notEqual(sync.getCloudSaveStatus(), 'saved to cloud');
+});
+
+test('persisted per-level holds also protect legacy dispatch and retry after rollback', async () => {
+    const server = new ReferenceSaveServer();
+    enableV2(server);
+    global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: {} };
+    const storage = createSessionStorage();
+    seedLocalSave(storage);
+    global.localStorage = storage;
+    const sync = loadSync();
+    const legacy = { ...ID, level: 2, currentRound: 3 };
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: false, status: 503 });
+    await sync.syncProgress(legacy);
+    const ledger = store.readLedger(storage, ID);
+    ledger.levelRuns['2'].cloudUploadHold = 'cloud_conflict';
+    store.writeLedger(storage, ledger);
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = server.transport();
+    assert.equal((await sync.syncProgress(legacy)).reason, 'cloud_conflict');
+    await sync.retryQueue();
+    assert.equal(server.log.length, 0);
+    assert.equal(sync.queueLength(), 1);
+});
+
+test('verified legacy migration can reconcile an earlier review marker without bypassing other holds', () => {
+    const storage = createSessionStorage({
+        level2_autosave: legacyAutosave({ player: { studentCode: 'SC-1' } })
+    });
+    assert.equal(store.migrateLegacyAutosave(storage, ID).status, 'needs_review');
+    assert.equal(store.ensureLevelRun(storage, ID, 3), null);
+    storage.setItem('level2_autosave', legacyAutosave());
+    assert.equal(store.migrateLegacyAutosave(storage, ID).status, 'migrated');
+    assert.equal(store.getUploadHold(storage, ID, 3), '');
+    assert.equal(store.readProgressionEvidence(storage, ID, 2).checkpointStatus, 'quiz_passed');
+
+    for (const hold of ['cloud_conflict', 'cloud_state_unknown']) {
+        const held = createSessionStorage({ level2_autosave: legacyAutosave() });
+        const run = store.ensureLevelRun(held, ID, 3);
+        const ledger = store.readLedger(held, ID);
+        ledger.levelRuns['3'] = { ...run, cloudUploadHold: hold };
+        store.writeLedger(held, ledger);
+        assert.equal(store.migrateLegacyAutosave(held, ID).reason, hold);
+        assert.equal(store.readLevelSave(held, ID, 3).status, 'missing');
+        assert.equal(store.getUploadHold(held, ID, 3), hold);
+    }
+});
+
+test('direct store writes, resets and run creation preserve every protected slot and ledger', () => {
+    for (const protection of ['malformed', 'schema', 'conflict', 'hold', 'ledger_hold', 'cloud_state_unknown', 'legacy_review', 'stale_generation']) {
+        const storage = createSessionStorage();
+        const run = seedLocalSave(storage);
+        const key = store.buildSaveKey(ID, 2);
+        const replacement = store.clone(store.readLevelSave(storage, ID, 2).envelope);
+        replacement.snapshot.cash = 9999;
+        if (protection === 'malformed') storage.setItem(key, '{broken');
+        else if (['schema', 'conflict', 'hold'].includes(protection)) {
+            const envelope = JSON.parse(storage.getItem(key));
+            if (protection === 'schema') envelope.storageSchemaVersion = 999;
+            else envelope.cloud.status = protection;
+            storage.setItem(key, JSON.stringify(envelope));
+        } else {
+            const ledger = store.readLedger(storage, ID);
+            if (protection === 'ledger_hold') ledger.levelRuns['2'].cloudUploadHold = 'cloud_restore_failed';
+            else if (protection === 'cloud_state_unknown') ledger.levelRuns['2'].cloudUploadHold = 'cloud_state_unknown';
+            else if (protection === 'legacy_review') {
+                ledger.legacyMigration = { status: 'needs_review', reason: 'missing_class', level: 2 };
+            } else ledger.levelRuns['2'] = { ...run, generation: run.generation + 1 };
+            store.writeLedger(storage, ledger);
+        }
+        const contents = () => JSON.stringify(storage.__keys().sort().map((entry) => [entry, storage.getItem(entry)]));
+        const before = contents();
+        assert.notEqual(store.getLevelWriteProtection(storage, ID, 2), '', protection);
+        assert.equal(store.writeLevelSave(storage, replacement).ok, false, protection);
+        assert.equal(store.resetLevelSave(storage, ID, 2).ok, false, protection);
+        assert.equal(store.ensureLevelRun(storage, ID, 2), null, protection);
+        assert.equal(store.adoptLevelRun(storage, replacement), false, protection);
+        assert.equal(contents(), before, protection);
+    }
+});
+
+test('protected slots allow explicit same-run conflict metadata recording without economy or ledger mutation', () => {
+    const storage = createSessionStorage();
+    const run = seedLocalSave(storage);
+    const ledger = store.readLedger(storage, ID);
+    ledger.levelRuns['2'].cloudUploadHold = 'cloud_conflict';
+    store.writeLedger(storage, ledger);
+    const before = store.readLevelSave(storage, ID, 2).envelope;
+    const ledgerRaw = storage.getItem(store.buildLedgerKey(ID));
+    const protocol = require('../shared/save-protocol.js');
+    assert.equal(protocol.recordConflict(storage, {
+        ...v2Opts(run), progressKey: before.progressKey, saveRequestId: 'conflicted'
+    }, { code: 'revision_conflict', currentRevision: 4 }), true);
+    const after = store.readLevelSave(storage, ID, 2).envelope;
+    assert.equal(after.cloud.status, 'conflict');
+    assert.deepEqual(after.snapshot, before.snapshot);
+    assert.equal(after.generation, before.generation);
+    assert.equal(after.runId, before.runId);
+    assert.equal(storage.getItem(store.buildLedgerKey(ID)), ledgerRaw);
+    assert.equal(store.writeLevelSave(storage, before).ok, false);
+    assert.equal(store.updateCloudState(storage, ID, 2, {
+        generation: run.generation + 1, cloud: { status: 'synced' }
+    }).ok, false);
+});
+
+test('store write protection excludes only the provisional unverified new slot hold', () => {
+    for (const hold of ['unverified_new_slot']) {
+        const storage = createSessionStorage();
+        seedLocalSave(storage);
+        const ledger = store.readLedger(storage, ID);
+        ledger.levelRuns['2'].cloudUploadHold = hold;
+        store.writeLedger(storage, ledger);
+        assert.equal(store.getLevelWriteProtection(storage, ID, 2), '');
+        const envelope = store.clone(store.readLevelSave(storage, ID, 2).envelope);
+        envelope.snapshot.cash = 101;
+        assert.equal(store.writeLevelSave(storage, envelope).ok, true);
+        assert.equal(store.readLedger(storage, ID).levelRuns['2'].cloudUploadHold, hold);
+    }
+});
+
+test('run adoption preserves a protected save with missing run metadata and permits ordinary safe adoption', () => {
+    const storage = createSessionStorage();
+    seedLocalSave(storage);
+    const key = store.buildSaveKey(ID, 2);
+    const envelope = JSON.parse(storage.getItem(key));
+    envelope.cloud.status = 'conflict';
+    storage.setItem(key, JSON.stringify(envelope));
+    const ledger = store.readLedger(storage, ID);
+    delete ledger.levelRuns['2'];
+    store.writeLedger(storage, ledger);
+    const before = storage.getItem(store.buildLedgerKey(ID));
+    assert.equal(store.adoptLevelRun(storage, envelope), false);
+    assert.equal(storage.getItem(store.buildLedgerKey(ID)), before);
+    const clean = createSessionStorage();
+    assert.equal(store.adoptLevelRun(clean, validCloudSave()), true);
+    assert.equal(store.readLedger(clean, ID).levelRuns['2'].runId, 'run_cloud');
 });

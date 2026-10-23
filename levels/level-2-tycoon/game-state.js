@@ -53,6 +53,7 @@ class GameState {
         this.initialCloudState = null;
         this.saveLocked = false;
         this.lastSaveResult = null;
+        this.currentRunActivity = false;
     }
 
     async loadConfig(configPath = '../../shared/game-config.json') {
@@ -172,6 +173,7 @@ class GameState {
     }
 
     recordQuizAttempt(result, level = this.assignedLevel || 2) {
+        if (this.normalizeLevel(level) === this.normalizeLevel(this.assignedLevel)) this.currentRunActivity = true;
         const attempt = {
             score: Number(result?.score) || 0,
             totalQuestions: Number(result?.totalQuestions) || 0,
@@ -489,6 +491,7 @@ class GameState {
         }
 
         this.cash -= mine.cost;
+        this.currentRunActivity = true;
         this.ownedMines[mineId] = {
             id: mineId,
             owned: true,
@@ -530,6 +533,7 @@ class GameState {
         }
 
         this.cash -= upgrade.cost;
+        this.currentRunActivity = true;
         mine.upgrades.push(upgradeId);
 
         return {
@@ -564,6 +568,7 @@ class GameState {
         }
 
         this.cash -= machinery.cost;
+        this.currentRunActivity = true;
         this.machinery.push({
             id: machineryId,
             purchasePrice: machinery.cost,
@@ -594,6 +599,7 @@ class GameState {
 
         const resaleValue = Math.floor(ownedMachinery.purchasePrice * machineryConfig.resaleValue);
         this.cash += resaleValue;
+        this.currentRunActivity = true;
         this.machinery.splice(machineryIndex, 1);
 
         return {
@@ -717,6 +723,7 @@ class GameState {
     }
 
     recordInvestmentAction(bucket, weight) {
+        this.currentRunActivity = true;
         if (typeof InvestmentProfile === 'undefined') return;
         const code = this.player?.studentCode || this.player?.studentId || 'anon';
         InvestmentProfile.recordAction(code, this.assignedLevel, bucket, weight || 1);
@@ -765,6 +772,7 @@ class GameState {
             roundHistory: clone(Array.isArray(this.roundHistory) ? this.roundHistory : []),
             investmentPlans: clone(this.investmentPlans || {}),
             totalProfitLoss: typeof this.totalProfitLoss === 'number' && Number.isFinite(this.totalProfitLoss) ? this.totalProfitLoss : 0,
+            currentRunActivity: this.currentRunActivity,
             progression: clone(this.getProgressionState(this.assignedLevel))
         };
     }
@@ -787,7 +795,7 @@ class GameState {
             const store = this.getSaveStore();
             const storage = this.getStorage();
             const identity = this.getSaveIdentity();
-            if (!store || !storage || !identity || this.saveLocked) return false;
+            if (!store || !storage || !identity || this.getRunProtectionReason()) return false;
             const level = store.normalizeSaveLevel(this.assignedLevel);
             if (level === null) return false;
             const snapshot = this.captureLevelSnapshot();
@@ -848,9 +856,15 @@ class GameState {
                 this.applyProgressionStateForAssignedLevel();
                 return { success: false, status: 'invalid', reason: 'stale_generation', key: result.key, recoveredCash: false };
             }
-            if (!run) store.adoptLevelRun(storage, envelope);
+            if (!run) {
+                const protection = this.getRunProtectionReason();
+                if (protection || !store.adoptLevelRun(storage, envelope)) {
+                    return { success: false, status: 'invalid', reason: protection || 'run_adoption_failed', recoveredCash: false };
+                }
+            }
 
             const snapshot = store.clone(envelope.snapshot);
+            this.currentRunActivity = typeof snapshot.currentRunActivity === 'boolean' ? snapshot.currentRunActivity : undefined;
             this.round = snapshot.round;
             this.ownedMines = snapshot.ownedMines;
             this.machinery = snapshot.machinery;
@@ -897,11 +911,12 @@ class GameState {
         const store = this.getSaveStore();
         const storage = this.getStorage();
         const identity = this.getSaveIdentity();
-        this.reset();
+        if (this.getRunProtectionReason()) return null;
         const level = store ? store.normalizeSaveLevel(this.assignedLevel) : null;
         const run = store && storage && identity && level !== null
             ? (options.run || store.ensureLevelRun(storage, identity, level))
             : null;
+        if (!run || this.reset() === false) return null;
         this.activeRun = run ? { generation: run.generation, runId: run.runId } : null;
         this.startingNetWorth = this.getNetWorth();
         this.runCreatedAt = new Date().toISOString();
@@ -919,10 +934,26 @@ class GameState {
         const storage = this.getStorage();
         const identity = this.getSaveIdentity();
         if (!store || !storage || !identity) return { ok: false, reason: 'identity_invalid' };
+        const protection = this.getRunProtectionReason();
+        if (protection) return { ok: false, reason: protection };
         const result = store.resetLevelSave(storage, identity, this.assignedLevel, options);
         if (!result.ok) return result;
-        this.beginLevelRun({ run: result.run, cloudStatus: 'local_only' });
-        return result;
+        return this.beginLevelRun({ run: result.run, cloudStatus: 'local_only' })
+            ? result : { ok: false, reason: 'run_start_failed' };
+    }
+
+    getRunProtectionReason() {
+        if (this.saveLocked) return 'save_locked';
+        const store = this.getSaveStore();
+        const storage = this.getStorage();
+        const identity = this.getSaveIdentity();
+        if (!store || !storage || !identity) return '';
+        if (store.getLevelWriteProtection) return store.getLevelWriteProtection(storage, identity, this.assignedLevel) || '';
+        const saved = store.readLevelSave(storage, identity, this.assignedLevel);
+        if (!['found', 'missing'].includes(saved.status)) return saved.reason || 'save_unavailable';
+        if (['conflict', 'hold', 'held'].includes(saved.envelope?.cloud?.status)) return saved.envelope.cloud.status;
+        const hold = store.getUploadHold(storage, identity, this.assignedLevel);
+        return hold === 'unverified_new_slot' ? '' : hold;
     }
 
     /**
@@ -931,6 +962,8 @@ class GameState {
      * deliberately preserved.
      */
     reset() {
+        if (this.getRunProtectionReason()) return false;
+        this.currentRunActivity = false;
         this.round = 1;
         this.cash = this.getPlayableStartingCash();
         this.ownedMines = {
@@ -947,6 +980,7 @@ class GameState {
         this.investmentPlans = {};
         this.ensureProgressionStateMap();
         this.applyProgressionStateForAssignedLevel();
+        return true;
     }
 }
 

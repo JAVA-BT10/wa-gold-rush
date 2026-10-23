@@ -310,8 +310,8 @@ test('approval endpoint resolves runtime and dashboard overrides without placeho
 
 test('pages deploy publishes browser-readable configuration while tracked stub stays credential-free', () => {
     const workflow = fs.readFileSync(require.resolve('../.github/workflows/build-and-deploy.yml'), 'utf8');
-    assert.ok(workflow.includes('WA_GGR_API_KEY: ${{ secrets.WA_GGR_API_KEY }}'));
-    assert.ok(workflow.includes('WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL: ${{ secrets.WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL }}'));
+    assert.ok(workflow.includes("WA_GGR_API_KEY: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.WA_GGR_API_KEY || '' }}"));
+    assert.ok(workflow.includes("WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL || '' }}"));
     assert.ok(workflow.includes('approval_url = os.environ.get("WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL", "").strip()'));
     assert.ok(workflow.includes('flow_endpoints = {"saveCheckpointApproval": approval_url}'));
     assert.ok(workflow.includes('flowEndpoints: {json.dumps(flow_endpoints)}'));
@@ -2824,4 +2824,243 @@ test('dashboard handlers surface thrown exceptions and stage-named teacher error
     await harness.click('addTeacherBtn');
     assert.equal(sent.length, 0);
     assert.match(harness.getElement('teacherAddMsg').innerHTML, /Validation failed: Class Code is required when adding a teacher/);
+});
+
+
+test('protected saves reject UI/direct restart, reset, storage APIs and reload without changing data', () => {
+    for (const protection of ['locked', 'schema', 'invalid', 'envelope_conflict', 'envelope_hold', 'envelope_held', 'missing_run_conflict', 'cloud_conflict', 'legacy_owner_unverified', 'cloud_restore_failed', 'cloud_state_unknown']) {
+        const storage = createSessionStorage();
+        const { context, gameState } = buildStudentGameHarness({ storage });
+        const store = context.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+        const identity = buildRosterSession();
+        gameState.round = 4;
+        gameState.cash = 900;
+        assert.equal(gameState.saveToLocalStorage(), true);
+        const key = store.buildSaveKey(identity, 2);
+        if (protection === 'locked') gameState.saveLocked = true;
+        else if (protection === 'schema') {
+            const envelope = JSON.parse(storage.getItem(key));
+            envelope.storageSchemaVersion = 999;
+            storage.setItem(key, JSON.stringify(envelope));
+        } else if (protection === 'invalid') storage.setItem(key, '{unreadable');
+        else if (protection.startsWith('envelope_')) {
+            const envelope = JSON.parse(storage.getItem(key));
+            envelope.cloud.status = protection.slice('envelope_'.length);
+            storage.setItem(key, JSON.stringify(envelope));
+        }
+        else if (protection === 'missing_run_conflict') {
+            const envelope = JSON.parse(storage.getItem(key));
+            envelope.cloud.status = 'conflict';
+            storage.setItem(key, JSON.stringify(envelope));
+            const ledger = store.readLedger(storage, identity);
+            delete ledger.levelRuns['2'];
+            store.writeLedger(storage, ledger);
+        }
+        else {
+            const ledger = store.readLedger(storage, identity);
+            if (protection === 'legacy_owner_unverified') {
+                ledger.legacyMigration = { status: 'needs_review', reason: 'owner_unverified', level: 2 };
+            } else ledger.levelRuns['2'].cloudUploadHold = protection;
+            store.writeLedger(storage, ledger);
+        }
+        const contents = () => JSON.stringify(storage.__keys().sort().map((key) => [key, storage.getItem(key)]));
+        const before = contents();
+        const run = JSON.stringify(gameState.activeRun);
+        context.resetGame();
+        assert.equal(gameState.restartLevelRun().ok, false, protection);
+        assert.equal(gameState.beginLevelRun(), null, protection);
+        assert.equal(gameState.reset(), false, protection);
+        assert.equal(gameState.saveToLocalStorage(), false, protection);
+        assert.equal(gameState.round, 4, protection);
+        assert.equal(JSON.stringify(gameState.activeRun), run, protection);
+        if (protection !== 'locked') {
+            assert.equal(store.resetLevelSave(storage, identity, 2).ok, false, protection);
+            assert.equal(store.ensureLevelRun(storage, identity, 2), null, protection);
+            const reloaded = buildStudentGameHarness({ storage });
+            reloaded.context.resetGame();
+            assert.equal(reloaded.gameState.restartLevelRun().ok, false, protection);
+            assert.equal(reloaded.gameState.saveToLocalStorage(), false, protection);
+        }
+        assert.equal(contents(), before, protection);
+    }
+});
+
+test('ordinary provisional runs remain restartable and historical checkpoints remain pristine after reload', () => {
+    const storage = createSessionStorage();
+    const { context, gameState } = buildStudentGameHarness({ storage });
+    gameState.updateProgressionState({
+        checkpointStatus: 'quiz_passed', quizPassedAt: '2020-01-01T00:00:00.000Z',
+        quizAttempts: [{ score: 5, passed: true, timestamp: '2020-01-01T00:00:00.000Z' }]
+    });
+    assert.equal(gameState.saveToLocalStorage(), true);
+    vm.runInContext("cloudUploadHold = 'unverified_new_slot'; updateAllUI = () => {};", context);
+    const generation = gameState.activeRun.generation;
+    context.resetGame();
+    assert.equal(gameState.activeRun.generation, generation + 1);
+    assert.equal(gameState.saveLocked, false);
+    assert.equal(context.isPristineLevelGame(), true);
+    assert.equal(gameState.getProgressionState().checkpointStatus, 'quiz_passed');
+    assert.equal(gameState.saveToLocalStorage(), true);
+    const reloaded = buildStudentGameHarness({ storage });
+    assert.equal(reloaded.context.isPristineLevelGame(), true);
+    assert.equal(reloaded.gameState.getProgressionState().quizPassedAt, '2020-01-01T00:00:00.000Z');
+});
+
+test('a held missing slot cannot create run metadata on reload or through direct begin/reset', () => {
+    const storage = createSessionStorage();
+    const store = require('../shared/level-save-store.js');
+    const identity = buildRosterSession();
+    const ledger = store.readLedger(storage, identity);
+    ledger.legacyMigration = { status: 'needs_review', reason: 'missing_class', level: 2 };
+    assert.equal(store.writeLedger(storage, ledger), true);
+    const before = JSON.stringify(storage.__keys().sort().map((key) => [key, storage.getItem(key)]));
+    const { context, gameState } = buildStudentGameHarness({ storage });
+    context.resetGame();
+    assert.equal(gameState.beginLevelRun(), null);
+    assert.equal(gameState.restartLevelRun().ok, false);
+    assert.equal(gameState.saveToLocalStorage(), false);
+    assert.equal(gameState.activeRun, null);
+    assert.equal(JSON.stringify(storage.__keys().sort().map((key) => [key, storage.getItem(key)])), before);
+});
+
+test('round-one meaningful actions and zero-cost decisions activate and persist the current run', () => {
+    const actions = [
+        ({ gameState }) => { gameState.investmentPlans.southern_cross = { safe: 1 }; },
+        ({ gameState }) => { gameState.ownedMines.extra = { owned: true, upgrades: [] }; },
+        ({ gameState }) => { gameState.machinery.push({ id: 'free', purchasePrice: 0 }); },
+        ({ gameState }) => { gameState.ownedMines.southern_cross.upgrades.push('free'); },
+        ({ gameState }) => gameState.recordQuizAttempt({ passed: false, score: 0 }),
+        ({ gameState }) => gameState.recordInvestmentAction('safe', 0),
+        ({ gameState }) => {
+            const machineryId = gameState.getAllowedMachineryIds()[0];
+            gameState.gameConfig.machinery[machineryId].cost = 0;
+            assert.equal(gameState.purchaseMachinery(machineryId).success, true);
+        },
+        ({ context }) => vm.runInContext("updateAllUI = () => {}; currentMineForInvestment = { id: 'southern_cross', maxInvestmentPerRound: 100 }; saveMinePlan();", context),
+        ({ gameState }) => {
+            gameState.gameConfig.mines.free = { id: 'free', name: 'Free', cost: 0 };
+            gameState.gameConfig.levels['2'].maxActiveMines = 10;
+            assert.equal(gameState.purchaseMine('free').success, true);
+        }
+    ];
+    for (const action of actions) {
+        const storage = createSessionStorage();
+        const harness = buildStudentGameHarness({ storage });
+        assert.equal(harness.context.isPristineLevelGame(), true);
+        action(harness);
+        assert.equal(harness.gameState.round, 1);
+        assert.equal(harness.context.isPristineLevelGame(), false);
+        assert.equal(harness.gameState.saveToLocalStorage(), true);
+        assert.equal(buildStudentGameHarness({ storage }).context.isPristineLevelGame(), false);
+    }
+});
+
+test('legacy snapshots without activity signals distinguish inherited and current-run quiz attempts', () => {
+    const storage = createSessionStorage();
+    const { context, gameState } = buildStudentGameHarness({ storage });
+    gameState.updateProgressionState({
+        checkpointStatus: 'quiz_passed',
+        quizAttempts: [{ passed: true, timestamp: '2020-01-01T00:00:00.000Z' }]
+    });
+    assert.equal(gameState.saveToLocalStorage(), true);
+    const store = context.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+    const key = store.buildSaveKey(buildRosterSession(), 2);
+    const envelope = JSON.parse(storage.getItem(key));
+    delete envelope.snapshot.currentRunActivity;
+    storage.setItem(key, JSON.stringify(envelope));
+    assert.equal(buildStudentGameHarness({ storage }).context.isPristineLevelGame(), true);
+    envelope.snapshot.progression.quizAttempts.push({
+        passed: false, timestamp: new Date(Date.parse(envelope.createdAt) + 1000).toISOString()
+    });
+    storage.setItem(key, JSON.stringify(envelope));
+    assert.equal(buildStudentGameHarness({ storage }).context.isPristineLevelGame(), false);
+});
+
+test('engaged v2 caller rejects missing run metadata rather than scheduling legacy payloads', () => {
+    const scheduled = [];
+    const { context, gameState } = buildStudentGameHarness({
+        storage: createSessionStorage(),
+        extraGlobals: { SharePointSync: { buildProgressPayload: (value) => value } }
+    });
+    context.__scheduled = scheduled;
+    vm.runInContext("getProgressSaveScheduler = () => ({ schedule: (p) => __scheduled.push(p) }); cloudUploadHold = '';", context);
+    context.WA_GOLD_RUSH_SAVE_PROTOCOL = { isEnabled: () => true, PROTOCOL_VERSION: 2 };
+    gameState.round = 2;
+    const originalRun = gameState.activeRun;
+    for (const broken of [null, {}, { runId: 'run' }, { generation: 1 }, { generation: 0, runId: 'run' }]) {
+        gameState.activeRun = broken;
+        assert.equal(context.buildProgressSyncOptions(), null);
+        context.realSyncPlayerRecord();
+        assert.equal(scheduled.length, 0);
+    }
+    gameState.activeRun = originalRun;
+    const baseline = gameState.startingNetWorth;
+    gameState.startingNetWorth = null;
+    context.realSyncPlayerRecord();
+    assert.equal(scheduled.length, 0);
+    gameState.startingNetWorth = baseline;
+    const schema = context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.STORAGE_SCHEMA_VERSION;
+    context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.STORAGE_SCHEMA_VERSION = undefined;
+    context.realSyncPlayerRecord();
+    assert.equal(scheduled.length, 0);
+    context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.STORAGE_SCHEMA_VERSION = schema;
+    context.realSyncPlayerRecord();
+    assert.equal(scheduled.length, 1);
+    assert.equal(scheduled[0].protocolVersion, 2);
+});
+
+test('only provisional cloud holds clear after safe reconcile, never unknown/conflict/failed restore', async () => {
+    for (const hold of ['unverified_new_slot', 'cloud_state_unknown', 'legacy_owner_unverified', 'cloud_conflict', 'cloud_restore_failed']) {
+        for (const action of ['start_new', 'upload_local_create', 'resume_local', 'adopt_cloud_ok', 'adopt_cloud', 'conflict', 'start_local_unsynced']) {
+            const storage = createSessionStorage();
+            const { context, gameState } = buildStudentGameHarness({ storage });
+            const store = context.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+            assert.equal(gameState.saveToLocalStorage(), true);
+            const ledger = store.readLedger(storage, buildRosterSession());
+            ledger.levelRuns['2'].cloudUploadHold = hold;
+            store.writeLedger(storage, ledger);
+            vm.runInContext(`cloudUploadHold = ${JSON.stringify(hold)};`, context);
+            context.WA_GOLD_RUSH_CLOUD_RESTORE = {
+                isEnabled: () => true, fetchLevelSave: async () => ({ status: 'missing' }),
+                reconcile: () => ({ action: action === 'adopt_cloud_ok' ? 'adopt_cloud' : action, reason: 'test' }),
+                adoptCloudSave: () => ({ ok: action === 'adopt_cloud_ok', reason: 'test_failed' })
+            };
+            await context.maybeRestoreLevelFromCloud(buildRosterSession(), 2);
+            const clear = hold === 'unverified_new_slot'
+                && ['start_new', 'upload_local_create', 'resume_local', 'adopt_cloud_ok'].includes(action);
+            const protectedReason = action === 'conflict' ? 'cloud_conflict'
+                : action === 'adopt_cloud' ? 'cloud_restore_failed'
+                    : action === 'start_local_unsynced' ? 'cloud_state_unknown' : '';
+            const expected = clear ? '' : protectedReason && hold === 'unverified_new_slot'
+                ? protectedReason : hold;
+            assert.equal(context.getCloudUploadHold(), expected, `${hold}/${action}`);
+            assert.equal(store.getUploadHold(storage, buildRosterSession(), 2), expected, `persisted ${hold}/${action}`);
+        }
+    }
+});
+
+test('unknown cloud state becomes a persisted real hold, including without the shared guard export', async () => {
+    const storage = createSessionStorage();
+    const { context, gameState } = buildStudentGameHarness({ storage });
+    assert.equal(gameState.saveToLocalStorage(), true);
+    vm.runInContext("cloudUploadHold = 'unverified_new_slot';", context);
+    context.WA_GOLD_RUSH_CLOUD_RESTORE = {
+        isEnabled: () => true,
+        fetchLevelSave: async () => ({ status: 'unknown' }),
+        reconcile: () => ({ action: 'resume_local_unsynced', reason: 'timeout' })
+    };
+    await context.maybeRestoreLevelFromCloud(buildRosterSession(), 2);
+    const store = context.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+    assert.equal(context.getCloudUploadHold(), 'cloud_state_unknown');
+    assert.equal(store.getUploadHold(storage, buildRosterSession(), 2), 'cloud_state_unknown');
+    assert.equal(gameState.saveLocked, true);
+    const before = JSON.stringify(storage.__keys().sort().map((key) => [key, storage.getItem(key)]));
+    const reloaded = buildStudentGameHarness({ storage });
+    reloaded.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.getLevelWriteProtection = undefined;
+    assert.equal(reloaded.gameState.getRunProtectionReason(), 'cloud_state_unknown');
+    reloaded.context.resetGame();
+    assert.equal(reloaded.gameState.reset(), false);
+    assert.equal(reloaded.gameState.beginLevelRun(), null);
+    assert.equal(reloaded.gameState.restartLevelRun().ok, false);
+    assert.equal(JSON.stringify(storage.__keys().sort().map((key) => [key, storage.getItem(key)])), before);
 });

@@ -80,12 +80,12 @@
 
     /** v2 request fields for a capture (does not include baseRevision). */
     function buildV2Fields(input = {}) {
-        const generation = Number(input.runGeneration);
+        const generation = input.runGeneration;
         const startingNetWorth = Number(input.startingNetWorth);
         return {
             protocolVersion: PROTOCOL_VERSION,
             runGeneration: Number.isInteger(generation) && generation >= 1 ? generation : null,
-            runId: typeof input.runId === 'string' ? input.runId : '',
+            runId: typeof input.runId === 'string' ? input.runId.trim() : '',
             startingNetWorth: input.startingNetWorth !== null && input.startingNetWorth !== undefined
                 && Number.isFinite(startingNetWorth) ? startingNetWorth : null,
             storageSchemaVersion: Number.isInteger(input.storageSchemaVersion) ? input.storageSchemaVersion : null
@@ -97,6 +97,7 @@
         if (!isV2Payload(payload)) return { ok: false, errors: ['protocolVersion'] };
         if (!Number.isInteger(payload.runGeneration) || payload.runGeneration < 1) errors.push('runGeneration');
         if (typeof payload.runId !== 'string' || !payload.runId) errors.push('runId');
+        if (payload.storageSchemaVersion !== getStore()?.STORAGE_SCHEMA_VERSION) errors.push('storageSchemaVersion');
         if (payload.baseRevision !== undefined && payload.baseRevision !== null
             && !(Number.isInteger(payload.baseRevision) && payload.baseRevision >= 1)) errors.push('baseRevision');
         if (typeof payload.contentHash !== 'string' || !payload.contentHash) errors.push('contentHash');
@@ -124,7 +125,6 @@
      */
     function seal(payload, storageInput) {
         if (!isV2Payload(payload)) return { ok: false, reason: 'not_v2' };
-        if (payload.baseRevision !== undefined) return { ok: true, payload };
         const store = getStore();
         const storage = resolveStorage(storageInput);
         if (!store || !storage) return { ok: false, reason: 'store_unavailable' };
@@ -135,6 +135,7 @@
         if (envelope.generation !== payload.runGeneration || envelope.runId !== payload.runId) {
             return { ok: false, reason: 'generation_mismatch' };
         }
+        if (payload.baseRevision !== undefined) return { ok: true, payload };
         const revision = envelope.cloud?.revision;
         return {
             ok: true,
@@ -181,12 +182,12 @@
         if (!result?.success) return { outcome: 'defer', code };
         if (body && body.ok === false) return { outcome: 'defer', code };
         if (!body || body.ok !== true) return { outcome: 'unconfirmed', code: code || 'missing_ack' };
-        const revision = Number(body.revision);
+        const revision = body.revision;
         if (body.protocolVersion !== PROTOCOL_VERSION
             || !Number.isInteger(revision) || revision < 1
-            || String(body.saveRequestId || '') !== String(payload?.saveRequestId || '')
-            || (body.progressKey !== undefined && String(body.progressKey) !== String(payload?.progressKey || ''))
-            || (body.runGeneration !== undefined && Number(body.runGeneration) !== payload?.runGeneration)) {
+            || body.saveRequestId !== payload?.saveRequestId
+            || body.progressKey !== payload?.progressKey
+            || !Number.isInteger(body.runGeneration) || body.runGeneration !== payload?.runGeneration) {
             return { outcome: 'unconfirmed', code: 'ack_mismatch' };
         }
         return { outcome: 'confirmed', revision, deduplicated: body.deduplicated === true };
@@ -216,6 +217,18 @@
                 revision: ack.revision,
                 lastAcknowledgedSaveRequestId: payload.saveRequestId
             }
+        }).ok;
+    }
+
+    function recordUnconfirmed(storageInput, payload) {
+        const store = getStore();
+        const storage = resolveStorage(storageInput);
+        if (!store || !storage) return false;
+        const { identity, level } = identityFromPayload(payload);
+        return store.updateCloudState(storage, identity, level, {
+            generation: payload.runGeneration,
+            runId: payload.runId,
+            cloud: { status: 'unknown' }
         }).ok;
     }
 
@@ -283,6 +296,7 @@
         seal,
         classifyResponse,
         recordAcknowledgement,
+        recordUnconfirmed,
         recordConflict,
         hasConflict,
         getConflicts
