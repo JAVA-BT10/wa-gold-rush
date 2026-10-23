@@ -578,6 +578,173 @@ test('SharePointSync: v2 queue items are held (not replayed) when the flag is tu
     assert.equal(sync.queueLength(), 1);
 });
 
+for (const mode of ['legacy', 'v2', 'rollback']) {
+    for (const protection of ['conflict', 'hold', 'held', 'stale_generation', 'malformed', 'unsupported',
+        'generation_mismatch', 'run_mismatch', 'recorded_conflict', 'unverified_new_slot']) {
+        test(`SharePointSync ${mode}: ${protection} blocks direct and retry dispatch without changing protected data`, async () => {
+            const server = new ReferenceSaveServer();
+            enableV2(server);
+            if (mode === 'legacy') global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: {} };
+            const storage = createSessionStorage();
+            const run = seedLocalSave(storage);
+            global.localStorage = storage;
+            const sync = loadSync();
+            let calls = 0;
+            let offline = true;
+            const transport = server.transport();
+            global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async (name, payload) => {
+                calls += 1;
+                if (offline) throw new Error('offline');
+                return payload.protocolVersion === 2 ? transport(name, payload)
+                    : { success: true, status: 200, data: { ok: true } };
+            };
+            const opts = v2Opts(run, mode === 'legacy' ? { protocolVersion: undefined } : {});
+            assert.equal((await sync.syncProgress(opts)).queued, true);
+            const queueBefore = storage.getItem('wa_gr_sync_queue');
+            const queued = JSON.parse(queueBefore)[0];
+            if (mode !== 'legacy') {
+                assert.equal(queued.payload.baseRevision, null, 'the retained request is sealed');
+                assert.ok(queued.payload.contentHash);
+            }
+            const saveKey = store.buildSaveKey(ID, 2);
+            const ledgerKey = store.buildLedgerKey(ID);
+            const envelope = JSON.parse(storage.getItem(saveKey));
+            const ledger = JSON.parse(storage.getItem(ledgerKey));
+            if (protection === 'malformed') storage.setItem(saveKey, '{unreadable');
+            else if (protection === 'unsupported') {
+                envelope.storageSchemaVersion = 999;
+                storage.setItem(saveKey, JSON.stringify(envelope));
+            } else if (protection === 'generation_mismatch' || protection === 'run_mismatch') {
+                if (protection === 'generation_mismatch') ledger.levelRuns['2'].generation += 1;
+                else ledger.levelRuns['2'].runId = 'another_run';
+                storage.setItem(ledgerKey, JSON.stringify(ledger));
+            } else if (protection === 'unverified_new_slot') {
+                ledger.levelRuns['2'].cloudUploadHold = protection;
+                storage.setItem(ledgerKey, JSON.stringify(ledger));
+                assert.equal(store.getLevelWriteProtection(storage, ID, 2), '', 'local writes remain allowed');
+            } else if (protection === 'recorded_conflict') {
+                const protocol = require('../shared/save-protocol.js');
+                const conflictedPayload = { ...queued.payload, protocolVersion: 2, runGeneration: run.generation, runId: run.runId };
+                assert.equal(protocol.recordConflict(storage, conflictedPayload), true);
+                assert.equal(protocol.hasConflict(storage, opts.progressKey || '6B|SC-1|2'), false,
+                    'generation-qualified conflict keys do not match legacy rollback keys');
+            } else {
+                envelope.cloud = { ...envelope.cloud, status: protection, currentRevision: 7 };
+                storage.setItem(saveKey, JSON.stringify(envelope));
+            }
+            if (mode === 'rollback') global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: {} };
+            const saveBefore = storage.getItem(saveKey);
+            const ledgerBefore = storage.getItem(ledgerKey);
+            const conflictsBefore = storage.getItem('wa_gr_sync_conflicts');
+            const expectedReason = protection === 'unverified_new_slot' ? protection
+                : store.getLevelWriteProtection(storage, ID, 2);
+            assert.ok(expectedReason);
+            offline = false;
+            const result = await sync.syncProgress(mode === 'rollback' ? { ...opts, protocolVersion: undefined } : opts);
+            assert.equal(result.held, true);
+            assert.equal(result.reason, expectedReason);
+            assert.equal(result.queued, false, 'a new capture must not replace the held request');
+            await sync.retryQueue();
+            await sync.retryQueue();
+            assert.equal(calls, 1, 'neither direct nor repeated retry dispatch may reach the flow');
+            assert.equal(storage.getItem(saveKey), saveBefore, 'save slot and all cloud metadata are unchanged');
+            assert.equal(storage.getItem(ledgerKey), ledgerBefore, 'historical ledger and run metadata are unchanged');
+            assert.equal(storage.getItem('wa_gr_sync_conflicts'), conflictsBefore);
+            assert.equal(storage.getItem('wa_gr_sync_queue'), queueBefore, 'exact payload, request ID, base and attempts are retained');
+            assert.equal(sync.getQuarantine().length, 0, 'held requests are not rejected or deleted');
+        });
+    }
+}
+
+for (const v2 of [false, true]) {
+    test(`SharePointSync ${v2 ? 'v2' : 'legacy'}: a protected level does not block another level's direct or retry saves`, async () => {
+        const server = new ReferenceSaveServer();
+        enableV2(server);
+        if (!v2) global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: {} };
+        const storage = createSessionStorage({}, { assignedLevel: 4 });
+        const protectedRun = seedLocalSave(storage);
+        const other = validCloudSave(4);
+        assert.equal(store.adoptLevelRun(storage, other), true);
+        assert.equal(store.writeLevelSave(storage, other).ok, true);
+        global.localStorage = storage;
+        const sync = loadSync();
+        const captures = [
+            v2Opts(protectedRun, { protocolVersion: v2 ? 2 : undefined }),
+            v2Opts({ generation: other.generation, runId: other.runId }, { level: 4, protocolVersion: v2 ? 2 : undefined })
+        ];
+        global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => { throw new Error('offline'); };
+        for (const opts of captures) assert.equal((await sync.syncProgress(opts)).queued, true);
+        const heldItem = JSON.parse(storage.getItem('wa_gr_sync_queue'))[0];
+        store.updateCloudState(storage, ID, 2, { cloud: { status: 'conflict', revision: 7 } });
+        const protectedSave = storage.getItem(store.buildSaveKey(ID, 2));
+        const ledgerBefore = storage.getItem(store.buildLedgerKey(ID));
+        const sent = [];
+        const transport = server.transport();
+        global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async (name, payload) => {
+            sent.push(payload);
+            return v2 ? transport(name, payload) : { success: true, status: 200, data: { ok: true } };
+        };
+        await sync.retryQueue();
+        assert.equal(sent.length, 1);
+        assert.equal(sent[0].progressKey, '6B|SC-1|4');
+        assert.equal((await sync.syncProgress(captures[1])).ok, true);
+        assert.equal(sent.length, 2);
+        assert.deepEqual(JSON.parse(storage.getItem('wa_gr_sync_queue')), [heldItem]);
+        assert.equal(storage.getItem(store.buildSaveKey(ID, 2)), protectedSave);
+        assert.equal(storage.getItem(store.buildLedgerKey(ID)), ledgerBefore);
+        if (v2) assert.equal(store.readLevelSave(storage, ID, 4).envelope.cloud.revision, 2);
+    });
+}
+
+test('SharePointSync: incompatible legacy captures are quarantined intact and never replayed after rollback', async () => {
+    const server = new ReferenceSaveServer();
+    enableV2(server);
+    global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: {} };
+    const storage = createSessionStorage({}, { assignedLevel: 4 });
+    const run = seedLocalSave(storage);
+    const other = validCloudSave(4);
+    assert.equal(store.adoptLevelRun(storage, other), true);
+    assert.equal(store.writeLevelSave(storage, other).ok, true);
+    global.localStorage = storage;
+    const sync = loadSync();
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => { throw new Error('offline'); };
+    assert.equal((await sync.syncProgress(v2Opts(run, { protocolVersion: undefined }))).queued, true);
+    const queueBefore = storage.getItem('wa_gr_sync_queue');
+    const saveBefore = storage.getItem(store.buildSaveKey(ID, 2));
+    const ledgerBefore = storage.getItem(store.buildLedgerKey(ID));
+    const sent = [];
+    const transport = server.transport();
+    global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async (name, payload) => {
+        sent.push(payload);
+        return payload.protocolVersion === 2 ? transport(name, payload)
+            : { success: true, status: 200, data: { ok: true } };
+    };
+    global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: { saveProtocolV2: true } };
+    await sync.retryQueue();
+    await sync.retryQueue();
+    assert.equal(sent.length, 0, 'legacy requests are not upgraded or replayed');
+    assert.equal(sync.queueLength(), 0);
+    const quarantined = sync.getQuarantine();
+    assert.equal(quarantined.length, 1);
+    assert.equal(quarantined[0].reason, 'legacy_item_held_v2_active');
+    const original = JSON.parse(queueBefore)[0];
+    for (const field of ['type', 'payload', 'queuedAt', 'attempts']) {
+        assert.deepEqual(quarantined[0][field], original[field], `${field} is preserved for manual reconciliation`);
+    }
+    assert.equal(storage.getItem(store.buildSaveKey(ID, 2)), saveBefore);
+    assert.equal(storage.getItem(store.buildLedgerKey(ID)), ledgerBefore);
+    assert.equal((await sync.syncProgress(v2Opts(
+        { generation: other.generation, runId: other.runId }, { level: 4 }
+    ))).ok, true);
+    assert.equal(sent.length, 1);
+    assert.equal(sync.queueLength(), 0);
+    global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: {} };
+    await sync.retryQueue();
+    assert.equal(sent.length, 1, 'obsolete unconditional captures cannot overwrite newer saves after rollback');
+    assert.deepEqual(sync.getQuarantine(), quarantined);
+    assert.equal(sync.queueLength(), 0);
+});
+
 // ---------------------------------------------------------------------------
 // Cloud restore adapter (gated)
 // ---------------------------------------------------------------------------
@@ -1426,6 +1593,67 @@ for (const failure of ['backup', 'target', 'initial_ledger', 'final_ledger']) {
         assert.equal(storage.getItem('level2_autosave'), raw);
     });
 }
+
+for (const failure of ['backup', 'target', 'ledger', 'read']) {
+    test(`page loader locks a missing slot after migration ${failure} failure, then retries the original game`, () => {
+        const raw = legacyAutosave();
+        const storage = createSessionStorage({ level2_autosave: raw }, { assignedLevel: 3 });
+        const originalSet = storage.setItem.bind(storage);
+        const originalGet = storage.getItem.bind(storage);
+        let fail = true;
+        storage.setItem = (key, value) => {
+            if (fail && ((failure === 'backup' && key === store.LEGACY_BACKUP_KEY)
+                || (failure === 'target' && key === store.buildSaveKey(ID, 3))
+                || (failure === 'ledger' && key === store.buildLedgerKey(ID)))) {
+                throw new Error('quota exceeded');
+            }
+            originalSet(key, value);
+        };
+        storage.getItem = (key) => {
+            if (fail && failure === 'read' && key === store.LEGACY_AUTOSAVE_KEY) throw new Error('storage unavailable');
+            return originalGet(key);
+        };
+        const h = buildStudentGameHarness({ level: 3, storage });
+        assert.equal(h.loadResult.status, 'unavailable');
+        assert.match(h.loadResult.reason, /backup_failed|storage_write_failed|ledger_write_failed|storage_read_failed/);
+        assert.equal(h.gameState.saveLocked, true);
+        assert.equal(h.gameState.activeRun, null, 'a missing slot is not permission to create a replacement run');
+        fail = false;
+        const ledgerBefore = storage.getItem(store.buildLedgerKey(ID));
+        assert.equal(h.gameState.saveToLocalStorage(), false);
+        assert.equal(h.gameState.beginLevelRun(), null);
+        assert.equal(store.readLevelSave(storage, ID, 3).status, 'missing');
+        assert.equal(storage.getItem(store.buildLedgerKey(ID)), ledgerBefore);
+        const retried = buildStudentGameHarness({ level: 3, storage });
+        assert.equal(retried.loadResult.status, 'resumed');
+        assert.equal(retried.gameState.round, 12);
+        assert.equal(retried.gameState.cash, 4567);
+        assert.equal(store.readProgressionEvidence(storage, ID, 2).checkpointStatus, 'quiz_passed');
+        assert.equal(store.readLevelSave(storage, ID, 3).envelope.migratedFrom.hash, store.hashString(raw));
+        assert.equal(storage.getItem(store.LEGACY_AUTOSAVE_KEY), raw);
+    });
+}
+
+test('migration failure for a known other level does not block a first visit or an existing valid save', () => {
+    const storage = createSessionStorage({ level2_autosave: legacyAutosave() }, { assignedLevel: 4 });
+    const originalSet = storage.setItem.bind(storage);
+    storage.setItem = (key, value) => {
+        if (key === store.buildSaveKey(ID, 3)) throw new Error('quota exceeded for large legacy snapshot');
+        originalSet(key, value);
+    };
+    const other = buildStudentGameHarness({ level: 4, storage });
+    assert.equal(other.loadResult.status, 'started');
+    playSomeRounds(other.gameState, { round: 5, cash: 987 });
+    storage.setItem = (key, value) => {
+        if (key === store.LEGACY_BACKUP_KEY) throw new Error('backup unavailable');
+        originalSet(key, value);
+    };
+    storage.removeItem(store.LEGACY_BACKUP_KEY);
+    const existing = buildStudentGameHarness({ level: 4, storage });
+    assert.equal(existing.loadResult.status, 'resumed');
+    assert.equal(existing.gameState.round, 5);
+    assert.equal(existing.gameState.cash, 987);
+});
 
 test('queue capacity never evicts a sealed unknown-outcome request', async () => {
     enableV2(new ReferenceSaveServer());

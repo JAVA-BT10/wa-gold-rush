@@ -141,6 +141,7 @@ An invalid slot (`status:'invalid'` with a reason) is never loaded. Its raw text
 Further guarantees:
 
 - The original is backed up first; if the backup fails, migration stops (`backup_failed`).
+- Operational migration failures (backup, storage read/write, ledger write, or an unexpected exception) lock a missing target instead of starting a replacement game. Reload retries the original migration. Valid existing saves still resume; a failure identifying one level does not block first visits to unrelated levels.
 - `level2_autosave` itself is never deleted.
 - Saves are never fabricated for other levels.
 - The two reported mixed-history students need manual review; the code never targets them.
@@ -200,7 +201,8 @@ The full specification is in [save-protocol-v2](../power-automate/save-protocol-
   - `contentHash` plus a durable receipt store for idempotency, with dedup checked **before** the stale check;
   - conflicts are held for reconciliation, never retried as an overwrite;
   - a legacy-shaped `200` is classified as **unconfirmed**, never as a v2 save.
-- **Rollback:** v2 queue items are held (not replayed) while the flag is OFF; legacy items are held (not upgraded) while it is ON.
+- **Dispatch protection:** direct saves and retries consult both the upload hold and per-level write protection. Envelope conflicts/holds, unreadable or unsupported slots, and ledger/run mismatches block dispatch without modifying the slot, ledger, or queued request. A provisional `unverified_new_slot` still blocks uploads even though local writes are permitted.
+- **Rollback:** v2 queue items remain queued (not replayed) while the flag is OFF. With it ON, legacy items are preserved in `wa_gr_sync_quarantine` as `legacy_item_held_v2_active`, not upgraded or sent. They require manual reconciliation and do not automatically replay after rollback over newer v2 data. Quarantine is bounded (50 entries); it is not an indefinite archive.
 
 ## 8. Leaderboards (Implemented (repo) + mock-tested; server leaderboard planned)
 

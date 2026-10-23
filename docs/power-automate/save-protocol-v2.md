@@ -38,7 +38,7 @@
 4. **Reset.** "Restart This Level" discards pending and queued saves for that key (`superseded_by_reset`). The client then starts a new local run. Under v2 this new local run cannot advance the server generation, so its saves fail closed until `GGR_ResetLevelProgress` exists.
 5. **Rollback safety:**
    - With the flag OFF, v2 queue items are **held**, not sent to a legacy flow.
-   - With the flag ON, legacy queue items are **held**, never upgraded to the current revision or generation.
+   - With the flag ON, legacy queue items are **quarantined intact** (`legacy_item_held_v2_active`), never upgraded to the current revision or generation. This is a manual-reconciliation hold, not an automatic retry: turning the flag OFF must not replay an obsolete unconditional capture over a newer v2 save. The existing quarantine retains at most 50 entries; export recovery evidence before capacity is reached.
 
 ## 3. Server algorithm (required; reference = mock)
 

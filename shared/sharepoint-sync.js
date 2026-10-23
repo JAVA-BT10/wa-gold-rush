@@ -388,7 +388,9 @@ const SharePointSync = (() => {
 
     function _uploadHold(payload) {
         const protocol = _resolveSaveProtocol();
-        const hold = _resolveStore()?.getUploadHold(localStorage, payload, payload.level);
+        const store = _resolveStore();
+        const hold = store?.getUploadHold(localStorage, payload, payload.level)
+            || store?.getLevelWriteProtection(localStorage, payload, payload.level);
         if (hold) return hold;
         return protocol?.hasConflict(localStorage, _queueKey(payload)) ? 'revision_conflict' : '';
     }
