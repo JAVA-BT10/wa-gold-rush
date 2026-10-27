@@ -176,3 +176,20 @@ test('direct cloud adoption cannot bypass a genuine different-run conflict', () 
         'cloud_reconciliation_required');
     assert.deepEqual(store.readLevelSave(storage, identity, 2).envelope, original);
 });
+
+test('typed duplicate, malformed and unavailable responses stay unknown rather than permitting create', () => {
+    const request = { identity, level: 2, progressKey: store.buildProgressKey(identity, 2) };
+    const vectors = [
+        { success: true, status: 200, data: {
+            contractVersion: restore.CONTRACT_VERSION, progressKey: request.progressKey,
+            ok: false, code: 'duplicate_rows'
+        } },
+        { success: true, status: 200, data: 'malformed-response' },
+        { success: false, status: 503, data: { ok: false, code: 'unavailable', retryable: true } }
+    ];
+    for (const response of vectors) {
+        const cloud = restore.interpretResponse(response, request);
+        assert.ok(['failed', 'incomplete'].includes(cloud.status));
+        assert.equal(restore.reconcile({ status: 'missing' }, cloud).action, 'start_local_unsynced');
+    }
+});

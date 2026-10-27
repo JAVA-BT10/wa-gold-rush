@@ -109,7 +109,7 @@ The client payload (built by `shared/sharepoint-sync.js` via `shared/progression
 | `approvalStatus` | `ApprovalStatus` | Single line of text |
 | `approverName` | `ApproverName` | Single line of text |
 | `approvalTimestamp` | `ApprovalTimestamp` | Single line of text (ISO timestamp) |
-| `progressionStateJson` | `ProgressionStateJson` | Multiple lines of text (plain) |
+| `progressionStateJson` | `ProgressionStateByLevel` (observed internal name; confirm tenant type/mapping) | JSON-bearing text; verify actual column configuration |
 
 **Teacher decisions are owned by GGR_SaveCheckpointApproval.** The student's browser never learns of a teacher decision, so its payload always carries its own local `approvalStatus` (`pending` after a pass). To stop student saves from undoing approvals, SaveProgress must follow these rules:
 

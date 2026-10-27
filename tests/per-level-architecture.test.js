@@ -1863,9 +1863,8 @@ test('verified legacy migration can reconcile an earlier review marker without b
         ledger.levelRuns['3'] = { ...run, cloudUploadHold: hold };
         store.writeLedger(held, ledger);
         const migrated = store.migrateLegacyAutosave(held, ID);
-        assert.equal(hold === 'cloud_conflict' ? migrated.reason : migrated.status,
-            hold === 'cloud_conflict' ? hold : 'migrated');
-        assert.equal(store.readLevelSave(held, ID, 3).status, hold === 'cloud_conflict' ? 'missing' : 'found');
+        assert.equal(migrated.reason, hold, 'a held run is not silently replaced by legacy migration');
+        assert.equal(store.readLevelSave(held, ID, 3).status, 'missing');
         assert.equal(store.getUploadHold(held, ID, 3), hold);
     }
 });

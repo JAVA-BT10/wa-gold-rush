@@ -84,7 +84,10 @@ SharePoint offers no multi-list transaction, so the row update and the receipt c
 - **Row first, as the commit point.** `RecentRequests` is inside the **same** item update as the data, so dedup of recent requests is atomic with the write.
 - **Then the receipt.** If the receipt write fails, a retry is still recognised via `RecentRequests`, and the missing receipt is repaired.
 - **Retention limits** (document these to teachers and operators):
-  - `RecentRequests` holds the last *N* request IDs. **N = 20 is proposed**; the mock uses N = 1 via `LastSaveRequestId`. Verify column size limits; a multi-line text column is suggested.
+  - `RecentRequests` holds bounded request bindings/acknowledgements. **N = 20
+    is proposed for tenant evaluation**; the reference model uses a configurable
+    ring (default 10) and pins unreceipted entries. Verify serialized column
+    size and capacity, not just entry count.
   - Receipts are retained for *T* days (**proposed: the term length**), then purged by a scheduled flow.
   - Do not evict row-atomic recovery metadata before its separate receipt is
     proven durable. Receipt failure followed by another device's save can
@@ -93,7 +96,8 @@ SharePoint offers no multi-list transaction, so the row update and the receipt c
   - Publish a bounded retry/receipt lifetime and reject expired IDs explicitly.
     Stale revision alone is insufficient if an old create is retried after a
     row is deleted/reset. Reset must retain a generation tombstone/receipt
-    policy. These guarantees are not implemented by the simplified mock.
+    policy. The reference model exercises exact binding and pinned crash
+    recovery, not deployed retention/expiry or transactional tenant capacity.
 
 ### Tenant feasibility: actions to verify (do not assume)
 

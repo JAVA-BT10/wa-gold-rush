@@ -127,6 +127,18 @@ means **blocked**, not an invitation to accept the shared key as proof.
    class**. Export those entries before rollout and recover only from a verified
    owned snapshot or explicit operator-approved mapping. A zero new scoped
    profile does not prove that no legacy profile existed.
+
+   **Unresolved profile release gate:** scoped profile buckets currently have
+   no run identity. Loading a cloud snapshot uses per-bucket maxima, so existing
+   local class/student/level buckets can override the exact incoming profile
+   even when the economy slot is missing (including history from an older run).
+   The empty-profile-store roundtrip test does **not** resolve this case.
+   Keep the coordinated cloud pilot blocked until profile history is retained/
+   archived and either run-bound or explicitly reconciled before an approved
+   exact replacement. Never silently discard genuine local profile evidence,
+   combine different runs, or infer its run from the current ledger. The
+   `save-contract.test.js` release-blocker vector reproduces this limitation;
+   it is diagnostic evidence, not a passing acceptance gate.
 3. Preserve a valid original run ID/generation. Missing metadata requires
    authorised, recorded one-time migration allocation, not a random run or a
    plausible empty snapshot on every read. Unknown baseline remains null;

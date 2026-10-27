@@ -275,6 +275,34 @@ test('converted profile survives real game load, new actions, save and a second 
     assert.equal(converted.requiresOperatorConfigCheck, true);
 });
 
+test('release-blocker evidence: existing scoped profile can override exact cloud profile when its economy slot is missing', () => {
+    // Diagnostic reproduction, not acceptance approval. The operations runbook
+    // blocks the pilot until retained profile history has run-aware reconciliation.
+    const incoming = convertedEnvelope();
+    const priorHistory = { ...incoming.snapshot.investmentProfile, assetBuilding: 99 };
+    const storage = createSessionStorage({
+        wa_gr_investment_profile: JSON.stringify({ '6B|SC-1__L2': priorHistory })
+    });
+    assert.equal(store.readLevelSave(storage, ID, 2).status, 'missing');
+    const cloud = restore.interpretResponse({
+        success: true, status: 200,
+        data: {
+            contractVersion: restore.CONTRACT_VERSION, ok: true, found: true,
+            progressKey: SLOT.progressKey, revision: 4, runGeneration: 3, save: incoming
+        }
+    }, SLOT);
+    assert.equal(restore.adoptCloudSave(storage, cloud).ok, true);
+    const game = buildStudentGameHarness({ level: 2, storage });
+    assert.equal(game.loadResult.status, 'resumed');
+    const loadedProfile = store.clone(game.gameState.captureLevelSnapshot().investmentProfile);
+    assert.equal(incoming.snapshot.investmentProfile.assetBuilding, 7);
+    assert.equal(loadedProfile.assetBuilding, 99);
+    assert.notDeepEqual(loadedProfile, incoming.snapshot.investmentProfile);
+    assert.equal(game.gameState.activeRun.runId, incoming.runId);
+    assert.equal(game.gameState.cash, incoming.snapshot.cash);
+    assert.equal(JSON.parse(storage.getItem('wa_gr_investment_profile'))['6B|SC-1__L2'].assetBuilding, 99);
+});
+
 test('real gameplay profiles are isolated by class, student and level; ambiguous legacy totals stay unclaimed', () => {
     const legacy = { 'SC-1__L2': { highRisk: 999, lowRisk: 0, profitChasing: 0, assetBuilding: 0, futureProofing: 0 } };
     const storage = createSessionStorage({ wa_gr_investment_profile: JSON.stringify(legacy) });

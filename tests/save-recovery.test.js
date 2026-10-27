@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { read, createSessionStorage, buildStudentGameHarness, setSession } = require('./support/harness.js');
+const { ReferenceSaveServer } = require('./support/reference-save-server.js');
 
 function harness({ storage = createSessionStorage(), v2 = true, restore = true, transport, globals = {} } = {}) {
     const calls = [];
@@ -282,4 +283,94 @@ test('runtime diagnostics report actual prerequisites without session, slot, or 
     assert.equal(h.context.sync.getDiagnostics({ level: 2 }).startupSlotVerified, true);
     const json = JSON.stringify(h.context.sync.getDiagnostics({ level: 2 }));
     assert.doesNotMatch(json, /SC-1|6B|123456|Alex Smith|test-proof|authorization|runId|progressKey/i);
+});
+
+test('a fresh browser recovers a committed lost response by retrying the original conditional receipt', async () => {
+    const server = new ReferenceSaveServer();
+    let remote = null;
+    let committedRequest;
+    let first;
+    const transport = async (name, p) => {
+        if (name === 'getStudentProgress') return { success: true, status: 200, data: {
+            ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: p.progressKey,
+            found: !!remote, ...(remote ? { revision: 1, runGeneration: remote.generation, save: remote } : {})
+        } };
+        if (!committedRequest) {
+            assert.equal(server.handle(p).ok, true);
+            committedRequest = JSON.parse(JSON.stringify(p));
+            remote = JSON.parse(JSON.stringify(first.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE
+                .readLevelSave(first.storage, p, p.level).envelope));
+            remote.cloud = { status: 'synced', revision: 1 };
+            return { success: false, networkError: true };
+        }
+        assert.equal(p.saveRequestId, committedRequest.saveRequestId, 'ask for the immutable receipt, not a rebased overwrite');
+        assert.equal(p.baseRevision, null);
+        return { success: true, status: 200, data: server.handle(p) };
+    };
+    first = harness({ transport });
+    await first.context.maybeRestoreLevelFromCloud(first.context.getAuthenticatedStudentSession(), 2);
+    const capture = payload(first);
+    capture.progressionMarkersJson = JSON.stringify({
+        ...first.gameState.captureLevelSnapshot(), companyName: first.gameState.player.companyName
+    });
+    assert.equal((await first.context.sync.syncProgress(capture)).queued, true);
+    const second = harness({ storage: first.storage, transport });
+    vm.runInContext('syncPlayerRecord = () => {};', second.context);
+    await vm.runInContext('retryCloudRecovery()', second.context);
+    assert.equal(second.context.sync.queueLength(), 0);
+    assert.equal(second.context.getCloudUploadHold(), '');
+    assert.equal(second.gameState.round, 3);
+    assert.equal(second.gameState.activeRun.runId, remote.runId);
+    assert.equal(server.rows.get(committedRequest.progressKey).revision, 1, 'server applied exactly one write');
+    assert.equal(server.receipts.size, 1);
+});
+
+test('raw session-instance replacement invalidates startup proof even when normalized fields are identical', async () => {
+    const h = harness();
+    await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
+    assert.equal(h.context.sync.getRuntimeDiagnostics({ level: 2 }).startupSlotVerified, true);
+    const raw = JSON.parse(h.storage.getItem('wa_gold_rush_student_session'));
+    raw.sessionInstanceId = 'different-login-instance';
+    h.storage.setItem('wa_gold_rush_student_session', JSON.stringify(raw));
+    assert.equal(h.context.sync.getRuntimeDiagnostics({ level: 2 }).startupSlotVerified, false);
+    const result = await h.context.sync.syncProgress(payload(h));
+    assert.equal(result.held, true);
+    assert.equal(result.reason, 'startup_lookup_required');
+    assert.equal(h.calls.filter(c => c.name === 'saveProgress').length, 0);
+});
+
+test('logout and identical-session relogin cannot revive prior startup verification', async () => {
+    const h = harness();
+    const original = h.storage.getItem('wa_gold_rush_student_session');
+    await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
+    assert.equal(h.context.sync.getRuntimeDiagnostics({ level: 2 }).startupSlotVerified, true);
+    vm.runInContext('logoutCompetitionSession()', h.context);
+    h.storage.setItem('wa_gold_rush_student_session', original);
+    assert.equal(h.context.sync.getRuntimeDiagnostics({ level: 2 }).startupSlotVerified, false);
+    assert.equal((await h.context.sync.syncProgress(payload(h))).reason, 'startup_lookup_required');
+});
+
+test('progress logs omit private slot, run, request, provider and flow details', async () => {
+    const logs = [];
+    const h = harness({ transport: async (name, p) => name === 'getStudentProgress'
+        ? { success: true, status: 200, data: {
+            ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: p.progressKey, found: false
+        } }
+        : { success: false, error: 'PRIVATE-FLOW-DETAIL' } });
+    h.context.console.info = (...args) => logs.push(args);
+    h.context.console.warn = (...args) => logs.push(args);
+    await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
+    h.context.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER.getProof = async () => {
+        throw new Error('PRIVATE-PROVIDER-DETAIL');
+    };
+    const p = payload(h);
+    p.saveRequestId = 'PRIVATE-REQUEST-ID';
+    await h.context.sync.syncProgress(p);
+    h.context.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER.getProof = async () => ({
+        authorization: ['Bearer', 'PRIVATE-PROOF'].join(' ')
+    });
+    await h.context.sync.retryQueue();
+    const json = JSON.stringify(logs);
+    assert.doesNotMatch(json, /SC-1|6B|PRIVATE-|progressKey|runId|saveRequestId|studentId|studentName/i);
+    assert.match(json, /"level":2/);
 });

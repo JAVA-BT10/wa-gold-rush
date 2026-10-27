@@ -45,12 +45,24 @@ const SharePointSync = (() => {
     // Deliberately memory-only: an old acknowledgement is not a startup lookup.
     const _verifiedSlots = new Map();
     const _lookupVersions = new Map();
+    let _sessionEpoch = 0;
 
     function _sessionStamp(session) {
-        return JSON.stringify(session || null);
+        let rawSession = null;
+        try {
+            rawSession = localStorage.getItem(_resolveSessionApi()?.STORAGE_KEY || 'wa_gold_rush_student_session');
+        } catch (_) {}
+        return JSON.stringify([_sessionEpoch, rawSession, session || null]);
+    }
+
+    function clearStartupVerification() {
+        _sessionEpoch += 1;
+        _verifiedSlots.clear();
+        _lookupVersions.forEach((version, key) => _lookupVersions.set(key, version + 1));
     }
 
     async function checkLevelSave(session, level) {
+        const sessionStamp = _sessionStamp(session);
         const key = _resolveStore()?.buildProgressKey(session, level);
         const version = (_lookupVersions.get(key) || 0) + 1;
         _lookupVersions.set(key, version);
@@ -59,12 +71,12 @@ const SharePointSync = (() => {
         if (!restore?.isEnabled()) return { status: 'unavailable', reason: 'restore_unconfigured' };
         const cloud = await restore.fetchLevelSave({ session, level });
         const auth = _checkAuthenticatedIdentity({ ...session, level });
-        if (!auth.ok || _sessionStamp(auth.session) !== _sessionStamp(session)
+        if (!auth.ok || _sessionStamp(auth.session) !== sessionStamp
             || _lookupVersions.get(key) !== version) {
             return { status: 'failed', reason: 'session_changed' };
         }
         if (key && cloud.progressKey === key && ['found', 'missing'].includes(cloud.status)) {
-            _verifiedSlots.set(key, { cloud, session: _sessionStamp(session) });
+            _verifiedSlots.set(key, { cloud, session: sessionStamp });
         }
         return cloud;
     }
@@ -183,10 +195,16 @@ const SharePointSync = (() => {
     }
 
     function _logProgress(event, payload, details = {}) {
+        const safeDetails = {};
+        for (const key of ['httpStatus', 'attempts', 'queueLength']) {
+            if (Number.isFinite(details[key])) safeDetails[key] = details[key];
+        }
+        for (const key of ['coalesced', 'verificationPending', 'deduplicated']) {
+            if (typeof details[key] === 'boolean') safeDetails[key] = details[key];
+        }
         console.info(`[SharePointSync] Progress ${event}`, {
-            progressKey: String(payload?.progressKey || '').trim(),
-            saveRequestId: String(payload?.saveRequestId || '').trim(),
-            ...details
+            level: _normalizeLevel(payload?.level),
+            ...safeDetails
         });
     }
 
@@ -429,16 +447,28 @@ const SharePointSync = (() => {
         if (!verified || verified.session !== _sessionStamp(auth.session)) return 'startup_lookup_required';
         const local = store?.readLevelSave(localStorage, payload, payload.level);
         const decision = globalThis.WA_GOLD_RUSH_CLOUD_RESTORE.reconcile(local, verified.cloud);
-        if (!['resume_local', 'start_new', 'upload_local_create'].includes(decision.action)) return 'cloud_reconciliation_required';
         if (local?.envelope && (local.envelope.runId !== payload.runId
             || local.envelope.generation !== payload.runGeneration)) return 'run_changed';
+        // An immutable, previously dispatched request can safely ask the CAS
+        // backend for its receipt, even when its lost acknowledgement means
+        // reconciliation cannot yet decide whether this local base is current.
+        const receiptRetry = payload.baseRevision !== undefined
+            && verified.cloud.status === 'found'
+            && verified.cloud.envelope.runId === payload.runId
+            && verified.cloud.envelope.generation === payload.runGeneration
+            && _loadQueue().some(item => item.type === 'progress'
+                && item.payload.saveRequestId === payload.saveRequestId
+                && item.payload.contentHash === payload.contentHash
+                && item.payload.baseRevision === payload.baseRevision);
+        if (!receiptRetry && !['resume_local', 'start_new', 'upload_local_create'].includes(decision.action)) return 'cloud_reconciliation_required';
         return !_resolveEndpoint(CONFIG.progressEndpointKey) ? 'save_unconfigured' : '';
     }
 
     function _refreshVerifiedRevision(payload) {
         const verified = _verifiedSlots.get(payload.progressKey);
         const local = _resolveStore()?.readLevelSave(localStorage, payload, payload.level);
-        if (verified && local?.status === 'found' && Number.isInteger(local.envelope.cloud?.revision)) {
+        if (verified && local?.status === 'found' && Number.isInteger(local.envelope.cloud?.revision)
+            && (!Number.isInteger(verified.cloud.revision) || local.envelope.cloud.revision >= verified.cloud.revision)) {
             verified.cloud = { status: 'found', progressKey: payload.progressKey,
                 revision: local.envelope.cloud.revision, envelope: local.envelope };
         }
@@ -781,7 +811,7 @@ const SharePointSync = (() => {
             _dispatchCloudSaveStatus('saved to cloud');
             return { ok: true };
         } catch (err) {
-            console.warn('[SharePointSync] Profile sync failed, queuing:', err.message);
+            console.warn('[SharePointSync] Profile sync failed; queued for retry.');
             _enqueue('profile', payload);
             _startRetryLoop();
             _dispatchCloudSaveStatus('locally saved with retry pending');
@@ -1143,8 +1173,8 @@ const SharePointSync = (() => {
         const evidence = key ? _verifiedSlots.get(key) : null;
         const local = key ? store.readLevelSave(localStorage, session, level) : null;
         return Object.freeze({
-            protocolVersion: protocol?.PROTOCOL_VERSION || null,
-            storageSchemaVersion: store?.STORAGE_SCHEMA_VERSION || null,
+            protocolVersion: protocol?.PROTOCOL_VERSION === 2 ? 2 : null,
+            storageSchemaVersion: store?.STORAGE_SCHEMA_VERSION === 1 ? 1 : null,
             conditionalSavesEnabled: !!protocol?.isEnabled(),
             restoreConfigured: !!globalThis.WA_GOLD_RUSH_CLOUD_RESTORE?.isEnabled(),
             saveConfigured: !!_resolveEndpoint(CONFIG.progressEndpointKey),
@@ -1180,6 +1210,13 @@ const SharePointSync = (() => {
 
     // Start retry loop on load if there are already queued items
     if (_loadQueue().length) _startRetryLoop();
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('storage', event => {
+            if (event.key === null || event.key === (_resolveSessionApi()?.STORAGE_KEY || 'wa_gold_rush_student_session')) {
+                clearStartupVerification();
+            }
+        });
+    }
 
     return {
         configure,
@@ -1190,13 +1227,15 @@ const SharePointSync = (() => {
         syncProfile,
         syncProgress,
         checkLevelSave,
+        clearStartupVerification,
         retryQueue,
         discardQueuedForProgressKey,
         queueLength,
         getQuarantine,
         quarantineLength,
         getCloudSaveStatus,
-        getDiagnostics
+        getDiagnostics,
+        getRuntimeDiagnostics: getDiagnostics
     };
 })();
 

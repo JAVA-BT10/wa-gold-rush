@@ -54,10 +54,7 @@ function createProgressSaveScheduler(options = {}) {
         }
         const savePromise = Promise.resolve(dispatchSave(payload))
             .catch((error) => {
-                console.warn('[Level2] Progress save dispatch error', {
-                    progressKey,
-                    error: error?.message || error
-                });
+                console.warn('[Level2] Progress save dispatch failed; local progress was kept.');
                 return { ok: false, error: error?.message || String(error || 'Progress save dispatch failed.') };
             })
             .finally(() => {
@@ -1543,9 +1540,13 @@ async function retryCloudRecovery() {
         await maybeRestoreLevelFromCloud(session, gameState.assignedLevel);
         if (JSON.stringify(getAuthenticatedStudentSession()) !== JSON.stringify(session)) return;
         updateAllUI();
-        if (!cloudUploadHold && typeof SharePointSync !== 'undefined') {
+        if (typeof SharePointSync !== 'undefined') {
             await SharePointSync.retryQueue();
-            syncPlayerRecord();
+            if (JSON.stringify(getAuthenticatedStudentSession()) !== JSON.stringify(session)) return;
+            if (cloudUploadHold === 'cloud_conflict') {
+                await maybeRestoreLevelFromCloud(session, gameState.assignedLevel);
+            }
+            if (!cloudUploadHold) syncPlayerRecord();
         }
         updateLevelSaveStatusLabel();
         updateCloudSaveStatusLabel(typeof SharePointSync !== 'undefined' ? SharePointSync.getCloudSaveStatus?.() : 'local-only');
@@ -1637,6 +1638,7 @@ function updateStudentLoginCta(competition = getCompetitionContext()) {
 function logoutCompetitionSession() {
     // The autosave keeps its owner so the same student can resume after
     // signing in again; it is never loaded for a different student.
+    if (typeof SharePointSync !== 'undefined') SharePointSync.clearStartupVerification?.();
     const api = getStudentSessionApi();
     if (api) api.clearSession(localStorage);
     else localStorage.removeItem(STUDENT_SESSION_KEY);
