@@ -288,6 +288,14 @@ until a versioned lossless bounded-history design and retrieval are validated.
 Local archives/journals consume quota too and are not permanent backups;
 export them privately before prolonged offline play or reconciliation.
 
+Client receipt recovery: a sealed v2 request stays queued until its
+acknowledgement revision is persisted locally, including when the server
+committed but device storage failed. Ten failed queue retries pause automatic
+dispatch for that request; they do not delete or quarantine it. Later captures
+for the same slot remain blocked behind it. Resolve storage/authentication
+problems, then use **Check cloud / retry sync** to retry the original immutable
+request explicitly. Never clear or rebase it merely to resume uploads.
+
 Only promote a coordinated class pilot after conditional writer **and**
 authenticated retrieval acceptance. Never activate retrieval against an
 unconditional production writer. Keep reset/competition/Level 6 flags OFF.

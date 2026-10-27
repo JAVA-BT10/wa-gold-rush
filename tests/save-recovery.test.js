@@ -408,6 +408,171 @@ test('a fresh browser recovers a committed lost response by retrying the origina
     assert.equal(server.receipts.size, 1);
 });
 
+for (const path of ['direct', 'retry']) {
+    test(`${path} acknowledgement storage failure retains the sealed receipt until durable recovery`, async () => {
+        const server = new ReferenceSaveServer();
+        const responses = [];
+        let original;
+        let failTransport = path === 'retry';
+        const h = harness({ transport: async (name, p) => {
+            if (name === 'getStudentProgress') return { success: true, status: 200, data: {
+                ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: p.progressKey, found: false
+            } };
+            const request = JSON.parse(JSON.stringify(p));
+            if (!original) original = request;
+            assert.deepEqual(request, original, 'retry must preserve every sealed request field');
+            if (failTransport) return { success: false, networkError: true };
+            const data = server.handle(p);
+            responses.push(data);
+            return { success: true, status: 200, data };
+        } });
+        await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
+        const capture = payload(h);
+        const store = h.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+        const key = store.buildSaveKey(capture, 2);
+        const before = h.storage.getItem(key);
+        const setItem = h.storage.setItem.bind(h.storage);
+        let failAcknowledgement = true;
+        let failedWrites = 0;
+        h.storage.setItem = (selectedKey, value) => {
+            if (selectedKey === key && JSON.parse(value).cloud?.lastAcknowledgedSaveRequestId === original?.saveRequestId) {
+                const queue = JSON.parse(h.storage.getItem('wa_gr_sync_queue'));
+                assert.deepEqual(queue[0].payload, original, 'persist acknowledgement before removing the receipt');
+                if (failAcknowledgement) {
+                    failedWrites++;
+                    throw new Error('simulated selected-level storage failure');
+                }
+            }
+            if (selectedKey === 'wa_gr_sync_queue' && JSON.parse(value).length === 0) {
+                assert.equal(JSON.parse(h.storage.getItem(key)).cloud.revision, 1,
+                    'queue removal must follow the durable acknowledgement');
+            }
+            setItem(selectedKey, value);
+        };
+        const logs = [];
+        h.context.console.info = (...args) => logs.push(args);
+        const result = await h.context.sync.syncProgress(capture);
+        assert.equal(result.ok, false);
+        assert.equal(result.queued, true);
+        if (path === 'direct') assert.equal(result.unknownOutcome, true);
+        else {
+            failTransport = false;
+            await h.context.sync.retryQueue();
+        }
+        assert.equal(failedWrites, 1, 'exercise actual setItem failure, not a mocked acknowledgement result');
+        assert.equal(h.storage.getItem(key), before, 'failed acknowledgement cannot advance the local revision');
+        const queued = JSON.parse(h.storage.getItem('wa_gr_sync_queue'));
+        assert.equal(queued.length, 1);
+        assert.deepEqual(queued[0].payload, original);
+        assert.equal(h.context.sync.quarantineLength(), 0);
+        assert.notEqual(h.context.sync.getCloudSaveStatus(), 'saved to cloud');
+        assert.doesNotMatch(JSON.stringify(logs), /save success|retry success/);
+        assert.equal(server.rows.get(original.progressKey).revision, 1);
+        assert.equal(server.receipts.size, 1);
+
+        failAcknowledgement = false;
+        await h.context.sync.retryQueue();
+        assert.equal(h.context.sync.queueLength(), 0);
+        assert.equal(h.context.sync.getCloudSaveStatus(), 'saved to cloud');
+        const cloud = store.readLevelSave(h.storage, capture, 2).envelope.cloud;
+        assert.equal(cloud.revision, 1);
+        assert.equal(cloud.lastAcknowledgedSaveRequestId, original.saveRequestId);
+        assert.equal(responses.length, 2);
+        assert.equal(responses[1].deduplicated, true);
+        assert.equal(server.rows.get(original.progressKey).revision, 1, 'receipt recovery is not a second write');
+        assert.equal(server.receipts.size, 1);
+    });
+}
+
+for (const failure of ['lost response', 'network']) {
+    for (const mode of ['explicit', 'automatic interval']) {
+        test(`${mode} retries retain exhausted ${failure} requests and block later same-slot captures`, async () => {
+            const server = new ReferenceSaveServer();
+            const timers = [];
+            let failing = true;
+            let original;
+            let recoveredOriginal = false;
+            const h = harness({
+                globals: {
+                    setInterval(callback) {
+                        timers.push(callback);
+                        return { unref() {} };
+                    }
+                },
+                transport: async (name, p) => {
+                    if (name === 'getStudentProgress') return { success: true, status: 200, data: {
+                        ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: p.progressKey, found: false
+                    } };
+                    const request = JSON.parse(JSON.stringify(p));
+                    if (!original) original = request;
+                    if (!recoveredOriginal) assert.deepEqual(request, original, 'later captures cannot bypass the sealed request');
+                    if (failing) {
+                        if (failure === 'lost response') assert.equal(server.handle(p).revision, 1);
+                        return { success: false, networkError: true };
+                    }
+                    const data = server.handle(p);
+                    assert.equal(data.ok, true);
+                    if (!recoveredOriginal) {
+                        assert.equal(data.revision, 1);
+                        assert.equal(!!data.deduplicated, failure === 'lost response');
+                        assert.equal(server.rows.get(p.progressKey).revision, 1);
+                        assert.equal(server.receipts.size, 1);
+                        recoveredOriginal = true;
+                    } else {
+                        assert.notEqual(p.saveRequestId, original.saveRequestId);
+                        assert.equal(p.baseRevision, 1, 'only a recovered acknowledgement can seal the later capture');
+                        assert.equal(p.currentRound, 4);
+                        assert.equal(data.revision, 2);
+                    }
+                    return { success: true, status: 200, data };
+                }
+            });
+            await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
+            assert.equal((await h.context.sync.syncProgress(payload(h))).queued, true);
+            const later = payload(h);
+            later.currentRound = 4;
+            const waiting = await h.context.sync.syncProgress(later);
+            assert.equal(waiting.ok, false);
+            assert.equal(waiting.waitingForPrevious, true);
+            const pending = JSON.parse(h.storage.getItem('wa_gr_sync_queue'))[1];
+            assert.equal(pending.payload.baseRevision, undefined);
+            assert.equal(typeof timers[0], 'function');
+            for (let attempt = 0; attempt < 13; attempt++) {
+                if (mode === 'explicit') await h.context.sync.retryQueue();
+                else await timers[0]();
+                const queue = JSON.parse(h.storage.getItem('wa_gr_sync_queue'));
+                assert.equal(queue.length, 2, `both captures survive retry ${attempt + 1}`);
+                assert.deepEqual(queue[0].payload, original);
+                assert.deepEqual(queue[1], pending, 'blocked pending capture remains unsealed and unattempted');
+            }
+            const exhausted = JSON.parse(h.storage.getItem('wa_gr_sync_queue'));
+            assert.equal(exhausted[0].attempts, mode === 'explicit' ? 13 : 10);
+            const saves = () => h.calls.filter(call => call.name === 'saveProgress');
+            assert.equal(saves().length, mode === 'explicit' ? 14 : 11);
+            assert.equal(h.context.sync.quarantineLength(), 0);
+            assert.notEqual(h.context.sync.getCloudSaveStatus(), 'saved to cloud');
+            const heldQueue = h.storage.getItem('wa_gr_sync_queue');
+            failing = false;
+            const callsBefore = saves().length;
+            await h.context.sync.retryQueue({ automatic: true });
+            await timers[0]();
+            assert.equal(saves().length, callsBefore, 'automatic retries stop traffic even after connectivity returns');
+            assert.equal(h.storage.getItem('wa_gr_sync_queue'), heldQueue);
+            assert.equal(server.rows.size, failure === 'lost response' ? 1 : 0);
+
+            await h.context.sync.retryQueue();
+            assert.equal(recoveredOriginal, true, 'explicit recovery bypasses only the automatic retry limit');
+            assert.equal(saves().length, callsBefore + 2);
+            assert.equal(h.context.sync.queueLength(), 0);
+            assert.equal(h.context.sync.quarantineLength(), 0);
+            assert.equal(h.context.sync.getCloudSaveStatus(), 'saved to cloud');
+            assert.equal(server.rows.get(original.progressKey).revision, 2);
+            assert.equal(server.receipts.size, 2);
+            assert.equal(h.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.readLevelSave(h.storage, original, 2).envelope.cloud.revision, 2);
+        });
+    }
+}
+
 test('raw session-instance replacement invalidates startup proof even when normalized fields are identical', async () => {
     const h = harness();
     await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);

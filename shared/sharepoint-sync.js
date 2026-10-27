@@ -596,7 +596,7 @@ const SharePointSync = (() => {
 
     function _startRetryLoop() {
         if (_retryTimer) return;
-        _retryTimer = setInterval(retryQueue, CONFIG.retryIntervalMs);
+        _retryTimer = setInterval(() => retryQueue({ automatic: true }), CONFIG.retryIntervalMs);
         if (typeof _retryTimer?.unref === 'function') {
             _retryTimer.unref();
         }
@@ -908,8 +908,10 @@ const SharePointSync = (() => {
                 return { ok: false, held: true, reason: 'session_changed' };
             }
             if (discarded()) return { ok: false, queued: false, rejected: true, reason: 'superseded_by_reset' };
+            if (isV2 && !_resolveSaveProtocol()?.recordAcknowledgement(localStorage, sendPayload, result.v2)) {
+                throw Object.assign(new Error('acknowledgement_persist_failed'), { syncOutcome: 'unknown' });
+            }
             if (queuedItem) _replaceQueuedItem(queuedItem, null);
-            if (isV2) _resolveSaveProtocol()?.recordAcknowledgement(localStorage, sendPayload, result.v2);
             if (isV2) _refreshVerifiedRevision(sendPayload);
             if (isV2) _unconfirmedKeys.delete(progressKey);
             _logProgress('save success', sendPayload, {
@@ -989,13 +991,13 @@ const SharePointSync = (() => {
      * Progress items are only dispatched for the signed-in student they belong
      * to; items for another (or no) signed-in student are held, not sent.
      */
-    function retryQueue() {
+    function retryQueue({ automatic = false } = {}) {
         if (_retryPromise) return _retryPromise;
-        _retryPromise = _drainQueue().finally(() => { _retryPromise = null; });
+        _retryPromise = _drainQueue({ automatic }).finally(() => { _retryPromise = null; });
         return _retryPromise;
     }
 
-    async function _drainQueue() {
+    async function _drainQueue({ automatic }) {
         const queue = _loadQueue();
         if (!queue.length) return;
 
@@ -1052,6 +1054,12 @@ const SharePointSync = (() => {
                         remaining.push(item);
                         continue;
                     }
+                    if (automatic && item.attempts >= MAX_RETRY_ATTEMPTS) {
+                        held = true;
+                        remaining.push(item);
+                        blockedV2Keys.add(key);
+                        continue;
+                    }
                     const sealed = protocol.seal(item.payload, localStorage);
                     if (!sealed.ok) {
                         if (sealed.reason === 'generation_mismatch') {
@@ -1083,8 +1091,10 @@ const SharePointSync = (() => {
                 if (item.type === 'progress' && (!_checkAuthenticatedIdentity(item.payload).ok
                     || _verifiedSlots.get(item.payload.progressKey)?.session !== _sessionStamp(_checkAuthenticatedIdentity(item.payload).session))) continue;
                 if (discarded()) continue;
+                if (isV2 && !protocol.recordAcknowledgement(localStorage, item.payload, result.v2)) {
+                    throw Object.assign(new Error('acknowledgement_persist_failed'), { syncOutcome: 'unknown' });
+                }
                 _replaceQueuedItem(item, null);
-                if (isV2) protocol.recordAcknowledgement(localStorage, item.payload, result.v2);
                 if (isV2) _refreshVerifiedRevision(item.payload);
                 if (isV2) _unconfirmedKeys.delete(item.payload.progressKey);
                 if (item.type === 'progress') {
@@ -1124,7 +1134,7 @@ const SharePointSync = (() => {
                     rejected.push({ item, reason: `rejected:${error?.message || 'Flow rejected the save.'}` });
                     continue;
                 }
-                if (item.attempts < MAX_RETRY_ATTEMPTS) {
+                if (isV2 || item.attempts < MAX_RETRY_ATTEMPTS) {
                     _replaceQueuedItem(item, item);
                     remaining.push(item);
                 } else {
@@ -1133,7 +1143,7 @@ const SharePointSync = (() => {
                     rejected.push({ item, reason: `max_attempts:${error?.message || 'Retry failed.'}` });
                 }
                 if (item.type === 'progress') {
-                    _logProgress(item.attempts >= MAX_RETRY_ATTEMPTS ? 'final failure' : 'retry queueing', item.payload, {
+                    _logProgress(!isV2 && item.attempts >= MAX_RETRY_ATTEMPTS ? 'final failure' : 'retry queueing', item.payload, {
                         attempts: item.attempts,
                         error: error?.message || 'Retry failed.',
                         verificationPending: error?.syncOutcome === 'unknown'
@@ -1172,7 +1182,7 @@ const SharePointSync = (() => {
         return _loadQueue().length;
     }
 
-    /** Items permanently rejected (invalid identity, ok:false, or retries exhausted). */
+    /** Items permanently rejected (invalid identity, ok:false, or non-v2 retries exhausted). */
     function getQuarantine() {
         return _loadQuarantine();
     }
