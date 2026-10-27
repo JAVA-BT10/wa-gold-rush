@@ -1619,13 +1619,22 @@ function exportRecoveryBackup() {
         return;
     }
     const local = store.readLevelSave(localStorage, session, gameState.assignedLevel);
+    if (local.status === 'unavailable' && local.reason !== 'adoption_pending') {
+        alert('Backup could not read the stored source. Nothing was exported.');
+        return;
+    }
     const backup = {
         format: 'ggr.local-backup.v1',
+        privateBackup: true,
+        warning: 'Contains private local save data. Keep it secure, share only with your teacher, and do not post it publicly.',
         level: gameState.assignedLevel,
+        sourceStatus: local.status,
         rawStoredSave,
         pendingAdoption,
         savedGame: local?.envelope || null,
-        currentGame: gameState.captureLevelSnapshot()
+        currentGame: !gameState.saveLocked && ['found', 'missing'].includes(local.status)
+            && (local.status === 'found' || !isPristineLevelGame())
+            ? gameState.captureLevelSnapshot() : null
     };
     const json = JSON.stringify(backup, (key, value) =>
         /^(studentId|studentName|pin|token|accessToken|authProof|sessionProof)$/i.test(key) ? undefined : value, 2);

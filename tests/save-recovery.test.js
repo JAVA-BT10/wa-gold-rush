@@ -236,6 +236,88 @@ test('recovery controls and status are accessible without exposing private ident
     assert.match(html, /<button[^>]+onclick="exportRecoveryBackup\(\)"[^>]*>Export local backup<\/button>/);
 });
 
+function backupHarness() {
+    const blobs = [];
+    const warnings = [];
+    const alerts = [];
+    const downloads = [];
+    const h = harness({ globals: {
+        Blob,
+        URL: class extends URL {
+            static createObjectURL(blob) { blobs.push(blob); return 'blob:private-backup'; }
+            static revokeObjectURL() {}
+        },
+        confirm(message) { warnings.push(message); return true; },
+        alert(message) { alerts.push(message); }
+    } });
+    h.context.document.createElement = () => ({
+        click() { downloads.push(this.download); }
+    });
+    return { ...h, blobs, warnings, alerts, downloads };
+}
+
+for (const protection of ['malformed', 'adoption_pending']) {
+    test(`private export preserves exact ${protection} source without substituting defaults or other slots`, async () => {
+        const h = backupHarness();
+        const store = h.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+        const identity = { classCode: '6B', studentCode: 'SC-1' };
+        const key = store.buildSaveKey(identity, 2);
+        const rawStoredSave = '  {"studentName":"private-source", "broken": }\n';
+        const pendingAdoption = protection === 'adoption_pending'
+            ? ' {"sourceSlot":"original private bytes", "targetSlot":"pending bytes"}\n' : null;
+        h.storage.setItem(key, rawStoredSave);
+        if (pendingAdoption !== null) h.storage.setItem(`${key}|adoption`, pendingAdoption);
+        h.storage.setItem(store.buildSaveKey({ classCode: '6B', studentCode: 'SC-2' }, 2), 'OTHER-STUDENT-PRIVATE');
+        h.storage.setItem(store.buildSaveKey(identity, 3), 'OTHER-LEVEL-PRIVATE');
+        h.storage.setItem('runtime-config', 'GLOBAL-RUNTIME-PRIVATE');
+        h.gameState.saveLocked = true;
+        h.gameState.captureLevelSnapshot = () => { throw new Error('must not export protected defaults'); };
+        const before = h.storage.__keys().map(k => [k, h.storage.getItem(k)]);
+        h.context.exportRecoveryBackup();
+        assert.equal(h.blobs.length, 1);
+        assert.equal(h.downloads.length, 1);
+        assert.equal(h.alerts.length, 0);
+        assert.match(h.warnings[0], /private backup/i);
+        const json = await h.blobs[0].text();
+        const backup = JSON.parse(json);
+        assert.equal(backup.rawStoredSave, rawStoredSave);
+        assert.equal(backup.pendingAdoption, pendingAdoption);
+        assert.equal(backup.sourceStatus, protection === 'malformed' ? 'invalid' : 'unavailable');
+        assert.equal(backup.savedGame, null);
+        assert.equal(backup.currentGame, null);
+        assert.equal(backup.privateBackup, true);
+        assert.match(backup.warning, /private.*do not post it publicly/i);
+        assert.doesNotMatch(json, /OTHER-STUDENT-PRIVATE|OTHER-LEVEL-PRIVATE|GLOBAL-RUNTIME-PRIVATE|Alex Smith|123456/);
+        assert.deepEqual(h.storage.__keys().map(k => [k, h.storage.getItem(k)]), before);
+    });
+}
+
+for (const failure of ['slot', 'journal', 'validation_read']) {
+    test(`private export reports ${failure} read failure without downloading a misleading backup`, () => {
+        const h = backupHarness();
+        payload(h);
+        const key = h.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.buildSaveKey(
+            { classCode: '6B', studentCode: 'SC-1' }, 2);
+        const originalGet = h.storage.getItem.bind(h.storage);
+        let slotReads = 0;
+        h.storage.getItem = selectedKey => {
+            if (selectedKey === key) slotReads++;
+            if ((failure === 'slot' && selectedKey === key)
+                || (failure === 'journal' && selectedKey === `${key}|adoption`)
+                || (failure === 'validation_read' && selectedKey === key && slotReads > 1)) {
+                throw new Error('private storage failure details must not escape');
+            }
+            return originalGet(selectedKey);
+        };
+        h.context.exportRecoveryBackup();
+        assert.equal(h.downloads.length, 0);
+        assert.equal(h.blobs.length, 0);
+        assert.equal(h.alerts.length, 1);
+        assert.match(h.alerts[0], /could not read.*Nothing was exported/);
+        assert.doesNotMatch(h.alerts[0], /private storage failure details/);
+    });
+}
+
 test('retry completes pending adoption cleanup and reloads the committed save without clearing storage', async () => {
     const source = harness();
     source.gameState.round = 9;
