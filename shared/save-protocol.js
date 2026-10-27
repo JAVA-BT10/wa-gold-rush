@@ -208,7 +208,22 @@
         // treats this device as fully synced.
         const capturedAt = Date.parse(payload.clientTimestampUtc || '');
         const savedAt = Date.parse(current.envelope.savedAt || '');
-        const newerLocal = Number.isFinite(capturedAt) && Number.isFinite(savedAt) && savedAt > capturedAt;
+        let newerLocal = Number.isFinite(capturedAt) && Number.isFinite(savedAt) && savedAt > capturedAt;
+        // Two captures can share a millisecond. Compare the actual captured
+        // economy too, rather than marking later local work fully synced.
+        if (typeof payload.progressionMarkersJson === 'string') {
+            try {
+                const captured = JSON.parse(payload.progressionMarkersJson);
+                const local = current.envelope.snapshot;
+                const keys = ['round', 'cash', 'ownedMines', 'machinery', 'roundHistory',
+                    'investmentPlans', 'investmentProfile', 'totalProfitLoss'];
+                const comparable = (value) => store.canonicalJson(value === undefined ? null : value);
+                newerLocal = newerLocal || keys.some((key) => comparable(captured[key]) !== comparable(local[key]))
+                    || comparable(captured.companyName) !== comparable(local.player?.companyName);
+            } catch (_) {
+                newerLocal = true;
+            }
+        }
         return store.updateCloudState(storage, identity, level, {
             generation: payload.runGeneration,
             runId: payload.runId,

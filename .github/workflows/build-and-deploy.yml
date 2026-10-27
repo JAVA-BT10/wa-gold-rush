@@ -26,6 +26,18 @@ jobs:
         env:
           WA_GGR_API_KEY: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.WA_GGR_API_KEY || '' }}
           WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL || '' }}
+          WA_GGR_GET_STUDENT_PROGRESS_URL: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.WA_GGR_GET_STUDENT_PROGRESS_URL || '' }}
+          WA_GGR_RESET_LEVEL_PROGRESS_URL: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.WA_GGR_RESET_LEVEL_PROGRESS_URL || '' }}
+          WA_GGR_SAVE_PROGRESS_URL: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.WA_GGR_SAVE_PROGRESS_URL || '' }}
+          WA_GGR_SAVE_PROTOCOL_V2: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_SAVE_PROTOCOL_V2 || '' }}
+          WA_GGR_FULL_CLOUD_RESTORE: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_FULL_CLOUD_RESTORE || '' }}
+          WA_GGR_SERVER_LEADERBOARD: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_SERVER_LEADERBOARD || '' }}
+          WA_GGR_LEVEL_RESET_FLOW: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_LEVEL_RESET_FLOW || '' }}
+          WA_GGR_COMPETITION_BASELINES: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_COMPETITION_BASELINES || '' }}
+          WA_GGR_COMPETITION_LEADERBOARD_METRIC: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_COMPETITION_LEADERBOARD_METRIC || '' }}
+          WA_GGR_COMPETITION_SNAPSHOTS: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_COMPETITION_SNAPSHOTS || '' }}
+          WA_GGR_LEVEL6_ANALYTICS: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_LEVEL6_ANALYTICS || '' }}
+          WA_GGR_HOLD_UNVERIFIED_NEW_SLOT_UPLOADS: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_HOLD_UNVERIFIED_NEW_SLOT_UPLOADS || '' }}
           WA_GGR_VALIDATION_ONLY: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
           WA_GGR_RUNTIME_CONFIG_VERSION: ${{ github.run_id }}-${{ github.run_attempt }}
           WA_GGR_PAGES_BUILD_DIR: pages-dist
@@ -38,10 +50,38 @@ jobs:
 
           api_key = os.environ.get("WA_GGR_API_KEY", "").strip()
           approval_url = os.environ.get("WA_GGR_SAVE_CHECKPOINT_APPROVAL_URL", "").strip()
-          if os.environ.get("WA_GGR_VALIDATION_ONLY") == "true":
+          # Fail closed unless this is explicitly a deployment build.
+          validation_only = os.environ.get("WA_GGR_VALIDATION_ONLY") != "false"
+          if validation_only:
               api_key = "validation-only-not-a-key"
               approval_url = ""
           flow_endpoints = {"saveCheckpointApproval": approval_url}
+          endpoint_variables = {
+              "getStudentProgress": "WA_GGR_GET_STUDENT_PROGRESS_URL",
+              "resetLevelProgress": "WA_GGR_RESET_LEVEL_PROGRESS_URL",
+              "saveProgress": "WA_GGR_SAVE_PROGRESS_URL",
+          }
+          for name, variable in endpoint_variables.items():
+              endpoint = "" if validation_only else os.environ.get(variable, "").strip()
+              # Omit absent overrides so existing endpoint fallback is preserved.
+              if endpoint:
+                  flow_endpoints[name] = endpoint
+          # Explicit allowlist mirrors shared/level-capabilities.js DEFAULT_FLAGS.
+          feature_variables = {
+              "saveProtocolV2": "WA_GGR_SAVE_PROTOCOL_V2",
+              "fullCloudRestore": "WA_GGR_FULL_CLOUD_RESTORE",
+              "serverLeaderboard": "WA_GGR_SERVER_LEADERBOARD",
+              "levelResetFlow": "WA_GGR_LEVEL_RESET_FLOW",
+              "competitionBaselines": "WA_GGR_COMPETITION_BASELINES",
+              "competitionLeaderboardMetric": "WA_GGR_COMPETITION_LEADERBOARD_METRIC",
+              "competitionSnapshots": "WA_GGR_COMPETITION_SNAPSHOTS",
+              "level6Analytics": "WA_GGR_LEVEL6_ANALYTICS",
+              "holdUnverifiedNewSlotUploads": "WA_GGR_HOLD_UNVERIFIED_NEW_SLOT_UPLOADS",
+          }
+          feature_flags = {
+              name: not validation_only and os.environ.get(variable, "") == "true"
+              for name, variable in feature_variables.items()
+          }
           if not api_key:
               raise SystemExit("WA_GGR_API_KEY secret is required to deploy teacher/runtime-config.js")
           runtime_config_version = os.environ.get("WA_GGR_RUNTIME_CONFIG_VERSION", "").strip()
@@ -91,6 +131,7 @@ jobs:
               "    ...existingRuntimeConfig,\n"
               "    apiKey,\n"
               f"    flowEndpoints: {json.dumps(flow_endpoints)},\n"
+              f"    featureFlags: {json.dumps(feature_flags)},\n"
               "    buildTarget: 'github-pages',\n"
               f"    version: {json.dumps(runtime_config_version)}\n"
               "  };\n"

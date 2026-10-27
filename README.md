@@ -43,6 +43,13 @@ wa-gold-rush/
 
 Each student has **one identity** (`GGR_Students`) and an **independent game per level** (one `GGR_StudentProgress` row per `UPPER(ClassCode)|UPPER(StudentCode)|Level`). In the browser each level is saved separately (`wa_gr_level_save_v1|CLASS|STUDENT|LEVEL`); the old shared `level2_autosave` slot is migrated non-destructively and kept as a backup. Tenant-dependent behaviour (save protocol v2, full cloud restore, server leaderboard, level reset, competition snapshots, Level 6 analytics) is behind runtime feature flags that default **OFF**. Nothing in these documents is live-verified.
 
+**Save/recovery safety:** progress remains local-only until authenticated v2
+conditional saving and exact-slot retrieval are configured and verified.
+Legacy/unverified uploads (including retries) are held; local play, save and
+backup export remain available. No tenant features are activated by this repair.
+Operators must follow the [phased save/recovery runbook](docs/operations/release-and-acceptance.md)
+before a pilot; server refusal of old unconditional writers must come first.
+
 - [Future-state architecture](docs/architecture/future-state-architecture.md) — identity, per-level saves, migration, restore, leaderboards, competitions, Level 1 assessment, level guide
 - [Flow registry and contracts](docs/power-automate/flow-registry-and-contracts.md) — existing, optional and planned flows
 - [Save protocol v2](docs/power-automate/save-protocol-v2.md) — server revision / compare-and-swap, idempotency receipts, reset generation, test vectors

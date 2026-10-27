@@ -61,6 +61,68 @@ function loadSharePointSync() {
     return require('../shared/sharepoint-sync.js');
 }
 
+async function prepareConditionalProgress(t, sync, levels = [2]) {
+    const names = ['WA_GOLD_RUSH_RUNTIME_CONFIG', 'WA_GOLD_RUSH_FLOW_ENDPOINTS',
+        'WA_GOLD_RUSH_CLOUD_RESTORE', 'WA_GOLD_RUSH_STUDENT_PROGRESS_AUTH',
+        'WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER'];
+    const previous = new Map(names.map(name => [name, global[name]]));
+    t.after(() => names.forEach(name => {
+        if (previous.get(name) === undefined) delete global[name];
+        else global[name] = previous.get(name);
+    }));
+    global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: { saveProtocolV2: true, fullCloudRestore: true } };
+    global.WA_GOLD_RUSH_FLOW_ENDPOINTS = {
+        ...global.WA_GOLD_RUSH_FLOW_ENDPOINTS, getStudentProgress: 'https://example.com/restore'
+    };
+    global.WA_GOLD_RUSH_STUDENT_PROGRESS_AUTH = require('../shared/student-progress-auth.js');
+    global.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER = {
+        async getProof() { return { authorization: ['Bearer', 'test-only-proof'].join(' ') }; }
+    };
+    const restore = require('../shared/cloud-restore.js');
+    const store = require('../shared/level-save-store.js');
+    const session = loadStudentSession().readSession(global.localStorage);
+    const root = {
+        WA_GOLD_RUSH_RUNTIME_CONFIG: global.WA_GOLD_RUSH_RUNTIME_CONFIG,
+        WA_GOLD_RUSH_FLOW_ENDPOINTS: global.WA_GOLD_RUSH_FLOW_ENDPOINTS,
+        WA_GOLD_RUSH_STUDENT_PROGRESS_AUTH: global.WA_GOLD_RUSH_STUDENT_PROGRESS_AUTH,
+        WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER: global.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER,
+        WA_GOLD_RUSH_LEVEL_SAVE_STORE: store,
+        WA_GOLD_RUSH_POWER_AUTOMATE: {
+            async callFlow(name, payload) {
+                assert.equal(name, 'getStudentProgress');
+                return { success: true, status: 200, data: {
+                    ok: true, contractVersion: restore.CONTRACT_VERSION,
+                    progressKey: payload.progressKey, found: false
+                } };
+            }
+        }
+    };
+    global.WA_GOLD_RUSH_CLOUD_RESTORE = { ...restore,
+        fetchLevelSave: input => restore.fetchLevelSave(input, root) };
+    const captures = new Map();
+    for (const level of levels) {
+        const h = buildStudentGameHarness({ level, storage: global.localStorage });
+        h.gameState.round = 3;
+        assert.equal(h.gameState.saveToLocalStorage(), true);
+        const envelope = store.readLevelSave(global.localStorage, session, level).envelope;
+        captures.set(level, {
+            studentCode: session.studentCode, classCode: session.classCode, level,
+            protocolVersion: 2, runGeneration: envelope.generation, runId: envelope.runId,
+            startingNetWorth: envelope.startingNetWorth, storageSchemaVersion: 1,
+            progressionMarkersJson: JSON.stringify({ ...envelope.snapshot, companyName: envelope.snapshot.player.companyName })
+        });
+        assert.equal((await sync.checkLevelSave(session, level)).status, 'missing');
+    }
+    return level => captures.get(level);
+}
+
+function conditionalAck(payload, revision = 1) {
+    return { success: true, status: 200, data: {
+        ok: true, protocolVersion: 2, saveRequestId: payload.saveRequestId,
+        progressKey: payload.progressKey, runGeneration: payload.runGeneration, revision
+    } };
+}
+
 function getHomePageInlineScript(html) {
     const scriptMatches = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)];
     assert.ok(scriptMatches.length > 0, 'Expected inline scripts in index.html');
@@ -834,27 +896,28 @@ test('sharepoint sync keeps telemetry when retrying legacy queue items and quara
     assert.ok(payload.saveRequestId);
 
     await sync.retryQueue();
-    assert.equal(posted.length, 1);
-    assert.equal(posted[0].studentCode, 'SC-1');
-    assert.equal(posted[0].classCode, '6B');
-    assert.equal(posted[0].level, 2);
-    assert.equal(posted[0].currentCash, 0);
-    assert.equal(posted[0].currentAssets, 0);
-    assert.equal(posted[0].netWorth, 999);
-    assert.equal(posted[0].score, 999);
-    assert.equal(posted[0].progressKey, '6B|SC-1|2');
-    assert.ok(posted[0].saveRequestId);
-    assert.ok(posted[0].clientTimestampUtc);
-    assert.ok(posted[0].clientVersion);
+    assert.equal(posted.length, 0, 'unconditional legacy writes are held, even with a complete identity');
+    const retained = JSON.parse(global.localStorage.getItem('wa_gr_sync_queue'))[0].payload;
+    assert.equal(retained.studentCode, 'SC-1');
+    assert.equal(retained.classCode, '6B');
+    assert.equal(retained.level, 2);
+    assert.equal(retained.currentCash, 0);
+    assert.equal(retained.currentAssets, 0);
+    assert.equal(retained.netWorth, 999);
+    assert.equal(retained.score, 999);
+    assert.equal(retained.progressKey, '6B|SC-1|2');
+    assert.ok(retained.saveRequestId);
+    assert.ok(retained.clientTimestampUtc);
+    assert.ok(retained.clientVersion);
     assert.equal(posted.some(item => item.progressKey === '|SC-1|3' || item.classCode === ''), false);
-    assert.equal(sync.queueLength(), 0);
+    assert.equal(sync.queueLength(), 1);
     const quarantine = sync.getQuarantine();
     assert.equal(quarantine.length, 1);
     assert.match(quarantine[0].reason, /invalid_identity:.*classCode/);
     assert.equal(quarantine[0].payload.level, 3);
 });
 
-test('sharepoint sync treats timed-out saves as verification pending and keeps a retry item', async () => {
+test('sharepoint sync treats timed-out saves as verification pending and keeps a retry item', async (t) => {
     global.localStorage = createSessionStorage();
     global.WA_GOLD_RUSH_FLOW_ENDPOINTS = {
         saveProgress: 'https://example.com/save'
@@ -878,8 +941,10 @@ test('sharepoint sync treats timed-out saves as verification pending and keeps a
 
     try {
         const sync = loadSharePointSync();
+        const capture = await prepareConditionalProgress(t, sync);
         sync.configure({ progressRequestTimeoutMs: 5 });
         const result = await sync.syncProgress({
+        ...capture(2),
         studentCode: 'SC-1',
         classCode: '6B',
         level: 2,
@@ -898,7 +963,7 @@ test('sharepoint sync treats timed-out saves as verification pending and keeps a
     }
 });
 
-test('sharepoint sync reuses queued saveRequestId on retry and coalesces same-key queued state', async () => {
+test('sharepoint sync reuses queued saveRequestId on retry and coalesces same-key queued state', async (t) => {
     global.localStorage = createSessionStorage();
     global.WA_GOLD_RUSH_FLOW_ENDPOINTS = {
         saveProgress: 'https://example.com/save'
@@ -912,13 +977,15 @@ test('sharepoint sync reuses queued saveRequestId on retry and coalesces same-ke
         if (attempt === 1) {
             return { success: false, error: 'Network down' };
         }
-        return { success: true, status: 200, data: { ok: true } };
+        return conditionalAck(payload);
         },
         resolveFlowEndpoint: (key) => global.WA_GOLD_RUSH_FLOW_ENDPOINTS[key] || ''
     };
 
     const sync = loadSharePointSync();
+    const capture = await prepareConditionalProgress(t, sync);
     const firstResult = await sync.syncProgress({
+        ...capture(2),
         studentCode: 'SC-1',
         classCode: '6B',
         level: 2,
@@ -937,6 +1004,7 @@ test('sharepoint sync reuses queued saveRequestId on retry and coalesces same-ke
 
     global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: false, error: 'Network down' });
     const olderResult = await sync.syncProgress({
+        ...capture(2),
         studentCode: 'SC-1',
         classCode: '6B',
         level: 2,
@@ -944,6 +1012,7 @@ test('sharepoint sync reuses queued saveRequestId on retry and coalesces same-ke
         currentCash: 100
     });
     const newerResult = await sync.syncProgress({
+        ...capture(2),
         studentCode: 'SC-1',
         classCode: '6B',
         level: 2,
@@ -952,12 +1021,13 @@ test('sharepoint sync reuses queued saveRequestId on retry and coalesces same-ke
     });
     const queuedAfterCoalesce = JSON.parse(global.localStorage.getItem('wa_gr_sync_queue'));
 
-    assert.equal(queuedAfterCoalesce.length, 1);
+    assert.equal(queuedAfterCoalesce.length, 2, 'sealed unknown request is preserved alongside latest pending state');
     assert.equal(queuedAfterCoalesce[0].payload.progressKey, '6B|SC-1|2');
-    assert.equal(queuedAfterCoalesce[0].payload.currentRound, 8);
-    assert.equal(queuedAfterCoalesce[0].payload.currentCash, 150);
-    assert.equal(queuedAfterCoalesce[0].payload.saveRequestId, newerResult.saveRequestId);
-    assert.notEqual(olderResult.saveRequestId, newerResult.saveRequestId);
+    assert.equal(queuedAfterCoalesce[0].payload.saveRequestId, olderResult.saveRequestId);
+    assert.equal(queuedAfterCoalesce[1].payload.currentRound, 8);
+    assert.equal(queuedAfterCoalesce[1].payload.currentCash, 150);
+    assert.equal(newerResult.waitingForPrevious, true);
+    assert.notEqual(olderResult.saveRequestId, queuedAfterCoalesce[1].payload.saveRequestId);
 });
 
 test('level progress scheduler coalesces overlapping saves by key while allowing independent keys', async () => {
@@ -2278,7 +2348,7 @@ function setupSaveProgressFlow(responses = []) {
     global.WA_GOLD_RUSH_POWER_AUTOMATE = {
         callFlow: async (_flowName, payload) => {
             posted.push(payload);
-            return responses.length ? responses.shift() : { success: true, status: 200, data: { ok: true } };
+            return responses.length ? responses.shift() : conditionalAck(payload);
         },
         resolveFlowEndpoint: (key) => global.WA_GOLD_RUSH_FLOW_ENDPOINTS[key] || ''
     };
@@ -2321,15 +2391,16 @@ test('SaveProgress rejects blank ClassCode, blank Level, missing StudentCode, an
     assert.equal(sync.queueLength(), 0);
 });
 
-test('SaveProgress treats ok:false as a permanent failure, retries network errors, and keeps canonical ProgressKey', async () => {
+test('SaveProgress treats ok:false as a permanent failure, retries network errors, and keeps canonical ProgressKey', async (t) => {
     global.localStorage = createSessionStorage();
     const posted = setupSaveProgressFlow([
         { success: true, status: 200, data: { ok: false, message: 'Duplicate conflict requires manual resolution' } },
         { success: false, status: 503, error: 'Service unavailable' }
     ]);
     const sync = loadSharePointSync();
+    const capture = await prepareConditionalProgress(t, sync, [2, 3]);
 
-    const rejected = await sync.syncProgress({ studentCode: 'sc-1', classCode: '6b', level: 2 });
+    const rejected = await sync.syncProgress({ ...capture(2), studentCode: 'sc-1', classCode: '6b', level: 2 });
     assert.equal(rejected.ok, false);
     assert.equal(rejected.rejected, true);
     assert.equal(rejected.queued, false);
@@ -2339,7 +2410,7 @@ test('SaveProgress treats ok:false as a permanent failure, retries network error
     assert.match(sync.getQuarantine()[0].reason, /Duplicate conflict/);
     assert.equal(sync.getCloudSaveStatus(), 'cloud save rejected');
 
-    const retryable = await sync.syncProgress({ studentCode: 'SC-1', classCode: '6B', level: 3 });
+    const retryable = await sync.syncProgress(capture(3));
     assert.equal(retryable.queued, true);
     assert.equal(sync.queueLength(), 1);
     assert.deepEqual(posted.map(p => p.progressKey), ['6B|SC-1|2', '6B|SC-1|3']);
@@ -2358,7 +2429,7 @@ test('SaveProgress treats ok:false as a permanent failure, retries network error
     assert.equal(sync.queueLength(), 0);
 });
 
-test('Level 2-5 save payload uses session identity, current gameplay level, and separate roster assigned level', async () => {
+test('Level 2-5 save payload uses session identity, current gameplay level, and separate roster assigned level', async (t) => {
     const storage = createSessionStorage({}, { assignedLevel: 4 });
     global.localStorage = storage;
     const sync = loadSharePointSync();
@@ -2366,8 +2437,15 @@ test('Level 2-5 save payload uses session identity, current gameplay level, and 
     const { context, gameState } = buildStudentGameHarness({
         level: 3,
         storage,
-        extraGlobals: { SharePointSync: sync }
+        extraGlobals: {
+            SharePointSync: sync,
+            WA_GOLD_RUSH_RUNTIME_CONFIG: { featureFlags: { saveProtocolV2: true, fullCloudRestore: true } }
+        }
     });
+    setupSaveProgressFlow();
+    await prepareConditionalProgress(t, sync, [3]);
+    context.WA_GOLD_RUSH_CLOUD_RESTORE = global.WA_GOLD_RUSH_CLOUD_RESTORE;
+    await context.maybeRestoreLevelFromCloud(context.getAuthenticatedStudentSession(), 3);
     // Use the real syncPlayerRecord (captured before the harness stub).
     vm.runInContext('getProgressSaveScheduler = () => ({ schedule: (p) => { this.__scheduled.push(p); } });', Object.assign(context, { __scheduled: scheduled }));
     gameState.player.companyName = 'Co';
@@ -2379,7 +2457,7 @@ test('Level 2-5 save payload uses session identity, current gameplay level, and 
     context.realSyncPlayerRecord();
     assert.equal(scheduled.length, 1);
     assert.equal(Object.isFrozen(scheduled[0]), true);
-    assert.equal(scheduled[0].protocolVersion, undefined, 'v2 fields are not sent while saveProtocolV2 is off');
+    assert.equal(scheduled[0].protocolVersion, 2, 'only verified conditional saves may be scheduled');
     assert.equal(scheduled[0].studentCode, 'SC-1');
     assert.equal(scheduled[0].classCode, '6B');
     assert.equal(scheduled[0].level, 3);
@@ -2866,6 +2944,14 @@ test('protected saves reject UI/direct restart, reset, storage APIs and reload w
         const contents = () => JSON.stringify(storage.__keys().sort().map((key) => [key, storage.getItem(key)]));
         const before = contents();
         const run = JSON.stringify(gameState.activeRun);
+        if (['cloud_restore_failed', 'cloud_state_unknown'].includes(protection)) {
+            assert.equal(gameState.saveLocked, false);
+            assert.equal(gameState.saveToLocalStorage(), true, 'network holds must not block local work');
+            assert.equal(gameState.round, 4);
+            assert.equal(JSON.stringify(gameState.activeRun), run);
+            assert.equal(store.getUploadHold(storage, identity, 2), protection);
+            continue;
+        }
         context.resetGame();
         assert.equal(gameState.restartLevelRun().ok, false, protection);
         assert.equal(gameState.beginLevelRun(), null, protection);
@@ -3009,58 +3095,77 @@ test('engaged v2 caller rejects missing run metadata rather than scheduling lega
     assert.equal(scheduled[0].protocolVersion, 2);
 });
 
-test('only provisional cloud holds clear after safe reconcile, never unknown/conflict/failed restore', async () => {
+function enableHarnessRestore(context, response) {
+    context.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: { saveProtocolV2: true, fullCloudRestore: true } };
+    context.WA_GOLD_RUSH_FLOW_ENDPOINTS = { getStudentProgress: 'https://example.com/restore' };
+    context.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER = {
+        async getProof() { return { authorization: ['Bearer', 'test-only-proof'].join(' ') }; }
+    };
+    context.WA_GOLD_RUSH_POWER_AUTOMATE = { callFlow: response };
+    vm.runInContext([
+        fs.readFileSync(require.resolve('../shared/student-progress-auth.js'), 'utf8'),
+        fs.readFileSync(require.resolve('../shared/cloud-restore.js'), 'utf8')
+    ].join('\n'), context);
+}
+
+test('network and provisional holds recover after verified reconcile while hard protections remain', async () => {
     for (const hold of ['unverified_new_slot', 'cloud_state_unknown', 'legacy_owner_unverified', 'cloud_conflict', 'cloud_restore_failed']) {
-        for (const action of ['start_new', 'upload_local_create', 'resume_local', 'adopt_cloud_ok', 'adopt_cloud', 'conflict', 'start_local_unsynced']) {
+        for (const action of ['missing', 'same_base', 'adopt_cloud', 'different_run', 'failed', 'incomplete']) {
             const storage = createSessionStorage();
             const { context, gameState } = buildStudentGameHarness({ storage });
             const store = context.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+            gameState.round = 2;
             assert.equal(gameState.saveToLocalStorage(), true);
+            if (['same_base', 'adopt_cloud'].includes(action)) {
+                store.updateCloudState(storage, buildRosterSession(), 2, {
+                    cloud: { status: action === 'adopt_cloud' ? 'synced' : 'pending', revision: action === 'adopt_cloud' ? 1 : 2 }
+                });
+            }
+            const cloudSave = store.clone(store.readLevelSave(storage, buildRosterSession(), 2).envelope);
+            cloudSave.cloud = { status: 'synced', revision: 2 };
+            if (action === 'different_run') cloudSave.runId = 'different-cloud-run';
             const ledger = store.readLedger(storage, buildRosterSession());
             ledger.levelRuns['2'].cloudUploadHold = hold;
             store.writeLedger(storage, ledger);
             vm.runInContext(`cloudUploadHold = ${JSON.stringify(hold)};`, context);
-            context.WA_GOLD_RUSH_CLOUD_RESTORE = {
-                isEnabled: () => true, fetchLevelSave: async () => ({ status: 'missing' }),
-                reconcile: () => ({ action: action === 'adopt_cloud_ok' ? 'adopt_cloud' : action, reason: 'test' }),
-                adoptCloudSave: () => ({ ok: action === 'adopt_cloud_ok', reason: 'test_failed' })
-            };
-            await context.maybeRestoreLevelFromCloud(buildRosterSession(), 2);
-            const clear = hold === 'unverified_new_slot'
-                && ['start_new', 'upload_local_create', 'resume_local', 'adopt_cloud_ok'].includes(action);
-            const protectedReason = action === 'conflict' ? 'cloud_conflict'
-                : action === 'adopt_cloud' ? 'cloud_restore_failed'
-                    : action === 'start_local_unsynced' ? 'cloud_state_unknown' : '';
-            const expected = clear ? '' : protectedReason && hold === 'unverified_new_slot'
-                ? protectedReason : hold;
+            enableHarnessRestore(context, async (name, request) => {
+                assert.equal(name, 'getStudentProgress');
+                if (action === 'failed') return { success: false, networkError: true };
+                if (action === 'incomplete') return { success: true, status: 200, data: {} };
+                return { success: true, status: 200, data: {
+                    ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: request.progressKey,
+                    found: action !== 'missing', ...(action !== 'missing' ? {
+                        revision: 2, runGeneration: cloudSave.generation, save: cloudSave
+                    } : {})
+                } };
+            });
+            await context.maybeRestoreLevelFromCloud(context.getAuthenticatedStudentSession(), 2);
+            const transient = ['unverified_new_slot', 'cloud_state_unknown', 'cloud_restore_failed'].includes(hold);
+            const clear = transient && ['missing', 'same_base', 'adopt_cloud'].includes(action);
+            const expected = clear ? '' : transient
+                ? (action === 'different_run' ? 'cloud_conflict' : 'cloud_state_unknown') : hold;
             assert.equal(context.getCloudUploadHold(), expected, `${hold}/${action}`);
-            assert.equal(store.getUploadHold(storage, buildRosterSession(), 2), expected, `persisted ${hold}/${action}`);
+            assert.equal(store.getUploadHold(storage, buildRosterSession(), 2), clear ? '' : hold, `persisted ${hold}/${action}`);
         }
     }
 });
 
-test('unknown cloud state becomes a persisted real hold, including without the shared guard export', async () => {
+test('unknown cloud state holds dispatch while local play and saving continue, including after reload', async () => {
     const storage = createSessionStorage();
     const { context, gameState } = buildStudentGameHarness({ storage });
     assert.equal(gameState.saveToLocalStorage(), true);
     vm.runInContext("cloudUploadHold = 'unverified_new_slot';", context);
-    context.WA_GOLD_RUSH_CLOUD_RESTORE = {
-        isEnabled: () => true,
-        fetchLevelSave: async () => ({ status: 'unknown' }),
-        reconcile: () => ({ action: 'resume_local_unsynced', reason: 'timeout' })
-    };
-    await context.maybeRestoreLevelFromCloud(buildRosterSession(), 2);
+    enableHarnessRestore(context, async () => ({ success: false, networkError: true }));
+    await context.maybeRestoreLevelFromCloud(context.getAuthenticatedStudentSession(), 2);
     const store = context.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
     assert.equal(context.getCloudUploadHold(), 'cloud_state_unknown');
-    assert.equal(store.getUploadHold(storage, buildRosterSession(), 2), 'cloud_state_unknown');
-    assert.equal(gameState.saveLocked, true);
-    const before = JSON.stringify(storage.__keys().sort().map((key) => [key, storage.getItem(key)]));
+    assert.equal(store.getUploadHold(storage, buildRosterSession(), 2), '', 'network failures do not become local write protections');
+    assert.equal(gameState.saveLocked, false);
+    gameState.round = 4;
+    assert.equal(gameState.saveToLocalStorage(), true);
     const reloaded = buildStudentGameHarness({ storage });
-    reloaded.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.getLevelWriteProtection = undefined;
-    assert.equal(reloaded.gameState.getRunProtectionReason(), 'cloud_state_unknown');
-    reloaded.context.resetGame();
-    assert.equal(reloaded.gameState.reset(), false);
-    assert.equal(reloaded.gameState.beginLevelRun(), null);
-    assert.equal(reloaded.gameState.restartLevelRun().ok, false);
-    assert.equal(JSON.stringify(storage.__keys().sort().map((key) => [key, storage.getItem(key)])), before);
+    assert.equal(reloaded.gameState.round, 4);
+    assert.equal(reloaded.context.getCloudUploadHold(), 'startup_lookup_required');
+    assert.equal(reloaded.gameState.saveLocked, false);
+    assert.equal(reloaded.gameState.saveToLocalStorage(), true);
 });

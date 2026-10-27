@@ -12,6 +12,10 @@
  *   InvestmentProfile.recordAction(studentCode, level, bucket, weight)
  *   InvestmentProfile.compute(studentCode, level)
  *   InvestmentProfile.renderChart(canvasElement, studentCode, level)
+ *
+ * Existing studentCode calls are scoped to the current roster session's class.
+ * The first argument may also be {classCode,studentCode}, matching that session.
+ * Unscoped legacy entries are retained, never silently attributed to a class.
  */
 
 const InvestmentProfile = (() => {
@@ -68,7 +72,18 @@ const InvestmentProfile = (() => {
     }
 
     function _key(studentCode, level) {
-        return `${String(studentCode || 'anon').trim()}__L${Number(level) || 0}`;
+        const root = typeof globalThis !== 'undefined' ? globalThis : window;
+        const session = root.WA_GOLD_RUSH_STUDENT_SESSION?.readSession();
+        const identity = studentCode && typeof studentCode === 'object' ? studentCode : session;
+        const classCode = String(identity?.classCode || '').trim().toUpperCase();
+        const code = String(identity?.studentCode || '').trim().toUpperCase();
+        const requestedCode = typeof studentCode === 'object' ? code : String(studentCode || '').trim().toUpperCase();
+        if (!classCode || !code || requestedCode !== code || !Number.isInteger(Number(level)) || Number(level) < 1 || Number(level) > 5) return '';
+        if (session && (String(session.classCode).trim().toUpperCase() !== classCode
+            || String(session.studentCode).trim().toUpperCase() !== code)) return '';
+        // Old student-only entries have no provable class owner. Leave them
+        // untouched; only an explicit snapshot conversion may recover them.
+        return `${classCode}|${code}__L${Number(level)}`;
     }
 
     function _ensureEntry(data, key) {
@@ -94,6 +109,7 @@ const InvestmentProfile = (() => {
         const w = Math.max(0, Number(weight) || 1);
         const data = _load();
         const key = _key(studentCode, level);
+        if (!key) return;
         const entry = _ensureEntry(data, key);
         entry[bucket] = (entry[bucket] || 0) + w;
         _save(data);
@@ -154,6 +170,7 @@ const InvestmentProfile = (() => {
         if (!incoming || typeof incoming !== 'object') return;
         const data = _load();
         const key = _key(studentCode, level);
+        if (!key) return;
         const entry = _ensureEntry(data, key);
         BUCKETS.forEach(b => {
             if (typeof incoming[b] === 'number' && incoming[b] > entry[b]) {
