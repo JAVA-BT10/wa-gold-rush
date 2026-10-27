@@ -43,6 +43,8 @@ function resetGlobals() {
     delete global.WA_GOLD_RUSH_RUNTIME_CONFIG;
     delete global.WA_GOLD_RUSH_POWER_AUTOMATE;
     delete global.WA_GOLD_RUSH_FLOW_ENDPOINTS;
+    delete global.WA_GOLD_RUSH_CLOUD_RESTORE;
+    delete global.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER;
 }
 
 test.afterEach(() => resetGlobals());
@@ -141,7 +143,7 @@ test('local saves contain no StudentName, StudentID, PIN or hash', () => {
 test('envelope validation rejects identity, class and level mismatches before any write', () => {
     const run = { generation: 1, runId: 'run_x' };
     const snapshot = {
-        level: 2, round: 2, cash: 10, player: { classCode: '6B', studentCode: 'SC-1' },
+        level: 2, round: 2, cash: 10, player: { classCode: '6B', studentCode: 'SC-1', companyName: '' }, progression: {},
         ownedMines: {}, machinery: [], roundHistory: [], investmentPlans: {}, totalProfitLoss: 0
     };
     const envelope = store.createEnvelope({ identity: ID, level: 2, ...run, snapshot });
@@ -260,7 +262,7 @@ function legacyAutosave(overrides = {}) {
             round: 12,
             cash: 4567,
             assignedLevel: 3,
-            player: { studentCode: 'SC-1', classCode: '6B', studentName: 'Alex Smith', studentId: '123456' },
+            player: { studentCode: 'SC-1', classCode: '6B', companyName: '', studentName: 'Alex Smith', studentId: '123456' },
             ownedMines: { southern_cross: { id: 'southern_cross', owned: true } },
             machinery: [],
             roundHistory: [{ round: 11 }],
@@ -335,7 +337,7 @@ test('ambiguous legacy records need review and hold cloud uploads for that level
     assert.equal(h.context.getCloudUploadHold(), 'legacy_missing_class');
     assert.equal(store.readLedger(storage, ID).legacyMigration.status, 'needs_review');
     const l2 = buildStudentGameHarness({ level: 2, storage });
-    assert.equal(l2.context.getCloudUploadHold(), '');
+    assert.equal(l2.context.getCloudUploadHold(), 'startup_lookup_required');
 
     const otherClass = createSessionStorage({ level2_autosave: legacyAutosave({ player: { studentCode: 'SC-1', classCode: '9Z' } }) });
     assert.equal(store.migrateLegacyAutosave(otherClass, ID).reason, 'class_mismatch');
@@ -365,11 +367,11 @@ test('held or pristine games are never uploaded; v2 fields only when the flag is
     assert.equal(scheduled.length, 0, 'pristine round-1 defaults are never uploaded');
     playSomeRounds(g.gameState, { round: 2, cash: 10 });
     vm.runInContext('syncPlayerRecord()', g.context);
-    assert.equal(scheduled.length, 1);
-    assert.equal(scheduled[0].protocolVersion, 2);
-    assert.equal(scheduled[0].runGeneration, 1);
-    assert.equal(typeof scheduled[0].runId, 'string');
-    assert.equal(scheduled[0].level, 3);
+    assert.equal(scheduled.length, 0, 'even played slots wait for a verified startup lookup');
+    const fields = vm.runInContext('buildProgressSyncOptions()', g.context);
+    assert.equal(fields.protocolVersion, 2);
+    assert.equal(fields.runGeneration, 1);
+    assert.equal(typeof fields.runId, 'string');
 });
 
 // ---------------------------------------------------------------------------
@@ -414,7 +416,7 @@ test('reference server: duplicate retry returns the original success, even after
     assert.equal(retry.revision, first.revision);
     assert.equal(retry.deduplicated, true);
     assert.equal(server.rows.get('6B|SC-1|2').revision, 3, 'not re-applied or downgraded');
-    const altered = server.handle(v2Request({ saveRequestId: 'r1', contentHash: 'c53-tampered' }));
+    const altered = server.handle(v2Request({ saveRequestId: 'r1', contentHash: 'c53-tampered', currentCash: 999 }));
     assert.equal(altered.code, 'request_id_reused');
 });
 
@@ -444,13 +446,55 @@ test('reference server: reset advances generation and rejects pre-reset requests
 
 function loadSync() {
     delete require.cache[require.resolve('../shared/sharepoint-sync.js')];
-    return require('../shared/sharepoint-sync.js');
+    const sync = require('../shared/sharepoint-sync.js');
+    if (!global.WA_GOLD_RUSH_RUNTIME_CONFIG?.featureFlags?.saveProtocolV2) return sync;
+    global.WA_GOLD_RUSH_RUNTIME_CONFIG.featureFlags.fullCloudRestore = true;
+    global.WA_GOLD_RUSH_FLOW_ENDPOINTS.getStudentProgress = 'https://example.com/restore';
+    const session = require('../shared/student-session.js').readSession(global.localStorage);
+    // Protocol fixtures model a startup lookup independently of the save
+    // transport under test; the real adapter validates every response.
+    const root = restoreGlobals(async (name, request) => {
+        assert.equal(name, 'getStudentProgress');
+        const local = store.readLevelSave(global.localStorage, request, request.level);
+        const revision = local.envelope?.cloud?.revision;
+        return { success: true, status: 200, data: {
+            ok: true, contractVersion: cloudRestore.CONTRACT_VERSION,
+            progressKey: request.progressKey, found: Number.isInteger(revision),
+            ...(Number.isInteger(revision) ? { revision, save: local.envelope, runGeneration: local.envelope.generation } : {})
+        } };
+    });
+    global.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER = root.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER;
+    global.WA_GOLD_RUSH_STUDENT_PROGRESS_AUTH = require('../shared/student-progress-auth.js');
+    global.WA_GOLD_RUSH_CLOUD_RESTORE = {
+        ...cloudRestore,
+        fetchLevelSave: input => cloudRestore.fetchLevelSave(input, root)
+    };
+    const ready = Promise.all([2, 3, 4, 5].filter(level =>
+        store.readLevelSave(global.localStorage, session, level).status === 'found')
+        .map(level => sync.checkLevelSave(session, level)));
+    const dispatch = sync.syncProgress;
+    const retry = sync.retryQueue;
+    sync.syncProgress = async (...args) => { await ready; return dispatch(...args); };
+    let activeRetry = null;
+    sync.retryQueue = (...args) => {
+        if (!activeRetry) activeRetry = ready.then(() => retry(...args)).finally(() => { activeRetry = null; });
+        return activeRetry;
+    };
+    sync.whenStartupReady = () => ready;
+    return sync;
+}
+
+function seedLegacyQueue(sync, opts) {
+    const queue = JSON.parse(global.localStorage.getItem('wa_gr_sync_queue') || '[]');
+    queue.push({ type: 'progress', payload: sync.buildProgressPayload(opts),
+        queuedAt: new Date().toISOString(), attempts: 0, payloadSchemaVersion: 4 });
+    global.localStorage.setItem('wa_gr_sync_queue', JSON.stringify(queue));
 }
 
 function seedLocalSave(storage, overrides = {}) {
     const run = store.ensureLevelRun(storage, ID, 2);
     const snapshot = {
-        level: 2, round: 3, cash: 100, player: { classCode: '6B', studentCode: 'SC-1' },
+        level: 2, round: 3, cash: 100, player: { classCode: '6B', studentCode: 'SC-1', companyName: '' }, progression: {},
         ownedMines: {}, machinery: [], roundHistory: [{ round: 2 }], investmentPlans: {}, totalProfitLoss: 0
     };
     const envelope = store.createEnvelope({ identity: ID, level: 2, generation: run.generation, runId: run.runId, startingNetWorth: 300, snapshot, ...overrides });
@@ -461,9 +505,12 @@ function seedLocalSave(storage, overrides = {}) {
 }
 
 function v2Opts(run, extra = {}) {
+    const snapshot = global.localStorage
+        ? store.readLevelSave(global.localStorage, ID, extra.level || 2).envelope?.snapshot : null;
     return {
         studentCode: 'SC-1', classCode: '6B', level: 2, currentRound: 3, currentCash: 100, netWorth: 400,
         protocolVersion: 2, runGeneration: run.generation, runId: run.runId, startingNetWorth: 300, storageSchemaVersion: 1,
+        ...(snapshot ? { progressionMarkersJson: JSON.stringify({ ...snapshot, companyName: snapshot.player.companyName }) } : {}),
         ...extra
     };
 }
@@ -486,6 +533,9 @@ test('SharePointSync v2: two devices on the same base revision → one saved, on
     // Device B holds the same run (e.g. restored) and the same acknowledged base.
     seedLocalSave(deviceB, { generation: runA.generation, runId: runA.runId });
 
+    global.localStorage = deviceB;
+    const syncB = loadSync();
+    await syncB.whenStartupReady();
     global.localStorage = deviceA;
     const sync = loadSync();
     const created = await sync.syncProgress(v2Opts(runA, { currentRound: 3 }));
@@ -494,13 +544,13 @@ test('SharePointSync v2: two devices on the same base revision → one saved, on
     assert.equal(store.readLevelSave(deviceA, ID, 2).envelope.cloud.revision, 1);
 
     global.localStorage = deviceB;
-    const fromB = await sync.syncProgress(v2Opts(runA, { currentRound: 9, netWorth: 9999 }));
+    const fromB = await syncB.syncProgress(v2Opts(runA, { currentRound: 9, netWorth: 9999 }));
     assert.equal(fromB.ok, false);
     assert.equal(fromB.conflict, true);
     assert.equal(server.rows.get('6B|SC-1|2').revision, 1);
     assert.equal(store.readLevelSave(deviceB, ID, 2).envelope.cloud.status, 'conflict');
     // Further saves for that game on device B are held, not sent.
-    const held = await sync.syncProgress(v2Opts(runA, { currentRound: 10 }));
+    const held = await syncB.syncProgress(v2Opts(runA, { currentRound: 10 }));
     assert.equal(held.held, true);
     assert.equal(server.log.length, 2);
 });
@@ -553,7 +603,10 @@ test('SharePointSync v2: queued pre-reset saves are withdrawn and a stale genera
     const sync = loadSync();
     await sync.syncProgress(v2Opts(run));
     assert.equal(sync.queueLength(), 1);
-    store.resetLevelSave(storage, ID, 2);
+    assert.equal(store.resetLevelSave(storage, ID, 2).reason, 'cloud_reset_unavailable');
+    global.WA_GOLD_RUSH_RUNTIME_CONFIG.featureFlags.saveProtocolV2 = false;
+    assert.equal(store.resetLevelSave(storage, ID, 2).ok, true, 'unacknowledged local-only restart remains available');
+    global.WA_GOLD_RUSH_RUNTIME_CONFIG.featureFlags.saveProtocolV2 = true;
     assert.equal(sync.discardQueuedForProgressKey('6B|SC-1|2', 'superseded_by_reset'), 1);
     assert.equal(sync.queueLength(), 0);
     assert.ok(sync.getQuarantine().some((entry) => entry.reason === 'superseded_by_reset'));
@@ -599,7 +652,10 @@ for (const mode of ['legacy', 'v2', 'rollback']) {
                     : { success: true, status: 200, data: { ok: true } };
             };
             const opts = v2Opts(run, mode === 'legacy' ? { protocolVersion: undefined } : {});
-            assert.equal((await sync.syncProgress(opts)).queued, true);
+            if (mode === 'legacy') {
+                assert.equal((await sync.syncProgress(opts)).held, true);
+                seedLegacyQueue(sync, opts);
+            } else assert.equal((await sync.syncProgress(opts)).queued, true);
             const queueBefore = storage.getItem('wa_gr_sync_queue');
             const queued = JSON.parse(queueBefore)[0];
             if (mode !== 'legacy') {
@@ -646,7 +702,7 @@ for (const mode of ['legacy', 'v2', 'rollback']) {
             assert.equal(result.queued, false, 'a new capture must not replace the held request');
             await sync.retryQueue();
             await sync.retryQueue();
-            assert.equal(calls, 1, 'neither direct nor repeated retry dispatch may reach the flow');
+            assert.equal(calls, mode === 'legacy' ? 0 : 1, 'neither direct nor repeated retry dispatch may reach the flow');
             assert.equal(storage.getItem(saveKey), saveBefore, 'save slot and all cloud metadata are unchanged');
             assert.equal(storage.getItem(ledgerKey), ledgerBefore, 'historical ledger and run metadata are unchanged');
             assert.equal(storage.getItem('wa_gr_sync_conflicts'), conflictsBefore);
@@ -673,7 +729,13 @@ for (const v2 of [false, true]) {
             v2Opts({ generation: other.generation, runId: other.runId }, { level: 4, protocolVersion: v2 ? 2 : undefined })
         ];
         global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => { throw new Error('offline'); };
-        for (const opts of captures) assert.equal((await sync.syncProgress(opts)).queued, true);
+        for (const opts of captures) {
+            if (v2) assert.equal((await sync.syncProgress(opts)).queued, true);
+            else {
+                assert.equal((await sync.syncProgress(opts)).held, true);
+                seedLegacyQueue(sync, opts);
+            }
+        }
         const heldItem = JSON.parse(storage.getItem('wa_gr_sync_queue'))[0];
         store.updateCloudState(storage, ID, 2, { cloud: { status: 'conflict', revision: 7 } });
         const protectedSave = storage.getItem(store.buildSaveKey(ID, 2));
@@ -685,18 +747,20 @@ for (const v2 of [false, true]) {
             return v2 ? transport(name, payload) : { success: true, status: 200, data: { ok: true } };
         };
         await sync.retryQueue();
-        assert.equal(sent.length, 1);
-        assert.equal(sent[0].progressKey, '6B|SC-1|4');
-        assert.equal((await sync.syncProgress(captures[1])).ok, true);
-        assert.equal(sent.length, 2);
-        assert.deepEqual(JSON.parse(storage.getItem('wa_gr_sync_queue')), [heldItem]);
+        assert.equal(sent.length, v2 ? 1 : 0);
+        if (v2) assert.equal(sent[0].progressKey, '6B|SC-1|4');
+        const second = await sync.syncProgress(captures[1]);
+        assert.equal(v2 ? second.ok : second.held, true);
+        assert.equal(sent.length, v2 ? 2 : 0);
+        if (v2) assert.deepEqual(JSON.parse(storage.getItem('wa_gr_sync_queue')), [heldItem]);
+        else assert.equal(sync.queueLength(), 2, 'legacy captures remain held in both slots');
         assert.equal(storage.getItem(store.buildSaveKey(ID, 2)), protectedSave);
         assert.equal(storage.getItem(store.buildLedgerKey(ID)), ledgerBefore);
         if (v2) assert.equal(store.readLevelSave(storage, ID, 4).envelope.cloud.revision, 2);
     });
 }
 
-test('SharePointSync: incompatible legacy captures are quarantined intact and never replayed after rollback', async () => {
+test('SharePointSync: incompatible legacy captures are held intact and never replayed after rollback', async () => {
     const server = new ReferenceSaveServer();
     enableV2(server);
     global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: {} };
@@ -706,9 +770,11 @@ test('SharePointSync: incompatible legacy captures are quarantined intact and ne
     assert.equal(store.adoptLevelRun(storage, other), true);
     assert.equal(store.writeLevelSave(storage, other).ok, true);
     global.localStorage = storage;
-    const sync = loadSync();
+    let sync = loadSync();
     global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => { throw new Error('offline'); };
-    assert.equal((await sync.syncProgress(v2Opts(run, { protocolVersion: undefined }))).queued, true);
+    const legacy = v2Opts(run, { protocolVersion: undefined });
+    assert.equal((await sync.syncProgress(legacy)).held, true);
+    seedLegacyQueue(sync, legacy);
     const queueBefore = storage.getItem('wa_gr_sync_queue');
     const saveBefore = storage.getItem(store.buildSaveKey(ID, 2));
     const ledgerBefore = storage.getItem(store.buildLedgerKey(ID));
@@ -720,16 +786,17 @@ test('SharePointSync: incompatible legacy captures are quarantined intact and ne
             : { success: true, status: 200, data: { ok: true } };
     };
     global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: { saveProtocolV2: true } };
+    sync = loadSync();
     await sync.retryQueue();
     await sync.retryQueue();
     assert.equal(sent.length, 0, 'legacy requests are not upgraded or replayed');
-    assert.equal(sync.queueLength(), 0);
+    assert.equal(sync.queueLength(), 1);
     const quarantined = sync.getQuarantine();
-    assert.equal(quarantined.length, 1);
-    assert.equal(quarantined[0].reason, 'legacy_item_held_v2_active');
+    assert.equal(quarantined.length, 0);
     const original = JSON.parse(queueBefore)[0];
+    const retained = JSON.parse(storage.getItem('wa_gr_sync_queue'))[0];
     for (const field of ['type', 'payload', 'queuedAt', 'attempts']) {
-        assert.deepEqual(quarantined[0][field], original[field], `${field} is preserved for manual reconciliation`);
+        assert.deepEqual(retained[field], original[field], `${field} is preserved for manual reconciliation`);
     }
     assert.equal(storage.getItem(store.buildSaveKey(ID, 2)), saveBefore);
     assert.equal(storage.getItem(store.buildLedgerKey(ID)), ledgerBefore);
@@ -737,12 +804,12 @@ test('SharePointSync: incompatible legacy captures are quarantined intact and ne
         { generation: other.generation, runId: other.runId }, { level: 4 }
     ))).ok, true);
     assert.equal(sent.length, 1);
-    assert.equal(sync.queueLength(), 0);
+    assert.equal(sync.queueLength(), 1);
     global.WA_GOLD_RUSH_RUNTIME_CONFIG = { featureFlags: {} };
     await sync.retryQueue();
     assert.equal(sent.length, 1, 'obsolete unconditional captures cannot overwrite newer saves after rollback');
     assert.deepEqual(sync.getQuarantine(), quarantined);
-    assert.equal(sync.queueLength(), 0);
+    assert.equal(sync.queueLength(), 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -751,6 +818,10 @@ test('SharePointSync: incompatible legacy captures are quarantined intact and ne
 
 function restoreGlobals(callFlow, flags = { fullCloudRestore: true }) {
     return {
+        WA_GOLD_RUSH_STUDENT_PROGRESS_AUTH: require('../shared/student-progress-auth.js'),
+        WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER: {
+            getProof: async () => ({ authorization: ['Bearer', require('node:crypto').randomUUID()].join(' ') })
+        },
         WA_GOLD_RUSH_RUNTIME_CONFIG: { featureFlags: flags },
         WA_GOLD_RUSH_FLOW_ENDPOINTS: { getStudentProgress: 'https://example.com/get-progress' },
         WA_GOLD_RUSH_POWER_AUTOMATE: {
@@ -764,7 +835,7 @@ function restoreGlobals(callFlow, flags = { fullCloudRestore: true }) {
 
 function validCloudSave(level = 2, round = 8) {
     const snapshot = {
-        level, round, cash: 1234, player: { classCode: '6B', studentCode: 'SC-1' },
+        level, round, cash: 1234, player: { classCode: '6B', studentCode: 'SC-1', companyName: '' }, progression: {},
         ownedMines: {}, machinery: [], roundHistory: [{ round: round - 1 }], investmentPlans: {}, totalProfitLoss: 5
     };
     return store.createEnvelope({ identity: ID, level, generation: 1, runId: 'run_cloud', startingNetWorth: 300, snapshot });
@@ -842,10 +913,10 @@ test('cloud restore: cross-device harness adopts the exact saved game on a new d
         assert.equal(payload.progressKey, '6B|SC-1|3');
         return { success: true, status: 200, data: { ok: true, contractVersion: cloudRestore.CONTRACT_VERSION, progressKey: '6B|SC-1|3', found: true, revision: 4, runGeneration: 1, save: cloudSave } };
     };
-    const globals = restoreGlobals(callFlow);
+    const globals = restoreGlobals(callFlow, { fullCloudRestore: true, saveProtocolV2: true });
     const b = buildStudentGameHarness({ level: 3, storage: deviceB, extraGlobals: { ...globals, WA_GOLD_RUSH_LEVEL_CAPABILITIES: undefined, WA_GOLD_RUSH_LEVEL_SAVE_STORE: undefined } });
     assert.equal(b.loadResult.status, 'started');
-    const decision = await b.context.maybeRestoreLevelFromCloud(buildRosterSession({ assignedLevel: 3 }), 3);
+    const decision = await b.context.maybeRestoreLevelFromCloud(b.context.getAuthenticatedStudentSession(), 3);
     assert.equal(decision.action, 'adopt_cloud');
     assert.equal(b.context.getLevelLoadState().status, 'restored');
     assert.equal(b.gameState.round, 6);
@@ -857,7 +928,7 @@ test('cloud restore: unknown cloud state holds legacy uploads and discloses loca
     const storage = createSessionStorage();
     const globals = restoreGlobals(async () => ({ success: false, status: 503 }));
     const h = buildStudentGameHarness({ level: 2, storage, extraGlobals: { ...globals, WA_GOLD_RUSH_LEVEL_CAPABILITIES: undefined, WA_GOLD_RUSH_LEVEL_SAVE_STORE: undefined } });
-    const decision = await h.context.maybeRestoreLevelFromCloud(buildRosterSession(), 2);
+    const decision = await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
     assert.equal(decision.action, 'start_local_unsynced');
     assert.equal(h.context.getCloudUploadHold(), 'cloud_state_unknown');
     assert.equal(h.context.getLevelLoadState().status, 'local_only');
@@ -1464,6 +1535,8 @@ for (const success of [true, false]) {
                 return waiting.promise;
             };
             const drain = retry ? sync.retryQueue() : sync.syncProgress(v2Opts(run));
+            await new Promise(resolve => setImmediate(resolve));
+            assert.ok(active, 'the authenticated transport has started before the reset');
             assert.equal(sync.discardQueuedForProgressKey('6B|SC-1|2'), retry ? 2 : 1);
             waiting.resolve(success ? ackFor(active) : { success: false, status: 503 });
             await drain;
@@ -1495,6 +1568,7 @@ test('dispatch and retry respect per-level ledger holds and conflicts without bl
     const other = validCloudSave(3);
     store.adoptLevelRun(storage, other);
     store.writeLevelSave(storage, other);
+    await sync.checkLevelSave(require('../shared/student-session.js').readSession(storage), 3);
     assert.equal((await sync.syncProgress(v2Opts({ generation: 1, runId: other.runId }, { level: 3 }))).ok, true);
     assert.equal(server.log.length, 1);
     const updated = store.readLedger(storage, ID);
@@ -1558,6 +1632,7 @@ test('unconfirmed retry stays unverified after completion and unrelated subseque
     const other = validCloudSave(3);
     store.adoptLevelRun(storage, other);
     store.writeLevelSave(storage, other);
+    await sync.checkLevelSave(require('../shared/student-session.js').readSession(storage), 3);
     global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async (key, payload) => ackFor(payload);
     await sync.syncProgress(v2Opts({ generation: 1, runId: other.runId }, { level: 3 }));
     assert.equal(sync.getCloudSaveStatus(), 'cloud save not verified');
@@ -1705,6 +1780,8 @@ test('retry reevaluates a key hold immediately after awaiting an unrelated game'
         return waiting.promise;
     };
     const drain = sync.retryQueue();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(sent.length, 1, 'first authenticated retry started before another slot is held');
     const ledger = store.readLedger(storage, ID);
     ledger.levelRuns['2'].cloudUploadHold = 'cloud_restore_failed';
     store.writeLedger(storage, ledger);
@@ -1756,7 +1833,8 @@ test('persisted per-level holds also protect legacy dispatch and retry after rol
     const sync = loadSync();
     const legacy = { ...ID, level: 2, currentRound: 3 };
     global.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow = async () => ({ success: false, status: 503 });
-    await sync.syncProgress(legacy);
+    assert.equal((await sync.syncProgress(legacy)).held, true);
+    seedLegacyQueue(sync, legacy);
     const ledger = store.readLedger(storage, ID);
     ledger.levelRuns['2'].cloudUploadHold = 'cloud_conflict';
     store.writeLedger(storage, ledger);
@@ -1784,8 +1862,10 @@ test('verified legacy migration can reconcile an earlier review marker without b
         const ledger = store.readLedger(held, ID);
         ledger.levelRuns['3'] = { ...run, cloudUploadHold: hold };
         store.writeLedger(held, ledger);
-        assert.equal(store.migrateLegacyAutosave(held, ID).reason, hold);
-        assert.equal(store.readLevelSave(held, ID, 3).status, 'missing');
+        const migrated = store.migrateLegacyAutosave(held, ID);
+        assert.equal(hold === 'cloud_conflict' ? migrated.reason : migrated.status,
+            hold === 'cloud_conflict' ? hold : 'migrated');
+        assert.equal(store.readLevelSave(held, ID, 3).status, hold === 'cloud_conflict' ? 'missing' : 'found');
         assert.equal(store.getUploadHold(held, ID, 3), hold);
     }
 });
@@ -1814,6 +1894,14 @@ test('direct store writes, resets and run creation preserve every protected slot
         }
         const contents = () => JSON.stringify(storage.__keys().sort().map((entry) => [entry, storage.getItem(entry)]));
         const before = contents();
+        if (['ledger_hold', 'cloud_state_unknown'].includes(protection)) {
+            assert.equal(store.getLevelWriteProtection(storage, ID, 2), '', 'network holds protect cloud dispatch, not local work');
+            assert.equal(store.writeLevelSave(storage, replacement).ok, true);
+            assert.ok(store.ensureLevelRun(storage, ID, 2));
+            assert.ok(store.getUploadHold(storage, ID, 2));
+            assert.equal(store.readLevelSave(storage, ID, 2).envelope.snapshot.cash, 9999);
+            continue;
+        }
         assert.notEqual(store.getLevelWriteProtection(storage, ID, 2), '', protection);
         assert.equal(store.writeLevelSave(storage, replacement).ok, false, protection);
         assert.equal(store.resetLevelSave(storage, ID, 2).ok, false, protection);

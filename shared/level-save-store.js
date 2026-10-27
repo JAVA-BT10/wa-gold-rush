@@ -196,6 +196,7 @@
      */
     function validateSnapshot(snapshot, expected = {}) {
         if (!isPlainObject(snapshot)) return 'snapshot_missing';
+        if (snapshot.schemaVersion !== undefined && snapshot.schemaVersion !== 2) return 'snapshot_schema_unsupported';
         const level = normalizeSaveLevel(snapshot.level);
         if (level === null) return 'snapshot_level_invalid';
         if (expected.level !== undefined && level !== expected.level) return 'snapshot_level_mismatch';
@@ -207,6 +208,15 @@
         }
         if (!Number.isInteger(snapshot.round) || snapshot.round < 1) return 'snapshot_round_invalid';
         if (typeof snapshot.cash !== 'number' || !Number.isFinite(snapshot.cash)) return 'snapshot_cash_invalid';
+        if (typeof snapshot.player.companyName !== 'string') return 'snapshot_company_invalid';
+        if (!isPlainObject(snapshot.progression)) return 'snapshot_progression_invalid';
+        if (snapshot.investmentProfile !== undefined && snapshot.investmentProfile !== null) {
+            const profile = snapshot.investmentProfile;
+            if (!isPlainObject(profile) || ['highRisk', 'lowRisk', 'profitChasing', 'assetBuilding', 'futureProofing']
+                .some((key) => typeof profile[key] !== 'number' || !Number.isFinite(profile[key]) || profile[key] < 0)) {
+                return 'snapshot_profile_invalid';
+            }
+        }
         if (!isPlainObject(snapshot.ownedMines)) return 'snapshot_mines_invalid';
         if (!Array.isArray(snapshot.machinery)) return 'snapshot_machinery_invalid';
         if (!Array.isArray(snapshot.roundHistory)) return 'snapshot_history_invalid';
@@ -247,6 +257,12 @@
         }
         const snapshotReason = validateSnapshot(envelope.snapshot, { level, identity: owner });
         if (snapshotReason) return { ok: false, reason: snapshotReason };
+        const snapshotRun = envelope.snapshot.run;
+        if (snapshotRun !== undefined && (!isPlainObject(snapshotRun)
+            || snapshotRun.generation !== envelope.generation || snapshotRun.runId !== envelope.runId
+            || (snapshotRun.startingNetWorth ?? null) !== envelope.startingNetWorth)) {
+            return { ok: false, reason: 'snapshot_run_mismatch' };
+        }
         return { ok: true, reason: '', identity: owner, level };
     }
 
@@ -282,6 +298,9 @@
         const key = buildSaveKey(identity, level);
         let parsed;
         try {
+            if (storage.getItem(`${key}|adoption`) !== null) {
+                return { status: 'unavailable', reason: 'adoption_pending', envelope: null, key };
+            }
             parsed = readJson(storage, key);
         } catch (error) {
             return { status: 'unavailable', reason: 'storage_read_failed', envelope: null };
@@ -539,6 +558,114 @@
         return writeLedger(storage, ledger);
     }
 
+    /**
+     * localStorage has no multi-key transaction. Keep a journal and the source
+     * archive until both the envelope and ledger are committed. Interrupted
+     * adoption is write-protected and can be recovered without clearing storage.
+     */
+    function recoverCloudAdoption(storageInput, identityInput, levelInput) {
+        const storage = resolveStorage(storageInput);
+        const identity = normalizeIdentity(identityInput);
+        const level = normalizeSaveLevel(levelInput);
+        if (!storage || !identity || level === null) return { ok: false, reason: 'invalid_request' };
+        const key = buildSaveKey(identity, level);
+        const ledgerKey = buildLedgerKey(identity);
+        const journalKey = `${key}|adoption`;
+        try {
+            const raw = storage.getItem(journalKey);
+            if (raw === null) return { ok: true };
+            const journal = JSON.parse(raw);
+            if (!isPlainObject(journal) || journal.key !== key || journal.ledgerKey !== ledgerKey
+                || ![journal.source, journal.sourceLedger].every((v) => v === null || typeof v === 'string')
+                || typeof journal.target !== 'string' || typeof journal.targetLedger !== 'string') {
+                return { ok: false, reason: 'adoption_journal_invalid' };
+            }
+            const slot = storage.getItem(key);
+            const ledger = storage.getItem(ledgerKey);
+            const committed = slot === journal.target && ledger === journal.targetLedger;
+            if (!committed) {
+                if (ledger !== journal.sourceLedger || (slot !== journal.source && slot !== journal.target)) {
+                    return { ok: false, reason: 'adoption_concurrent_change' };
+                }
+                if (journal.source === null) storage.removeItem(key);
+                else storage.setItem(key, journal.source);
+            }
+            if (storage.getItem(journalKey) !== raw) return { ok: false, reason: 'adoption_concurrent_change' };
+            storage.removeItem(journalKey);
+            return { ok: true, committed };
+        } catch (_) {
+            return { ok: false, reason: 'adoption_pending' };
+        }
+    }
+
+    function adoptCloudEnvelope(storageInput, envelope) {
+        const storage = resolveStorage(storageInput);
+        const validation = validateEnvelope(envelope);
+        if (!storage || !validation.ok) return { ok: false, reason: validation.reason || 'storage_unavailable' };
+        const { identity, level } = validation;
+        const recovered = recoverCloudAdoption(storage, identity, level);
+        if (!recovered.ok) return recovered;
+        const protection = getLevelWriteProtection(storage, identity, level);
+        if (protection) return { ok: false, reason: protection };
+        const key = buildSaveKey(identity, level);
+        const ledgerKey = buildLedgerKey(identity);
+        const journalKey = `${key}|adoption`;
+        try {
+            const source = storage.getItem(key);
+            const sourceLedger = storage.getItem(ledgerKey);
+            if (source !== null) {
+                const local = JSON.parse(source);
+                if (local.generation !== envelope.generation || local.runId !== envelope.runId
+                    || local.cloud?.status !== 'synced'
+                    || !Number.isInteger(local.cloud.revision)
+                    || !Number.isInteger(envelope.cloud?.revision)
+                    || envelope.cloud.revision <= local.cloud.revision) {
+                    return { ok: false, reason: 'cloud_reconciliation_required' };
+                }
+            }
+            if (sourceLedger !== null) {
+                const parsedLedger = JSON.parse(sourceLedger);
+                const owner = normalizeIdentity(parsedLedger?.owner);
+                if (!isPlainObject(parsedLedger) || parsedLedger.storageSchemaVersion !== STORAGE_SCHEMA_VERSION
+                    || !owner || owner.classCode !== identity.classCode || owner.studentCode !== identity.studentCode
+                    || !isPlainObject(parsedLedger.levelRuns) || !isPlainObject(parsedLedger.progressionStateByLevel)) {
+                    return { ok: false, reason: 'source_ledger_invalid' };
+                }
+            }
+            const ledger = readLedger(storage, identity);
+            const current = ledger.levelRuns[String(level)];
+            if (current?.generation > envelope.generation) return { ok: false, reason: 'stale_generation' };
+            ledger.levelRuns[String(level)] = {
+                generation: envelope.generation, runId: envelope.runId, startedAt: envelope.createdAt
+            };
+            if (isPlainObject(envelope.snapshot.progression)) {
+                ledger.progressionStateByLevel[String(level)] = mergeProgressionEvidence(
+                    ledger.progressionStateByLevel[String(level)], envelope.snapshot.progression
+                );
+            }
+            const archived = archiveLevelSave(storage, identity, level, { reason: 'replaced_by_cloud_restore' });
+            if (!archived.ok) return archived;
+            const target = JSON.stringify(envelope);
+            const targetLedger = JSON.stringify(ledger);
+            const journal = JSON.stringify({ key, ledgerKey, source, sourceLedger, target, targetLedger });
+            if (storage.getItem(key) !== source || storage.getItem(ledgerKey) !== sourceLedger
+                || storage.getItem(journalKey) !== null) return { ok: false, reason: 'adoption_concurrent_change' };
+            storage.setItem(journalKey, journal);
+            if (storage.getItem(key) !== source || storage.getItem(ledgerKey) !== sourceLedger) {
+                return { ok: false, reason: 'adoption_concurrent_change' };
+            }
+            storage.setItem(key, target);
+            if (storage.getItem(key) !== target || storage.getItem(ledgerKey) !== sourceLedger
+                || storage.getItem(journalKey) !== journal) return { ok: false, reason: 'adoption_concurrent_change' };
+            storage.setItem(ledgerKey, targetLedger);
+            const finished = recoverCloudAdoption(storage, identity, level);
+            return finished.ok && finished.committed ? { ok: true } : { ok: false, reason: finished.reason || 'adoption_pending' };
+        } catch (_) {
+            recoverCloudAdoption(storage, identity, level);
+            return { ok: false, reason: 'adoption_write_failed' };
+        }
+    }
+
     // ------------------------------------------------------------------
     // Reset (one level only)
     // ------------------------------------------------------------------
@@ -581,6 +708,11 @@
         const protection = getLevelWriteProtection(storage, identity, level);
         if (protection) return { ok: false, reason: protection };
         const key = buildSaveKey(identity, level);
+        const existing = readLevelSave(storage, identity, level);
+        if (getCapabilities()?.isFeatureEnabled('saveProtocolV2')
+            || (existing.status === 'found' && Number.isInteger(existing.envelope.cloud?.revision))) {
+            return { ok: false, reason: 'cloud_reset_unavailable' };
+        }
         const archived = archiveLevelSave(storage, identity, level, { ...options, reason: options.reason || 'student_restart' });
         if (!archived.ok) return { ok: false, reason: archived.reason };
         const ledger = readLedger(storage, identity);
@@ -626,6 +758,9 @@
             machinery: Array.isArray(gs.machinery) ? clone(gs.machinery) : [],
             roundHistory: Array.isArray(gs.roundHistory) ? clone(gs.roundHistory) : [],
             investmentPlans: isPlainObject(gs.investmentPlans) ? clone(gs.investmentPlans) : {},
+            ...(gs.investmentProfile !== undefined ? { investmentProfile: clone(gs.investmentProfile) } : {}),
+            progression: isPlainObject(gs.progressionStateByLevel?.[String(level)])
+                ? clone(gs.progressionStateByLevel[String(level)]) : {},
             totalProfitLoss: Number.isFinite(numericProfit) ? numericProfit : 0
         };
     }
@@ -763,7 +898,7 @@
 
     function getLevelWriteProtection(storageInput, identityInput, levelInput) {
         const hold = getUploadHold(storageInput, identityInput, levelInput);
-        if (hold && hold !== 'unverified_new_slot') return hold;
+        if (hold && !['unverified_new_slot', 'cloud_state_unknown', 'cloud_restore_failed'].includes(hold)) return hold;
         const current = readLevelSave(storageInput, identityInput, levelInput);
         if (current.status !== 'found' && current.status !== 'missing') return current.reason || current.status;
         if (current.status === 'found') {
@@ -831,6 +966,8 @@
         readProgressionEvidence,
         ensureLevelRun,
         adoptLevelRun,
+        adoptCloudEnvelope,
+        recoverCloudAdoption,
         resetLevelSave,
         migrateLegacyAutosave,
         getUploadHold,

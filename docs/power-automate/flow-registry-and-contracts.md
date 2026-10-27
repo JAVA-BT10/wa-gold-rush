@@ -101,14 +101,21 @@ Notes on the optional flows:
 
 ## GGR_SaveProgress
 
-- **Status:** Existing endpoint, legacy contract (the [repair spec](GGR_SaveProgress-repair-spec.md) applies). v2 is **planned** and needs [save-protocol-v2](save-protocol-v2.md) on the server before `saveProtocolV2` is turned ON.
-- **Legacy request (default):** per-level payload with `classCode`, `studentCode`, `level` (the game played for **this** request), `progressKey` (diagnostic), `saveRequestId`, economy summary (integers), `progressionMarkersJson` (snapshot incl. optional `run`), checkpoint fields, `clientTimestampUtc`.
+- **Status:** Existing endpoint, legacy contract. Current guarded clients hold
+  progress dispatch until authenticated v2 **and** exact-slot retrieval are ready.
+  Follow the [controlling runbook](../operations/release-and-acceptance.md);
+  historical unconditional repair guidance is not safe for protected rows.
+- **Legacy capture (held, not dispatched):** per-level payload with `classCode`, `studentCode`, `level` (the game played for **this** request), `progressKey` (diagnostic), `saveRequestId`, economy summary (integers), `progressionMarkersJson` (snapshot incl. optional `run`), checkpoint fields, `clientTimestampUtc`.
 - **v2 additions:** `protocolVersion:2`, `runGeneration`, `runId`, `baseRevision` (null = create-only), `contentHash`, `startingNetWorth`, `storageSchemaVersion`.
 - **v2 responses:**
   - **Success:** `{ ok:true, protocolVersion:2, saveRequestId, progressKey, runGeneration, revision, deduplicated? }`
   - **Errors:** `{ ok:false, protocolVersion:2, code, currentRevision?, currentGeneration? }`, where `code` is one of `revision_conflict`, `row_exists`, `precondition_failed`, `generation_stale`, `request_id_reused`, `invalid_request`, `identity_mismatch`, `server_error`.
   - A legacy-shaped `200` is **unconfirmed** for v2.
 - **Server rules:**
+  - Verify actual student proof/entitlement, not the shared API key or session metadata.
+  - Refuse obsolete legacy writers to protected rows/keys regardless of client flags.
+  - Dedup exact immutable request content before revision/generation checks;
+    conditional ETag writes and durable receipts are mandatory.
   - Validate the roster row and that `level` ≤ the roster's highest unlocked level (or the assigned level).
   - Recompute the key.
   - Never write `GGR_Students.Level`.
@@ -120,7 +127,9 @@ Notes on the optional flows:
   - existing: `Level`, `ClassCode`, `StudentCode`, `NetWorth`, `CurrentRound`, `ProgressionMarkersJson`, checkpoint columns.
   - Only add index columns that are actually queried.
 - **Acceptance:** see the [tenant acceptance matrix](../operations/release-and-acceptance.md#tenant-acceptance-matrix), rows S1–S12.
-- **Rollback:** keep v2 columns. Turn `saveProtocolV2` OFF; the client holds v2 queue items and does not replay them. **Never** re-enable the old shared-slot browser writer against vNext rows.
+- **Rollback:** keep v2 columns, receipts and server legacy refusal. Turn flags
+  OFF; all progress writes remain held. Never replay legacy captures or
+  re-enable an unconditional writer.
 
 ## GGR_GetStudentProgress
 
@@ -139,13 +148,24 @@ Notes on the optional flows:
   - **Failure:** `{ ok:false, contractVersion, code:'unauthorized'|'identity_mismatch'|'server_error'|'timeout' }`. A response without the matching `contractVersion` is classified `incomplete`, never missing.
   - `save` is the complete envelope as stored by the client (identity, level, progressKey, generation, runId, startingNetWorth, snapshot). If `runGeneration` is present it must equal `save.generation`. A missing response may include `runGeneration` (the server's current generation, e.g. after a reset).
 - **Auth:** student scope only. The server derives the identity from the auth proof and refuses a mismatched class/student. Never return another student's row. **Never** expose `GGR_GetDashboardData` for this purpose.
+- **Transport prerequisite:** `shared/student-progress-auth.js` requests ephemeral
+  proof for get/save/reset from
+  `WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER.getProof({operation,identity,level,progressKey})`.
+  The provider returns `{authorization}` for a server-verifiable Authorization header.
+  This is an extension point, not a token issuer or deployed login integration;
+  no provider means no call. A school-approved provider must handle real login,
+  expiry/revocation/logout and secure proof storage. Never put proof in JSON
+  payloads, local saves, queues or runtime config. Cookie-based gateway
+  integration, if selected instead, needs separately validated transport/CSRF
+  handling; it is not implemented by this header provider.
 - **Private fields:** the response includes no `StudentName`, `StudentID` or credentials.
 - **Acceptance:**
   - found / missing / failure are each distinguishable;
   - a timeout is not missing;
   - a partial checkpoint-only response is classified `incomplete`;
   - a cross-student request is refused.
-- **Rollback:** turn `fullCloudRestore` OFF; the access guard's compatibility mode continues.
+- **Rollback:** turn tenant flags OFF; cloud progress writes remain held.
+  Checkpoint compatibility is evidence only, not full economy restoration.
 
 ## GGR_GetDashboardData
 

@@ -88,6 +88,10 @@
         if (body.ok !== true) return result('failed', String(body.code || 'not_ok'));
         if (String(body.progressKey || '') !== request.progressKey) return result('failed', 'progress_key_mismatch');
         if (body.found === false) {
+            if (body.runGeneration !== undefined
+                && (!Number.isInteger(body.runGeneration) || body.runGeneration < 1)) {
+                return result('incomplete', 'generation_invalid');
+            }
             return result('missing', 'not_found', {
                 progressKey: request.progressKey,
                 // Highest generation the server has seen for this slot (after
@@ -107,7 +111,8 @@
                 : `invalid_save_${validation.reason}`;
             return result(reason.startsWith('invalid_save_') ? 'incomplete' : 'failed', reason);
         }
-        if (Number.isInteger(body.runGeneration) && body.runGeneration !== envelope.generation) {
+        if (body.runGeneration !== undefined
+            && (!Number.isInteger(body.runGeneration) || body.runGeneration !== envelope.generation)) {
             return result('incomplete', 'generation_mismatch');
         }
         const copy = store.clone(envelope);
@@ -135,8 +140,16 @@
         const api = root?.WA_GOLD_RUSH_POWER_AUTOMATE;
         if (!api || typeof api.callFlow !== 'function') return result('unavailable', 'transport_unavailable');
         const request = { identity, level, progressKey: store.buildProgressKey(identity, level) };
+        let auth = root?.WA_GOLD_RUSH_STUDENT_PROGRESS_AUTH;
+        if (!auth && typeof require === 'function') auth = require('./student-progress-auth.js');
+        if (!auth || typeof auth.authorize !== 'function') return result('unavailable', 'auth_module_unavailable');
         let response;
         try {
+            const authorization = await withTimeout(
+                Promise.resolve(auth.authorize({ operation: 'get', ...request }, root)),
+                Number(input.timeoutMs) > 0 ? Number(input.timeoutMs) : DEFAULT_TIMEOUT_MS
+            );
+            if (authorization?.ok !== true) return result('unavailable', authorization?.reason || 'auth_proof_unavailable');
             response = await withTimeout(Promise.resolve(api.callFlow('getStudentProgress', {
                 contractVersion: CONTRACT_VERSION,
                 mode: 'full_save',
@@ -144,7 +157,7 @@
                 studentCode: identity.studentCode,
                 level,
                 progressKey: request.progressKey
-            })), Number(input.timeoutMs) > 0 ? Number(input.timeoutMs) : DEFAULT_TIMEOUT_MS);
+            }, authorization.options)), Number(input.timeoutMs) > 0 ? Number(input.timeoutMs) : DEFAULT_TIMEOUT_MS);
         } catch (_) {
             return result('failed', 'exception');
         }
@@ -185,6 +198,10 @@
             return { action: 'conflict', reason: 'both_changed' };
         }
         if (cloudStatus === 'missing') {
+            if (Number.isInteger(cloud.serverGeneration)
+                && cloud.serverGeneration !== (localFound ? local.envelope.generation : 1)) {
+                return { action: 'conflict', reason: 'server_generation_requires_reset' };
+            }
             if (!localFound) return { action: 'start_new', reason: 'definitively_missing' };
             if (Number.isInteger(local.envelope.cloud?.revision)) {
                 // The server says no row, yet this device was acknowledged
@@ -205,12 +222,7 @@
     function adoptCloudSave(storage, cloud, root = globalObj) {
         const store = getStore(root);
         if (!store || cloud?.status !== 'found' || !cloud.envelope) return { ok: false, reason: 'not_found' };
-        const envelope = store.clone(cloud.envelope);
-        const identity = envelope.owner;
-        const archived = store.archiveLevelSave(storage, identity, envelope.level, { reason: 'replaced_by_cloud_restore' });
-        if (!archived.ok) return { ok: false, reason: archived.reason };
-        if (!store.adoptLevelRun(storage, envelope)) return { ok: false, reason: 'stale_generation' };
-        return store.writeLevelSave(storage, envelope, { identity, level: envelope.level });
+        return store.adoptCloudEnvelope(storage, store.clone(cloud.envelope));
     }
 
     const api = {
