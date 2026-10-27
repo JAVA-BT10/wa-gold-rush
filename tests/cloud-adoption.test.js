@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const store = require('../shared/level-save-store.js');
 const restore = require('../shared/cloud-restore.js');
 const protocol = require('../shared/save-protocol.js');
+const sessions = require('../shared/student-session.js');
 const { createSessionStorage, buildStudentGameHarness } = require('./support/harness.js');
 
 const identity = { classCode: '6B', studentCode: 'SC-1' };
@@ -149,8 +150,19 @@ test('adoption never replaces an unknown ledger schema with an empty ledger', ()
         storageSchemaVersion: 99, owner: identity, futureEvidence: { keep: true }
     });
     storage.setItem(key, ledger);
-    assert.equal(store.adoptCloudEnvelope(storage, target).reason, 'source_ledger_invalid');
+    assert.equal(store.adoptCloudEnvelope(storage, target).reason, 'ledger_schema_unsupported');
     assert.equal(storage.getItem(key), ledger);
+});
+
+test('fresh startup cannot replace future ledger evidence before cloud adoption checks', () => {
+    const storage = createSessionStorage();
+    const key = store.buildLedgerKey(identity);
+    const raw = JSON.stringify({ storageSchemaVersion: 99, owner: identity, futureEvidence: { keep: true } });
+    storage.setItem(key, raw);
+    const { gameState } = buildStudentGameHarness({ level: 2, storage });
+    assert.equal(gameState.saveToLocalStorage(), false);
+    assert.equal(storage.getItem(key), raw);
+    assert.equal(store.ensureLevelRun(storage, identity, 2), null);
 });
 
 test('full envelope validation rejects unsupported snapshots and contradictory run metadata', () => {
@@ -192,4 +204,15 @@ test('typed duplicate, malformed and unavailable responses stay unknown rather t
         assert.ok(['failed', 'incomplete'].includes(cloud.status));
         assert.equal(restore.reconcile({ status: 'missing' }, cloud).action, 'start_local_unsynced');
     }
+});
+
+test('identical same-tab session rewrites have distinct non-authentication lifecycle markers', () => {
+    const storage = createSessionStorage();
+    const session = sessions.readSession(storage);
+    assert.equal(sessions.writeSession(storage, session), true);
+    const first = storage.getItem(sessions.STORAGE_KEY);
+    assert.equal(sessions.clearSession(storage), true);
+    assert.equal(sessions.writeSession(storage, session), true);
+    assert.notEqual(storage.getItem(sessions.STORAGE_KEY), first);
+    assert.deepEqual(sessions.readSession(storage), session, 'normalised identity contract stays unchanged');
 });

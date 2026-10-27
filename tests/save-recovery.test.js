@@ -183,7 +183,8 @@ test('malformed local slot stays protected and cannot be bypassed by retry', asy
     h.context.loadLevelGameForSession(h.context.getAuthenticatedStudentSession(), 2);
     assert.equal(h.gameState.saveLocked, true);
     await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
-    assert.equal(h.calls.length, 0);
+    assert.equal(h.calls.length, 1, 'a protected local slot may still make an authenticated cloud read');
+    assert.equal(h.calls[0].name, 'getStudentProgress');
     assert.equal(h.gameState.saveToLocalStorage(), false);
 });
 
@@ -369,8 +370,348 @@ test('progress logs omit private slot, run, request, provider and flow details',
     h.context.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER.getProof = async () => ({
         authorization: ['Bearer', 'PRIVATE-PROOF'].join(' ')
     });
+    await h.context.sync.checkLevelSave(h.context.getAuthenticatedStudentSession(), 2);
     await h.context.sync.retryQueue();
     const json = JSON.stringify(logs);
     assert.doesNotMatch(json, /SC-1|6B|PRIVATE-|progressKey|runId|saveRequestId|studentId|studentName/i);
     assert.match(json, /"level":2/);
+});
+
+test('retry after a failed fresh-browser lookup does not persist defaults and adopts the actual cloud save', async () => {
+        const source = harness();
+        source.gameState.round = 7;
+        source.gameState.cash = 8765;
+        source.gameState.saveToLocalStorage();
+        const identity = { classCode: '6B', studentCode: 'SC-1' };
+        const remote = source.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.readLevelSave(source.storage, identity, 2).envelope;
+        let online = false;
+        let h;
+        h = harness({ transport: async (name, p) => {
+            assert.equal(name, 'getStudentProgress');
+            if (!online) return { success: false, networkError: true };
+            assert.equal(h.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.readLevelSave(h.storage, identity, 2).status,
+                'missing', 'retry must not manufacture a competing saved run');
+            return { success: true, status: 200, data: {
+                ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: p.progressKey,
+                found: true, revision: 3, runGeneration: remote.generation, save: remote
+            } };
+        } });
+        await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
+        assert.equal(h.context.getCloudUploadHold(), 'cloud_state_unknown');
+        assert.equal(h.gameState.saveLocked, false);
+        online = true;
+        vm.runInContext('syncPlayerRecord = () => {};', h.context);
+        await vm.runInContext('retryCloudRecovery()', h.context);
+        assert.equal(h.context.getCloudUploadHold(), '');
+        assert.equal(h.context.getLevelLoadState().status, 'restored');
+        assert.equal(h.gameState.round, 7);
+        assert.equal(h.gameState.cash, 8765);
+        assert.equal(h.gameState.activeRun.runId, remote.runId);
+        assert.equal(h.calls.filter(call => call.name === 'saveProgress').length, 0);
+    });
+
+test('retry unlocks only stale network protections and preserves genuine in-memory work', async () => {
+        for (const reason of ['cloud_state_unknown', 'cloud_restore_failed']) {
+            const h = harness({ transport: async () => ({ success: false, networkError: true }) });
+            const store = h.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+            const identity = { classCode: '6B', studentCode: 'SC-1' };
+            payload(h);
+            const ledger = store.readLedger(h.storage, identity);
+            ledger.levelRuns['2'].cloudUploadHold = reason;
+            store.writeLedger(h.storage, ledger);
+            vm.runInContext(`gameState.saveLocked = true; setLevelLoadState('error', ${JSON.stringify(reason)}); cloudUploadHold = ${JSON.stringify(reason)};`, h.context);
+            h.gameState.cash = 5432;
+            await vm.runInContext('retryCloudRecovery()', h.context);
+            assert.equal(h.gameState.saveLocked, false, reason);
+            assert.equal(h.gameState.cash, 5432, reason);
+            assert.equal(store.readLevelSave(h.storage, identity, 2).envelope.snapshot.cash, 5432, reason);
+            const key = store.buildSaveKey(identity, 2);
+            h.storage.setItem(key, '{malformed');
+            vm.runInContext(`gameState.saveLocked = true; setLevelLoadState('error', ${JSON.stringify(reason)});`, h.context);
+            await vm.runInContext('retryCloudRecovery()', h.context);
+            assert.equal(h.gameState.saveLocked, true, 'network reason must not bypass malformed slot protection');
+            assert.equal(h.storage.getItem(key), '{malformed');
+        }
+    });
+
+test('unavailable proof holds the sealed request and invalidates startup verification without transport', async () => {
+    const h = harness();
+    await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
+    delete h.context.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER;
+    const result = await h.context.sync.syncProgress(payload(h));
+    assert.equal(result.held, true);
+    assert.equal(result.reason, 'auth_provider_unavailable');
+    assert.equal(result.queued, true);
+    assert.equal(h.context.sync.getRuntimeDiagnostics({ level: 2 }).startupSlotVerified, false);
+    const queued = h.storage.getItem('wa_gr_sync_queue');
+    await h.context.sync.retryQueue();
+    await h.context.sync.retryQueue();
+    assert.equal(h.storage.getItem('wa_gr_sync_queue'), queued);
+    assert.equal(h.calls.filter(call => call.name === 'saveProgress').length, 0);
+});
+
+for (const status of [401, 403]) {
+    test(`HTTP ${status} expires verification and holds retries until fresh proof and slot lookup`, async () => {
+        let expired = true;
+        const h = harness({ transport: async (name, p) => {
+            if (name === 'getStudentProgress') return { success: true, status: 200, data: {
+                ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: p.progressKey, found: false
+            } };
+            if (expired) return { success: false, status };
+            return { success: true, status: 200, data: {
+                ok: true, protocolVersion: 2, saveRequestId: p.saveRequestId, progressKey: p.progressKey,
+                runGeneration: p.runGeneration, revision: 1
+            } };
+        } });
+        await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
+        const result = await h.context.sync.syncProgress(payload(h));
+        assert.equal(result.held, true);
+        assert.equal(result.reason, 'auth_required');
+        assert.equal(result.queued, true);
+        assert.equal(h.context.sync.getRuntimeDiagnostics({ level: 2 }).startupSlotVerified, false);
+        const queued = h.storage.getItem('wa_gr_sync_queue');
+        await h.context.sync.retryQueue();
+        await h.context.sync.retryQueue();
+        assert.equal(h.calls.filter(call => call.name === 'saveProgress').length, 1);
+        assert.equal(h.storage.getItem('wa_gr_sync_queue'), queued);
+        expired = false;
+        vm.runInContext('syncPlayerRecord = () => {};', h.context);
+        await vm.runInContext('retryCloudRecovery()', h.context);
+        assert.equal(h.context.sync.queueLength(), 0);
+        const saves = h.calls.filter(call => call.name === 'saveProgress');
+        assert.equal(saves.length, 2);
+        assert.equal(saves[1].payload.saveRequestId, saves[0].payload.saveRequestId);
+        assert.equal(saves[1].payload.baseRevision, saves[0].payload.baseRevision);
+    });
+}
+
+test('a different signed-in student cannot dispatch or retry another student’s sealed capture', async () => {
+    const h = harness({ transport: async (name, p) => name === 'getStudentProgress'
+        ? { success: true, status: 200, data: {
+            ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: p.progressKey, found: false
+        } }
+        : { success: false, status: 503 } });
+    await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
+    const capture = payload(h);
+    assert.equal((await h.context.sync.syncProgress(capture)).queued, true);
+    const queue = h.storage.getItem('wa_gr_sync_queue');
+    setSession(h.storage, { studentCode: 'SC-2' });
+    const result = await h.context.sync.syncProgress(capture);
+    assert.equal(result.rejected, true);
+    assert.equal(result.reason, 'identity_mismatch');
+    await h.context.sync.retryQueue();
+    assert.equal(h.calls.filter(call => call.name === 'saveProgress').length, 1);
+    assert.equal(h.storage.getItem('wa_gr_sync_queue'), queue);
+});
+
+test('HTTP auth expiry during queue drain preserves the immutable request without timer redispatch', async () => {
+    let responseStatus = 503;
+    const h = harness({ transport: async (name, p) => name === 'getStudentProgress'
+        ? { success: true, status: 200, data: {
+            ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: p.progressKey, found: false
+        } }
+        : { success: false, status: responseStatus } });
+    await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
+    await h.context.sync.syncProgress(payload(h));
+    const queued = h.storage.getItem('wa_gr_sync_queue');
+    responseStatus = 401;
+    await h.context.sync.retryQueue();
+    assert.equal(h.context.sync.getRuntimeDiagnostics({ level: 2 }).startupSlotVerified, false);
+    await h.context.sync.retryQueue();
+    assert.equal(h.storage.getItem('wa_gr_sync_queue'), queued);
+    assert.equal(h.calls.filter(call => call.name === 'saveProgress').length, 2);
+});
+
+test('session storage events invalidate verification after same-identity relogin', async () => {
+    const listeners = [];
+    const h = harness({ globals: {
+        addEventListener(name, listener) { if (name === 'storage') listeners.push(listener); }
+    } });
+    await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
+    assert.equal(h.context.sync.getRuntimeDiagnostics({ level: 2 }).startupSlotVerified, true);
+    const raw = h.storage.getItem('wa_gold_rush_student_session');
+    for (const listener of listeners) listener({ key: 'wa_gold_rush_student_session', oldValue: null, newValue: raw });
+    assert.equal(h.context.sync.getRuntimeDiagnostics({ level: 2 }).startupSlotVerified, false);
+});
+
+test('retry leaves an unchanged synced save clean so a newer full cloud revision can be adopted', async () => {
+    let remote;
+    let online = false;
+    let h;
+    const identity = { classCode: '6B', studentCode: 'SC-1' };
+    h = harness({ transport: async (name, p) => {
+        assert.equal(name, 'getStudentProgress');
+        if (!online) return { success: false, networkError: true };
+        assert.equal(h.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.readLevelSave(h.storage, identity, 2).envelope.cloud.status,
+            'synced', 'an unchanged retry must not dirty its acknowledged base');
+        return { success: true, status: 200, data: {
+            ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: p.progressKey,
+            found: true, revision: 2, runGeneration: remote.generation, save: remote
+        } };
+    } });
+    payload(h);
+    const store = h.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+    store.updateCloudState(h.storage, identity, 2, { cloud: { status: 'synced', revision: 1 } });
+    remote = JSON.parse(JSON.stringify(store.readLevelSave(h.storage, identity, 2).envelope));
+    remote.snapshot.round = 6;
+    remote.snapshot.cash = 7654;
+    remote.cloud = { status: 'synced', revision: 2 };
+    await h.context.maybeRestoreLevelFromCloud(h.context.getAuthenticatedStudentSession(), 2);
+    online = true;
+    vm.runInContext('syncPlayerRecord = () => {};', h.context);
+    await vm.runInContext('retryCloudRecovery()', h.context);
+    assert.equal(h.context.getLevelLoadState().status, 'restored');
+    assert.equal(h.gameState.round, 6);
+    assert.equal(h.gameState.cash, 7654);
+    assert.equal(store.readLevelSave(h.storage, identity, 2).envelope.cloud.status, 'synced');
+    assert.equal(store.readLevelSave(h.storage, identity, 2).envelope.cloud.revision, 2);
+});
+
+test('retry persists genuine changes before lookup and never adopts another same-run change over them', async () => {
+    let remote;
+    const h = harness({ transport: async (name, p) => ({ success: true, status: 200, data: {
+        ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: p.progressKey,
+        found: true, revision: 2, runGeneration: remote.generation, save: remote
+    } }) });
+    const identity = { classCode: '6B', studentCode: 'SC-1' };
+    payload(h);
+    const store = h.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+    store.updateCloudState(h.storage, identity, 2, { cloud: { status: 'synced', revision: 1 } });
+    remote = JSON.parse(JSON.stringify(store.readLevelSave(h.storage, identity, 2).envelope));
+    remote.snapshot.cash = 9000;
+    remote.cloud = { status: 'synced', revision: 2 };
+    h.gameState.cash = 4321;
+    await vm.runInContext('retryCloudRecovery()', h.context);
+    assert.equal(h.context.getCloudUploadHold(), 'cloud_conflict');
+    assert.equal(h.gameState.cash, 4321);
+    const local = store.readLevelSave(h.storage, identity, 2).envelope;
+    assert.equal(local.snapshot.cash, 4321);
+    assert.equal(local.cloud.status, 'pending');
+    assert.equal(local.cloud.revision, 1);
+    assert.equal(h.calls.filter(call => call.name === 'saveProgress').length, 0);
+});
+
+test('student entry HTML loads authenticated proof support before any full restore adapter', () => {
+    for (const path of ['index.html', 'levels/level-1-basic/index.html', 'levels/level-2-tycoon/index.html']) {
+        const scripts = [...read(path).matchAll(/<script\b[^>]*src="([^"]+)"/g)].map(match => match[1]);
+        const restore = scripts.findIndex(src => src.endsWith('/cloud-restore.js'));
+        const auth = scripts.findIndex(src => src.endsWith('/student-progress-auth.js'));
+        if (path === 'levels/level-2-tycoon/index.html') assert.ok(restore >= 0);
+        if (restore >= 0) assert.ok(auth >= 0 && auth < restore, path);
+    }
+});
+
+for (const unsentLocalWork of [false, true]) {
+test(`a sealed lost-response receipt recovers after newer cloud writes${unsentLocalWork ? ' while retaining unsent local conflict' : ''}`, async () => {
+    const server = new ReferenceSaveServer();
+    let remote;
+    let originalRequest;
+    let first;
+    const transport = async (name, p) => {
+        if (name === 'getStudentProgress') return { success: true, status: 200, data: {
+            ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: p.progressKey,
+            found: !!remote, ...(remote ? {
+                revision: remote.cloud.revision, runGeneration: remote.generation, save: remote
+            } : {})
+        } };
+        if (!originalRequest) {
+            originalRequest = JSON.parse(JSON.stringify(p));
+            assert.equal(server.handle(p).revision, 1);
+            remote = JSON.parse(JSON.stringify(first.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE
+                .readLevelSave(first.storage, p, p.level).envelope));
+            remote.cloud = { status: 'synced', revision: 1 };
+            return { success: false, networkError: true };
+        }
+        assert.equal(p.saveRequestId, originalRequest.saveRequestId);
+        assert.equal(p.baseRevision, originalRequest.baseRevision);
+        return { success: true, status: 200, data: server.handle(p) };
+    };
+    first = harness({ transport });
+    await first.context.maybeRestoreLevelFromCloud(first.context.getAuthenticatedStudentSession(), 2);
+    const capture = payload(first);
+    capture.progressionMarkersJson = JSON.stringify({
+        ...first.gameState.captureLevelSnapshot(), companyName: first.gameState.player.companyName
+    });
+    await first.context.sync.syncProgress(capture);
+    remote.snapshot.round = 5;
+    remote.snapshot.cash = 9876;
+    const newer = { ...originalRequest, saveRequestId: 'independent-writer-request', baseRevision: 1,
+        currentRound: 5, currentCash: 9876,
+        progressionMarkersJson: JSON.stringify({ ...remote.snapshot, companyName: remote.snapshot.player.companyName }) };
+    newer.contentHash = first.context.WA_GOLD_RUSH_SAVE_PROTOCOL.computeContentHash(newer);
+    assert.equal(server.handle(newer).revision, 2);
+    remote.cloud.revision = 2;
+    if (unsentLocalWork) {
+        first.gameState.round = 6;
+        first.gameState.cash = 3141;
+        assert.equal(first.gameState.saveToLocalStorage(), true);
+    }
+    const second = harness({ storage: first.storage, transport });
+    vm.runInContext('syncPlayerRecord = () => {};', second.context);
+    await vm.runInContext('retryCloudRecovery()', second.context);
+    assert.equal(second.context.sync.queueLength(), 0);
+    assert.equal(second.context.getCloudUploadHold(), unsentLocalWork ? 'cloud_conflict' : '');
+    assert.equal(second.gameState.round, unsentLocalWork ? 6 : 5);
+    assert.equal(second.gameState.cash, unsentLocalWork ? 3141 : 9876);
+    if (unsentLocalWork) {
+        const local = second.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.readLevelSave(second.storage, originalRequest, 2);
+        assert.equal(local.envelope.cloud.status, 'pending');
+        assert.equal(local.envelope.cloud.revision, 1);
+    }
+    assert.equal(server.rows.get(originalRequest.progressKey).revision, 2, 'receipt retry creates no third write');
+    assert.equal(server.receipts.size, 2);
+});
+}
+
+test('diagnostic build version accepts only dev or generated numeric run-attempt markers', () => {
+    const h = harness();
+    for (const [configured, expected] of [
+        ['dev', 'dev'], ['123456789-2', '123456789-2'],
+        ['private-class-SC-1', 'unknown'], ['123-4\n', 'unknown'],
+        [' 123-4 ', 'unknown'], [123, 'unknown'], [null, 'unknown'], [undefined, 'unknown']
+    ]) {
+        h.context.WA_GOLD_RUSH_RUNTIME_CONFIG.version = configured;
+        assert.equal(h.context.sync.getDiagnostics({ level: 2 }).buildVersion, expected);
+    }
+});
+
+test('Retry reads cloud for malformed, schema and persisted-conflict saves without writing or unlocking them', async () => {
+    for (const protection of ['malformed', 'schema', 'persisted_conflict']) {
+        let remote;
+        const h = harness({ transport: async (name, p) => {
+            assert.equal(name, 'getStudentProgress', 'protected saves are read-only during recovery');
+            return { success: true, status: 200, data: {
+                ok: true, contractVersion: 'ggr.getStudentProgress.v2', progressKey: p.progressKey,
+                found: true, revision: 3, runGeneration: remote.generation, save: remote
+            } };
+        } });
+        payload(h);
+        const store = h.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE;
+        const identity = { classCode: '6B', studentCode: 'SC-1' };
+        const key = store.buildSaveKey(identity, 2);
+        const ledgerKey = store.buildLedgerKey(identity);
+        remote = JSON.parse(h.storage.getItem(key));
+        const local = JSON.parse(h.storage.getItem(key));
+        if (protection === 'malformed') h.storage.setItem(key, '{malformed-save');
+        else if (protection === 'schema') {
+            local.storageSchemaVersion = 999;
+            h.storage.setItem(key, JSON.stringify(local));
+        } else {
+            const ledger = JSON.parse(h.storage.getItem(ledgerKey));
+            ledger.levelRuns['2'].cloudUploadHold = 'cloud_conflict';
+            h.storage.setItem(ledgerKey, JSON.stringify(ledger));
+        }
+        h.context.loadLevelGameForSession(h.context.getAuthenticatedStudentSession(), 2);
+        vm.runInContext('gameState.saveLocked = true;', h.context);
+        const raw = h.storage.getItem(key);
+        const rawLedger = h.storage.getItem(ledgerKey);
+        await vm.runInContext('retryCloudRecovery()', h.context);
+        assert.equal(h.calls.length, 1, protection);
+        assert.equal(h.calls[0].name, 'getStudentProgress', protection);
+        assert.equal(h.gameState.saveLocked, true, protection);
+        assert.equal(h.storage.getItem(key), raw, protection);
+        assert.equal(h.storage.getItem(ledgerKey), rawLedger, protection);
+        assert.equal(h.context.getLevelLoadState().status, 'protected', protection);
+        assert.equal(h.context.getLevelLoadState().reason, 'found', protection);
+    }
 });

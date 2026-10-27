@@ -327,6 +327,8 @@
         if (!storage) return { ok: false, reason: 'storage_unavailable' };
         const validation = validateEnvelope(envelope, expected);
         if (!validation.ok) return { ok: false, reason: validation.reason };
+        const ledgerProtection = getLedgerProtection(storage, validation.identity);
+        if (ledgerProtection) return { ok: false, reason: ledgerProtection };
         const ledger = readLedger(storage, validation.identity);
         const run = ledger.levelRuns[String(validation.level)];
         // A save from an earlier run (pre-reset) must never resurrect that run.
@@ -415,12 +417,33 @@
     function writeLedger(storageInput, ledger) {
         const storage = resolveStorage(storageInput);
         const identity = normalizeIdentity(ledger?.owner || {});
-        if (!storage || !identity) return false;
+        if (!storage || !identity || getLedgerProtection(storage, identity)) return false;
         try {
             storage.setItem(buildLedgerKey(identity), JSON.stringify({ ...ledger, owner: identity, storageSchemaVersion: STORAGE_SCHEMA_VERSION }));
             return true;
         } catch (_) {
             return false;
+        }
+    }
+
+    function getLedgerProtection(storageInput, identityInput) {
+        const storage = resolveStorage(storageInput);
+        const identity = normalizeIdentity(identityInput);
+        if (!storage || !identity) return 'ledger_unavailable';
+        try {
+            const parsed = readJson(storage, buildLedgerKey(identity));
+            if (parsed.raw === null) return '';
+            if (parsed.error || !isPlainObject(parsed.value)) return 'ledger_invalid';
+            const ledger = parsed.value;
+            if (ledger.storageSchemaVersion !== STORAGE_SCHEMA_VERSION) return 'ledger_schema_unsupported';
+            const owner = normalizeIdentity(ledger.owner);
+            if (!owner || owner.classCode !== identity.classCode || owner.studentCode !== identity.studentCode) {
+                return 'ledger_owner_mismatch';
+            }
+            if (!isPlainObject(ledger.levelRuns) || !isPlainObject(ledger.progressionStateByLevel)) return 'ledger_invalid';
+            return '';
+        } catch (_) {
+            return 'ledger_read_failed';
         }
     }
 
@@ -897,6 +920,8 @@
     }
 
     function getLevelWriteProtection(storageInput, identityInput, levelInput) {
+        const ledgerProtection = getLedgerProtection(storageInput, identityInput);
+        if (ledgerProtection) return ledgerProtection;
         const hold = getUploadHold(storageInput, identityInput, levelInput);
         if (hold && !['unverified_new_slot', 'cloud_state_unknown', 'cloud_restore_failed'].includes(hold)) return hold;
         const current = readLevelSave(storageInput, identityInput, levelInput);

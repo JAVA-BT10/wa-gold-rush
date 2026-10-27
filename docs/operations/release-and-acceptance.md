@@ -16,6 +16,13 @@ and teacher dashboard hydration are not proof of an earlier dashboard-to-game
 restore path. Supplied version-history evidence establishes replacement by a
 different run, not safe persistence merely because SaveProgress returned 200.
 
+**Remaining promotion blockers:** deployed server-verifiable student proof,
+conditional writer/receipt feasibility, exact authorised retrieval, migration/
+configuration consistency checks, run-aware profile reconciliation, measured
+browser/CORS/capacity acceptance, and coordinated old-writer containment.
+Cloud reset adapter/backend and bounded history archival are deferred. Shipping
+this client guard repair does not clear any of these gates.
+
 ## Stages
 
 | Stage | Description | Gate |
@@ -97,6 +104,8 @@ or an opaque, short-lived, revocable server session issued following real
 identity, not economy or arbitrary tokens. A tenant integration must install the
 external proof provider/transport; do not casually add economy to auth storage.
 No homemade signing/encryption, client hash or PIN-derived bearer proof.
+The browser's per-write `sessionInstanceId` is only a local lifecycle/race
+marker. It is not sent as proof and must never be accepted as authentication.
 Prefer secure same-origin HttpOnly session handling where feasible; cross-origin
 cookie or Authorization transport requires actual browser/CORS testing. Never
 persist bearer proof in progress envelopes, queues, diagnostics or public config.
@@ -349,6 +358,14 @@ Command: `node --test tests/*.test.js` (from the repository root).
 - `tests/per-level-architecture.test.js` covers the per-level architecture, the reference save server, gated sync/restore, leaderboards and Level 6 gating.
 - `tests/competition-validation.test.js` covers wrapped review/conflict markers and strict snapshot count validation.
 - `tests/pipeline-validation.test.js` exercises the actual validation-only build and deployment test gates without tenant secrets.
+- `tests/pages-build.test.js` executes generated config through the packaged registries.
+- `tests/save-recovery.test.js` covers real client-adapter/transport harness startup,
+  dispatch holds, recoverable reads, session races and receipt retries.
+- `tests/cloud-adoption.test.js` covers journal failure stages, strict snapshots
+  and same-millisecond delayed acknowledgements.
+- `tests/save-contract.test.js` covers conversion, proof transport, profile
+  roundtrips and explicit unresolved profile evidence, plus reference receipt
+  crash/capacity semantics. These are mocks/harnesses, not a deployed service.
 
 PRs build and verify a validation-only Pages artifact without tenant secrets, then run all regression suites. Deployable main revisions build and verify the deployment artifact, run the same required tests, then upload and deploy that artifact. Failed builds or tests block deployment; PR and non-main artifacts are not deployed.
 
@@ -360,7 +377,13 @@ Terminology meanings are recorded here without changing repository field names:
 - `CurrentLevel` = level currently being played.
 - `ProgressedLevel` = highest authorized playable level.
 
-This PR makes no YearLevel migration, no AssignedLevel refactor, and no naming changes. Existing repository contracts, canonical `Class|Student|Level` identities, and browser storage key formats are preserved. There are no SharePoint schema or Power Automate contract changes, progression/teacher-approval policy changes, or tenant deployment logic.
+This repair makes no YearLevel migration, AssignedLevel refactor, or automatic
+column renaming. Canonical `Class|Student|Level` identities and slot key formats
+are preserved. It ships client guards, proof/conversion extension points and
+disabled runtime deployment wiring; it does **not** apply live SharePoint schema
+changes or deploy Power Automate services. The conditional contracts and tenant
+actions above remain acceptance-gated. Progression/teacher-approval authority
+is unchanged.
 
 Live tenant SharePoint/flow mappings remain under verification. Repository contract tests do not establish live tenant column mappings; tenant mapping evidence and acceptance remain separate from this hardening work.
 

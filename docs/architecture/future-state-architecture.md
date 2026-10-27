@@ -212,7 +212,10 @@ The full specification is in [save-protocol-v2](../power-automate/save-protocol-
   localStorage is not a cross-tab transactional database; ambiguous concurrent
   journal changes require review. See the controlling
   [operations runbook](../operations/release-and-acceptance.md).
-- **Rollback:** v2 queue items remain queued (not replayed) while the flag is OFF. With it ON, legacy items are preserved in `wa_gr_sync_quarantine` as `legacy_item_held_v2_active`, not upgraded or sent. They require manual reconciliation and do not automatically replay after rollback over newer v2 data. Quarantine is bounded (50 entries); it is not an indefinite archive.
+- **Rollback:** progress items remain held while prerequisites are OFF or
+  unverified. Legacy captures remain intact in the queue, not upgraded or sent;
+  previously quarantined items remain recovery evidence. Neither automatically
+  replays over newer v2 data. Queues/quarantine are bounded, not permanent archives.
 
 ## 8. Leaderboards (Implemented (repo) + mock-tested; server leaderboard planned)
 
