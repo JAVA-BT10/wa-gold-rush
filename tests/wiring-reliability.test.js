@@ -1312,6 +1312,53 @@ test('dashboard progress joins are StudentCode-first with StudentID only as fall
     assert.equal(studentB.gameState.round, 5);
 });
 
+test('dashboard joins progress by class and reports rows that cannot safely match', async () => {
+    const dashboard = setupTeacherDashboardGlobals({
+        callFlow: async () => ({
+            success: true,
+            status: 200,
+            data: {
+                students: [
+                    { StudentCode: 'SHARED', StudentID: 'id-a', ClassCode: '6A', Level: 2 },
+                    { StudentCode: 'SHARED', StudentID: 'id-b', ClassCode: '6B', Level: 2 },
+                    { StudentCode: 'UNIQUE', StudentID: 'id-c', ClassCode: '6C', Level: 2 },
+                    { StudentCode: 'NO-MATCH', StudentID: 'id-d', ClassCode: '6D', Level: 2 }
+                ],
+                teachers: [],
+                progress: [
+                    { StudentCode: 'SHARED', ClassCode: '6A', Level: 2, CurrentRound: 3 },
+                    { StudentCode: 'SHARED', ClassCode: '6B', Level: 2, CurrentRound: 4 },
+                    { StudentCode: 'SHARED', Level: 2, CurrentRound: 9 },
+                    { StudentCode: 'UNIQUE', Level: 2, CurrentRound: 5 },
+                    { StudentCode: 'NO-MATCH', ClassCode: '6E', Level: 2, CurrentRound: 8 },
+                    { StudentID: 'id-d', ClassCode: '6D', Level: 2, CurrentRound: 6 }
+                ]
+            }
+        })
+    });
+    const result = await dashboard.hydrateDashboardFromFlow();
+    assert.equal(result.success, true);
+    assert.deepEqual(dashboard.students.map(student => student.gameState.round), [3, 4, 5, 6]);
+    assert.deepEqual(dashboard.students.map(student => student.progressRecords.length), [1, 1, 1, 1]);
+    assert.equal(result.unmatchedProgressCount, 2);
+    assert.equal(result.statusTone, 'info');
+    assert.match(result.statusMessage, /2 progress records could not be matched/);
+});
+
+test('dashboard recognizes legacy List timestamps when selecting latest progress', () => {
+    const dashboard = setupTeacherDashboardGlobals();
+    dashboard.hydrateDashboardFromNormalizedData({
+        students: [{ StudentCode: 'SC-1', ClassCode: '6B', Level: 2 }],
+        teachers: [],
+        progress: [
+            { StudentCode: 'SC-1', ClassCode: '6B', Level: 4, CurrentRound: 2, LaastPlayedUtc: '2025-01-01' },
+            { StudentCode: 'SC-1', ClassCode: '6B', Level: 2, CurrentRound: 7, LaastPlayedUtc: '2025-02-01' }
+        ]
+    }, { enabled: true });
+    assert.equal(dashboard.students[0].gameState.round, 7);
+    assert.equal(dashboard.students[0].gameState.lastPlayed, '2025-02-01');
+});
+
 test('dashboard hydration fails closed when teacher session is missing', async () => {
     const dashboard = setupTeacherDashboardGlobals({
         session: false,

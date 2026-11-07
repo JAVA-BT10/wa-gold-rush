@@ -691,7 +691,7 @@ class TeacherDashboard {
             investmentProfile: optionalText(['investmentProfile', 'InvestmentProfile']),
             updatedAt: optionalText([
                 'updatedAt', 'UpdatedAt', 'lastPlayed', 'LastPlayed', 'LastPlayedUtc',
-                'clientTimestampUtc', 'ClientTimestampUtc', 'Modified'
+                'LaastPlayedUtc', 'clientTimestampUtc', 'ClientTimestampUtc', 'UpdatedUtc', 'Modified'
             ])
         };
     }
@@ -824,6 +824,12 @@ class TeacherDashboard {
         // roster, teacher or progress data is merged in.
         const progressByCode = new Map();
         const progressById = new Map();
+        const rosterCodeCounts = new Map();
+        const rosterIdCounts = new Map();
+        normalized.students.forEach((student) => {
+            if (student.studentCodeKey) rosterCodeCounts.set(student.studentCodeKey, (rosterCodeCounts.get(student.studentCodeKey) || 0) + 1);
+            if (student.studentIdKey) rosterIdCounts.set(student.studentIdKey, (rosterIdCounts.get(student.studentIdKey) || 0) + 1);
+        });
         normalized.progress.forEach((record) => {
             if (record.studentCodeKey) {
                 if (!progressByCode.has(record.studentCodeKey)) progressByCode.set(record.studentCodeKey, []);
@@ -834,21 +840,24 @@ class TeacherDashboard {
             }
         });
 
+        const matchedProgress = new Set();
         this.students = normalized.students.map((student) => {
-            let rows = student.studentCodeKey ? (progressByCode.get(student.studentCodeKey) || []) : [];
+            const matchingRows = (rows, rosterCount) => rows.filter((row) => {
+                if (row.classCode && student.classCode) return row.classCode === student.classCode;
+                return rosterCount === 1;
+            });
+            let rows = matchingRows(progressByCode.get(student.studentCodeKey) || [], rosterCodeCounts.get(student.studentCodeKey));
             if (!rows.length && student.studentIdKey) {
-                rows = progressById.get(student.studentIdKey) || [];
+                rows = matchingRows(progressById.get(student.studentIdKey) || [], rosterIdCounts.get(student.studentIdKey));
             }
-            const classRows = student.classCode
-                ? rows.filter(row => !row.classCode || row.classCode === student.classCode)
-                : rows;
-            return this.buildHydratedStudent(student, classRows.length ? classRows : rows);
+            rows.forEach(row => matchedProgress.add(row));
+            return this.buildHydratedStudent(student, rows);
         });
         this.teachers = normalized.teachers;
         this.progress = normalized.progress;
         this.calculateClassStats();
 
-        return this.successResult({ data: normalized });
+        return this.successResult({ data: normalized, unmatchedProgressCount: normalized.progress.length - matchedProgress.size });
     }
 
     clearDashboardData() {
@@ -1000,21 +1009,26 @@ class TeacherDashboard {
 
             const counts = this.getHydrationCounts();
             const missingArrays = inspection.missingArrays;
+            const unmatchedProgressCount = hydrated.unmatchedProgressCount;
             const summary = `Loaded from Microsoft Lists: ${counts.students} student${counts.students === 1 ? '' : 's'}, ${counts.teachers} teacher${counts.teachers === 1 ? '' : 's'}, ${counts.progress} progress record${counts.progress === 1 ? '' : 's'}.`;
+            const notices = [
+                missingArrays.length ? `Flow response did not include: ${missingArrays.join(', ')}.` : '',
+                unmatchedProgressCount ? `${unmatchedProgressCount} progress record${unmatchedProgressCount === 1 ? '' : 's'} could not be matched to the roster; check student and class codes.` : ''
+            ].filter(Boolean);
             const response = this.successResult({
                 source: 'flow',
                 status: result.status,
-                statusTone: missingArrays.length ? 'info' : 'success',
-                statusMessage: missingArrays.length
-                    ? `${summary} Flow response did not include: ${missingArrays.join(', ')}.`
-                    : summary,
+                statusTone: notices.length ? 'info' : 'success',
+                statusMessage: [summary, ...notices].join(' '),
                 counts,
                 missingArrays,
+                unmatchedProgressCount,
                 data: hydrated.data,
                 diagnostics: this.setHydrationDiagnostics({
                     hydrationFailed: false,
                     failureReason: '',
                     missingArrays,
+                    unmatchedProgressCount,
                     studentsReturned: counts.students,
                     teachersReturned: counts.teachers,
                     progressReturned: counts.progress
