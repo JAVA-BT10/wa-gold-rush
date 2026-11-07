@@ -142,6 +142,12 @@ class LevelAccessGuard {
         return LevelAccessGuard.readSavedProgressionState(requiredLevel, storage)?.checkpointStatus === 'quiz_passed';
     }
 
+    static isCheckpointApproved(requiredLevel, storage) {
+        const state = LevelAccessGuard.readSavedProgressionState(requiredLevel, storage);
+        return state?.checkpointStatus === 'quiz_passed'
+            && String(state.approvalStatus || '').trim().toLowerCase() === 'approved';
+    }
+
     /**
      * Cross-device unlock is only possible when a GGR_GetStudentProgress flow
      * endpoint ("getStudentProgress") is configured for the student pages.
@@ -182,7 +188,7 @@ class LevelAccessGuard {
         const root = options.globalObj || (typeof window !== 'undefined' ? window : globalThis);
         const storage = options.storage || root?.localStorage;
         const level = Number(requiredLevel);
-        if (!Number.isFinite(level)) return { unlocked: false, reason: 'invalid_level' };
+        if (!Number.isInteger(level) || ![2, 3, 4, 5].includes(level)) return { unlocked: false, reason: 'invalid_level' };
         if (!LevelAccessGuard.isRemoteProgressConfigured(root)) {
             return { unlocked: false, reason: 'flow_unavailable' };
         }
@@ -190,24 +196,39 @@ class LevelAccessGuard {
         if (!session) return { unlocked: false, reason: 'missing_student_session' };
         const extract = root?.WA_GOLD_RUSH_PROGRESS_SNAPSHOT?.extractCheckpointFields;
         if (typeof extract !== 'function') return { unlocked: false, reason: 'snapshot_unavailable' };
+        const progressKey = [session.classCode, session.studentCode.toUpperCase(), level].join('|');
+        let auth = root?.WA_GOLD_RUSH_STUDENT_PROGRESS_AUTH;
+        if (!auth && typeof require === 'function') auth = require('../../shared/student-progress-auth.js');
+        if (!auth?.authorize) return { unlocked: false, reason: 'auth_module_unavailable' };
 
         const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 8000;
         const controller = typeof AbortController === 'function' ? new AbortController() : null;
         const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+        let authTimer;
         let result;
         try {
+            const authorization = await Promise.race([
+                auth.authorize({ operation: 'get', identity: session, level, progressKey }, root),
+                new Promise(resolve => {
+                    authTimer = setTimeout(() => resolve({ ok: false, reason: 'auth_timeout' }), timeoutMs);
+                })
+            ]);
+            clearTimeout(authTimer);
+            if (!authorization?.ok) return { unlocked: false, reason: authorization?.reason || 'auth_proof_unavailable' };
             result = await root.WA_GOLD_RUSH_POWER_AUTOMATE.callFlow('getStudentProgress', {
                 studentCode: session.studentCode,
                 classCode: session.classCode,
                 level
             }, {
-                requireApiKey: true,
+                ...authorization.options,
+                requireApiKey: false,
                 ...(controller ? { signal: controller.signal } : {})
             });
         } catch (error) {
             return { unlocked: false, reason: 'flow_failed', error: error?.message || String(error) };
         } finally {
             if (timer) clearTimeout(timer);
+            clearTimeout(authTimer);
         }
         if (!result?.success || result?.data?.ok === false) {
             return { unlocked: false, reason: 'flow_failed', error: result?.error || 'Progress lookup failed.' };
@@ -217,10 +238,11 @@ class LevelAccessGuard {
         const records = LevelAccessGuard.extractProgressRecords(result.data).filter((record) => {
             if (!record || typeof record !== 'object') return false;
             // Only records explicitly belonging to the signed-in student (and
-            // their class, when the record carries one) may unlock a level.
+            // their exact class and played level) may unlock a level.
             const recordCode = String(record.studentCode || record.StudentCode || '').trim().toUpperCase();
             const recordClass = String(record.classCode || record.ClassCode || '').trim().toUpperCase();
-            return recordCode === codeKey && (!recordClass || recordClass === session.classCode);
+            const recordLevel = Number(record.level ?? record.Level);
+            return recordCode === codeKey && recordClass === session.classCode && recordLevel === level;
         });
         const passed = records
             .map((record) => extract(record, level))
@@ -239,7 +261,8 @@ class LevelAccessGuard {
             approvalTimestamp: passed.approvalTimestamp || null
         });
         if (!recorded) return { unlocked: false, reason: 'storage_failed', error: 'Could not record progression evidence.' };
-        return { unlocked: true, reason: 'flow' };
+        const approved = passed.approvalStatus === 'approved';
+        return { unlocked: approved, reason: approved ? 'flow' : 'approval_required' };
     }
 
     getSavedProgressionState(requiredLevel) {
@@ -251,6 +274,7 @@ class LevelAccessGuard {
      * (only when configured) before denying access.
      */
     async resolveAccess(options = {}) {
+        if (this.assignedLevel === 1 && LevelAccessGuard.isPlayableLevel(1)) return true;
         if (!LevelAccessGuard.readStudentSession(options.storage, options.globalObj)) return false;
         if (this.isLevelAccessible()) return true;
         const requiredLevel = this.getRequiredCheckpointLevel();
@@ -259,6 +283,7 @@ class LevelAccessGuard {
     }
 
     isLevelAccessible() {
+        if (this.assignedLevel === 1 && LevelAccessGuard.isPlayableLevel(1)) return true;
         const session = LevelAccessGuard.readStudentSession();
         if (!session) {
             return false;
@@ -269,11 +294,11 @@ class LevelAccessGuard {
         if (this.assignedLevel <= LevelAccessGuard.getRosterEntitledLevel(session) || this.assignedLevel <= 2) {
             return true;
         }
-        const state = this.getSavedProgressionState(this.getRequiredCheckpointLevel());
-        return state?.checkpointStatus === 'quiz_passed';
+        return LevelAccessGuard.isCheckpointApproved(this.getRequiredCheckpointLevel());
     }
 
     getAccessDenialReason() {
+        if (this.assignedLevel === 1 && LevelAccessGuard.isPlayableLevel(1)) return null;
         const session = LevelAccessGuard.readStudentSession();
         if (!session) {
             return 'You must sign in with your Class Code, Student ID and PIN before playing.';
@@ -293,19 +318,20 @@ class LevelAccessGuard {
         const approvalStatus = state?.approvalStatus || null;
 
         if (!checkpointStatus) {
-            return `You must complete the Level ${requiredLevel} progression checkpoint quiz to unlock this level.`;
+            return `You must pass the Level ${requiredLevel} checkpoint quiz and receive teacher/admin approval to unlock this level.`;
         }
         if (checkpointStatus !== 'quiz_passed') {
             return `Level ${requiredLevel} quiz status: ${checkpointStatus}.`;
         }
-        if (approvalStatus && approvalStatus !== 'approved') {
-            return `Level ${requiredLevel} quiz passed. Last review status: ${approvalStatus}.`;
+        if (String(approvalStatus || '').trim().toLowerCase() !== 'approved') {
+            return `Level ${requiredLevel} quiz passed. Teacher/admin approval is required${approvalStatus ? ` (status: ${approvalStatus})` : ''}.`;
         }
 
         return null;
     }
 
     enforceAccess() {
+        if (this.assignedLevel === 1 && LevelAccessGuard.isPlayableLevel(1)) return;
         if (!LevelAccessGuard.readStudentSession()) {
             LevelAccessGuard.getSessionApi()?.requireSessionOrRedirect({ loginPath: '../../index.html' });
             return;

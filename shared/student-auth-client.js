@@ -102,6 +102,9 @@
             error = response.message || result.error || 'Sign-in failed. Check your class code, student ID, and PIN.';
         } else if (!response.identityValid) {
             error = `Your class roster record is incomplete (${response.identityErrors.join(', ')}). Ask your teacher to check your entry in GGR_Students.`;
+            if (response.identityErrors.includes('assignedLevel')) {
+                error += ' Your teacher should check that GGR_LoginStudent returns the roster assigned game level (1–5) as YearLevel, Level, or assignedLevel, with no conflicting values.';
+            }
         } else if (!matchesRequest) {
             error = 'The roster record returned does not match the class code and student ID entered. Ask your teacher for help.';
         }

@@ -1204,6 +1204,54 @@ test('dashboard hydration loads students/teachers/progress from flow response (f
     assert.equal(global.localStorage.getItem('wa_gold_rush_teacher_list'), null);
 });
 
+test('dashboard reads snapshot metrics for each level without inventing unplayed progress', () => {
+    const dashboard = setupTeacherDashboardGlobals();
+    for (const level of [2, 3, 4, 5]) {
+        const snapshot = {
+            schemaVersion: 2, assignedLevel: level, round: 9, cash: 25.5, netWorth: 225.5,
+            savedAt: '2026-10-01T12:00:00Z',
+            player: { studentCode: 'sc-1', classCode: '6b' },
+            ownedMines: { first: { owned: true }, second: { owned: false } },
+            machinery: [{ id: 'sieve' }], totalProfitLoss: 20,
+            roundHistory: [{ round: 1 }, { round: 2 }],
+            companyName: 'Synthetic company', strategyLabel: 'Safe-focused',
+            investmentProfile: { lowRisk: 10 }
+        };
+        const result = dashboard.hydrateDashboardFromNormalizedData({
+            students: [
+                { StudentCode: 'SC-1', ClassCode: '6B', YearLevel: level },
+                { StudentCode: 'SC-2', ClassCode: '6B', YearLevel: level }
+            ], teachers: [], progress: [{
+                StudentCode: 'SC-1', ClassCode: '6B', Level: level,
+                CurrentRound: 9, NetWorth: 225.5,
+                Modified: '2026-11-01T12:00:00Z',
+                ProgressionMarkersJson: JSON.stringify(snapshot)
+            }]
+        }, { enabled: true });
+        assert.equal(result.success, true);
+        const state = dashboard.students[0].gameState;
+        assert.equal(state.cash, 25.5);
+        assert.equal(state.ownedMines, 1);
+        assert.equal(state.machinery, 1);
+        assert.equal(state.averageRoundProfit, 10);
+        assert.equal(state.companyName, 'Synthetic company');
+        assert.equal(state.lastPlayed, snapshot.savedAt);
+        assert.equal(state.listModifiedAt, '2026-11-01T12:00:00Z');
+        assert.equal(dashboard.students[1].gameState.netWorth, null);
+        assert.equal(dashboard.students[1].gameState.round, null);
+        assert.equal(dashboard.classStats.averageNetWorth, 225.5);
+        assert.equal(dashboard.classStats.averageRound, 9);
+
+        const foreign = dashboard.normalizeDashboardProgress({
+            StudentCode: 'SC-2', ClassCode: '6B', Level: level,
+            ProgressionMarkersJson: JSON.stringify(snapshot)
+        });
+        assert.equal(foreign.snapshotError, 'snapshot_identity_or_level_mismatch');
+        assert.equal(foreign.cash, undefined);
+        assert.equal(foreign.companyName, undefined);
+    }
+});
+
 test('dashboard hydration accepts partial flow response when teachers array is missing', async () => {
     const dashboard = setupTeacherDashboardGlobals({
         callFlow: async () => ({
@@ -1701,7 +1749,7 @@ function buildStudentGameHarness({ level = 2, storage = createStorage(), extraGl
     return { context, gameState, getElement, storage, loadResult };
 }
 
-test('student checkpoint progression: goal opens quiz, pass persists quiz_passed, continue opens next level', async () => {
+test('student checkpoint progression: a passed quiz stays locked until teacher approval', async () => {
     const storage = createSessionStorage();
     const level2 = buildStudentGameHarness({ level: 2, storage });
     const { context, gameState, getElement } = level2;
@@ -1727,18 +1775,25 @@ test('student checkpoint progression: goal opens quiz, pass persists quiz_passed
     assert.equal(level2State.approvalStatus, 'pending');
     assert.equal(context.__syncCalls, 1);
 
-    // Continue navigates to Level 3 instead of only closing the modal.
     const continueBtn = getElement('quizContinueButton');
-    assert.equal(continueBtn.textContent, 'Continue to Level 3 →');
+    assert.equal(continueBtn.textContent, 'Keep Playing While Awaiting Approval');
     await continueBtn.onclick();
-    assert.match(context.location.href, /level-2-tycoon\/index\.html\?level=3$/);
+    assert.match(context.location.href, /level-2-tycoon\/index\.html\?level=2$/);
 
     // The access guard reads the same saved state the game wrote.
     global.localStorage = storage;
-    assert.equal(new context.LevelAccessGuardClass(3).isLevelAccessible(), true);
+    assert.equal(new context.LevelAccessGuardClass(3).isLevelAccessible(), false);
     assert.equal(context.LevelAccessGuardClass.isCheckpointPassed(2, storage), true);
+    assert.equal(context.LevelAccessGuardClass.isCheckpointApproved(2, storage), false);
     assert.equal(new context.LevelAccessGuardClass(4).isLevelAccessible(), false);
 
+    saveStore.recordProgressionEvidence(storage, identity, 2, {
+        checkpointStatus: 'quiz_passed', approvalStatus: 'approved',
+        approvalTimestamp: new Date(Date.now() + 1000).toISOString(), approverName: 'Test teacher'
+    });
+    assert.equal(new context.LevelAccessGuardClass(3).isLevelAccessible(), true);
+    await continueBtn.onclick();
+    assert.match(context.location.href, /level-2-tycoon\/index\.html\?level=3$/);
     // Level 3 starts with its own (not yet passed) checkpoint.
     const level3 = buildStudentGameHarness({ level: 3, storage });
     assert.equal(await level3.context.resolveCurrentLevelAccess(), true);
@@ -1750,7 +1805,7 @@ test('home page level cards use the same saved-state reader as the level access 
     const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
     assert.ok(html.includes('<script src="levels/level-2-tycoon/level-access-guard.js"></script>'));
     assert.ok(html.includes('<script src="shared/progression-snapshot.js"></script>'));
-    assert.match(html, /function isCheckpointApproved\(requiredLevel\)\s*\{[\s\S]*LevelAccessGuard\.isCheckpointPassed\(requiredLevel\)/);
+    assert.match(html, /function isCheckpointApproved\(requiredLevel\)\s*\{[\s\S]*LevelAccessGuard\.isCheckpointApproved\(requiredLevel\)/);
     assert.match(html, /refreshRemoteProgression\(\);/);
 });
 
@@ -1787,6 +1842,9 @@ test('cross-device unlock uses getStudentProgress only when configured', async (
     const calls = [];
     const globalObj = {
         WA_GOLD_RUSH_PROGRESS_SNAPSHOT: snapshotApi,
+        WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER: {
+            getProof: async () => ({ authorization: 'Bearer test-proof' })
+        },
         WA_GOLD_RUSH_POWER_AUTOMATE: {
             resolveFlowEndpoint: (name) => (name === 'getStudentProgress' ? 'https://example.com/get-progress' : ''),
             isPlaceholderEndpoint: () => false,
@@ -1796,7 +1854,7 @@ test('cross-device unlock uses getStudentProgress only when configured', async (
                     success: true,
                     data: {
                         ok: true,
-                        progress: [{ StudentCode: 'SC-1', ClassCode: '6B', Level: 2, CheckpointStatus: 'quiz_passed', QuizScore: 5 }]
+                        progress: [{ StudentCode: 'SC-1', ClassCode: '6B', Level: 2, CheckpointStatus: 'quiz_passed', QuizScore: 5, ApprovalStatus: { Value: 'Approved' } }]
                     }
                 };
             }
@@ -1923,7 +1981,7 @@ test('checkpoint approval is disabled when GGR_SaveCheckpointApproval is not con
     assert.match(CheckpointApproval.generateQuizReviewHTML(null, {}), /not stored/);
 });
 
-test('checkpoint approval forwards client session reviewer and canonical key through mocked flow', async () => {
+test('checkpoint approval requires a passed quiz and verifies the decision through read-back', async () => {
     // Verifies payload wiring, not authenticated identity or live flow authorization.
     const calls = [];
     const dashboard = setupTeacherDashboardGlobals({
@@ -1931,13 +1989,16 @@ test('checkpoint approval forwards client session reviewer and canonical key thr
         callFlow: async (flowName, payload) => {
             calls.push({ flowName, payload });
             if (flowName === 'saveCheckpointApproval') return { success: true, status: 200, data: { ok: true } };
-            return { success: true, status: 200, data: { ok: true, students: [], teachers: [], progress: [] } };
+            return { success: true, status: 200, data: {
+                ok: true, students: [{ StudentCode: 'sc-1', ClassCode: '6b', YearLevel: 2 }], teachers: [],
+                progress: [{ StudentCode: 'sc-1', ClassCode: '6b', Level: 2, CheckpointStatus: 'quiz_passed', ApprovalStatus: { Value: 'Approved' } }]
+            } };
         }
     });
     const CheckpointApproval = require('../teacher/checkpoint-approval.js');
     const result = await CheckpointApproval.saveApproval({
         dashboard,
-        student: { studentCode: 'sc-1', classCode: '6b' },
+        student: { studentCode: 'sc-1', classCode: '6b', checkpointsByLevel: { 2: { checkpointStatus: 'quiz_passed' } } },
         level: '2',
         status: 'approved'
     });
@@ -1955,6 +2016,99 @@ test('checkpoint UI source avoids localStorage and prompted reviewer input', () 
         assert.doesNotMatch(source, /localStorage/, `${file} must not use localStorage`);
         assert.doesNotMatch(source, /\bprompt\(/, `${file} must not prompt for reviewer`);
     }
+});
+
+test('teacher approval rejects an unpassed quiz, ambiguous acknowledgement, and stale read-back', async () => {
+    const CheckpointApproval = require('../teacher/checkpoint-approval.js');
+    for (const scenario of ['unpassed', 'ambiguous', 'stale']) {
+        const calls = [];
+        const dashboard = setupTeacherDashboardGlobals({
+            endpoints: { saveCheckpointApproval: 'https://example.com/save-approval' },
+            callFlow: async (name) => {
+                calls.push(name);
+                return { success: true, status: 200, data: scenario === 'ambiguous' ? {} : {
+                    ok: true, students: [], teachers: [], progress: []
+                } };
+            }
+        });
+        const result = await CheckpointApproval.saveApproval({
+            dashboard, level: 2, status: 'approved',
+            student: {
+                studentCode: 'SC-1', classCode: '6B',
+                checkpointsByLevel: { 2: { checkpointStatus: scenario === 'unpassed' ? 'quiz_available' : 'quiz_passed' } }
+            }
+        });
+        assert.equal(result.success, false, scenario);
+        assert.equal(calls.length, scenario === 'unpassed' ? 0 : scenario === 'ambiguous' ? 1 : 2);
+        if (scenario === 'stale') assert.equal(result.writeConfirmed, true);
+    }
+});
+
+test('Levels 2–5 preserve initial placement and require approval for later progression', () => {
+    const { LevelAccessGuard } = require('../levels/level-2-tycoon/level-access-guard.js');
+    const store = require('../shared/level-save-store.js');
+    for (const initial of [2, 3, 4, 5]) {
+        const storage = createSessionStorage({}, { assignedLevel: initial });
+        global.localStorage = storage;
+        assert.equal(new LevelAccessGuard(initial).isLevelAccessible(), true);
+        if (initial === 5) continue;
+        for (const status of [null, 'pending', 'retake_requested', 'rejected', 'approved']) {
+            const fresh = createSessionStorage({}, { assignedLevel: initial });
+            store.recordProgressionEvidence(fresh, { studentCode: 'SC-1', classCode: '6B' }, initial, {
+                checkpointStatus: 'quiz_passed', approvalStatus: status
+            });
+            global.localStorage = fresh;
+            assert.equal(new LevelAccessGuard(initial + 1).isLevelAccessible(), status === 'approved', `${initial}: ${status}`);
+        }
+    }
+    const noPass = createSessionStorage();
+    store.recordProgressionEvidence(noPass, { studentCode: 'SC-1', classCode: '6B' }, 2, {
+        checkpointStatus: 'quiz_available', approvalStatus: 'approved'
+    });
+    global.localStorage = noPass;
+    assert.equal(new LevelAccessGuard(3).isLevelAccessible(), false);
+});
+
+test('public Level 1 plays ten rounds without login, persistence, or leaderboard traffic', () => {
+    const storage = createStorage();
+    const elements = new Map();
+    const element = id => {
+        if (!elements.has(id)) elements.set(id, { ...createStubElement(id), addEventListener() {} });
+        return elements.get(id);
+    };
+    const timers = [];
+    let ready;
+    const context = {
+        console: { log() {}, warn() {}, error() {} },
+        document: {
+            addEventListener: (_, callback) => { ready = callback; },
+            getElementById: element
+        },
+        localStorage: storage,
+        setTimeout: callback => { timers.push(callback); return timers.length; },
+        clearTimeout() {}, setInterval() { return 1; }, clearInterval() {},
+        alert: message => assert.fail(message),
+        fetch: () => assert.fail('Guest practice must not send requests')
+    };
+    vm.runInNewContext(fs.readFileSync(require.resolve('../levels/level-1-basic/script.js'), 'utf8') + '\nthis.getState = () => gameState;', context);
+    ready();
+    element('investment-safe').value = '1';
+    element('investment-medium').value = '0';
+    element('investment-deep').value = '0';
+    for (let round = 0; round < 10; round += 1) {
+        context.playRound();
+        while (timers.length) timers.shift()();
+    }
+    assert.equal(context.getState().round, 11);
+    assert.equal(context.getState().gameOver, true);
+    assert.deepEqual(storage.__keys(), []);
+    const home = buildHomeLoginHarness({ loginImpl: async () => rosterLoginResponse() });
+    assert.equal(home.context.isLevelAccessible(home.context.LEVELS[0]), true);
+    assert.equal(home.context.isLevelAccessible(home.context.LEVELS[1]), false);
+    global.localStorage = storage;
+    const { LevelAccessGuard } = require('../levels/level-2-tycoon/level-access-guard.js');
+    assert.equal(new LevelAccessGuard(1).isLevelAccessible(), true);
+    assert.equal(new LevelAccessGuard(1).getAccessDenialReason(), null);
 });
 
 // ---------------------------------------------------------------------------
@@ -2241,14 +2395,18 @@ test('student import initializes assignment/progression only from valid Level 1�
 
 test('dashboard hydrates YearLevel and rejects conflicting levels instead of assuming L1', async () => {
     const calls = [];
+    let assignedLevel = 2;
     const dashboard = setupTeacherDashboardGlobals({
         endpoints: { upsertStudentProfile: 'https://example.com/upsert' },
         callFlow: async (name, payload) => {
             calls.push({ name, payload });
-            if (name === 'upsertStudentProfile') return { success: true, status: 200, data: { ok: true } };
+            if (name === 'upsertStudentProfile') {
+                assignedLevel = payload.Level;
+                return { success: true, status: 200, data: { ok: true } };
+            }
             return { success: true, status: 200, data: {
                 students: [
-                    { StudentCode: 'SC-1', LeaderboardName: 'Gold', ClassCode: '6B', YearLevel: 2, CurrentLevel: 2, ProgressedLevel: 2 },
+                    { StudentCode: 'SC-1', LeaderboardName: 'Gold', ClassCode: '6B', YearLevel: assignedLevel, CurrentLevel: 2, ProgressedLevel: 2 },
                     { StudentCode: 'SC-2', LeaderboardName: 'Silver', ClassCode: '6B', YearLevel: 2, Level: 3 }
                 ],
                 teachers: [], progress: [{ StudentCode: 'SC-2', ClassCode: '6B', Level: 4 }]
@@ -2267,6 +2425,53 @@ test('dashboard hydrates YearLevel and rejects conflicting levels instead of ass
     assert.equal(calls.find(call => call.name === 'upsertStudentProfile').payload.Level, 3);
 });
 
+test('selected roster level must be read back before reporting success', async () => {
+    for (const [fields, detail] of [
+        [{}, /missing or invalid/],
+        [{ YearLevel: 2, Level: 3 }, /fields conflict/],
+        [{ YearLevel: 2 }, /level is 2, not 3/],
+        [null, /not returned/]
+    ]) {
+        const dashboard = setupTeacherDashboardGlobals({
+            endpoints: { upsertStudentProfile: 'https://example.com/upsert' },
+            callFlow: async name => ({
+                success: true, status: 200,
+                data: name === 'upsertStudentProfile' ? { ok: true } : {
+                    students: fields ? [{ StudentCode: 'SC-1', LeaderboardName: 'Gold', ClassCode: '6B', ...fields }] : [],
+                    teachers: [], progress: []
+                }
+            })
+        });
+        dashboard.hydrateDashboardFromNormalizedData({
+            students: [{ StudentCode: 'SC-1', LeaderboardName: 'Gold', ClassCode: '6B', YearLevel: 2 }],
+            teachers: [], progress: []
+        }, { enabled: true });
+        const result = await dashboard.updateStudent('SC-1', { level: 3 });
+        assert.equal(result.success, false);
+        assert.equal(result.writeConfirmed, true);
+        assert.equal(result.stage, 'readback');
+        assert.match(result.error, detail);
+        assert.match(result.error, /request Level.*YearLevel/);
+    }
+});
+
+test('a failed reload cannot verify a confirmed roster level write', async () => {
+    const dashboard = setupTeacherDashboardGlobals({
+        endpoints: { upsertStudentProfile: 'https://example.com/upsert' },
+        callFlow: async name => name === 'upsertStudentProfile'
+            ? { success: true, status: 200, data: { ok: true } }
+            : { success: false, status: 502, error: 'Reload failed' }
+    });
+    dashboard.hydrateDashboardFromNormalizedData({
+        students: [{ StudentCode: 'SC-1', LeaderboardName: 'Gold', ClassCode: '6B', YearLevel: 2 }],
+        teachers: [], progress: []
+    }, { enabled: true });
+    const result = await dashboard.updateStudent('SC-1', { level: 3 });
+    assert.equal(result.success, false);
+    assert.equal(result.writeConfirmed, true);
+    assert.match(result.error, /dashboard reload failed/);
+});
+
 test('assigned starting level is playable without fabricated prior checkpoints', () => {
     const storage = createSessionStorage({}, { assignedLevel: 4, progressedLevel: 4, currentLevel: 4 });
     global.localStorage = storage;
@@ -2283,7 +2488,7 @@ test('assigned starting level is playable without fabricated prior checkpoints',
 test('fresh-browser home login calls loginStudent and creates a roster session only on success', async () => {
     const harness = buildHomeLoginHarness({ loginImpl: async () => rosterLoginResponse() });
     assert.equal(harness.context.getStudentSession(), null);
-    assert.equal(harness.context.LEVELS.some(level => harness.context.isLevelAccessible(level)), false);
+    assert.equal(JSON.stringify(harness.context.LEVELS.filter(level => harness.context.isLevelAccessible(level)).map(level => level.number)), '[1]');
 
     harness.elements.studentClassCodeInput.value = 'nb5';
     harness.elements.studentIdInput.value = '123456';
@@ -2381,10 +2586,8 @@ test('gameplay, quiz, and saves are blocked without an authenticated roster sess
     global.localStorage = storage;
     assert.equal(new context.LevelAccessGuardClass(2).isLevelAccessible(), false);
 
-    const levelOne = fs.readFileSync(require.resolve('../levels/level-1-basic/index.html'), 'utf8');
-    assert.ok(levelOne.includes('<script src="../../shared/student-session.js"></script>'));
     const levelOneScript = fs.readFileSync(require.resolve('../levels/level-1-basic/script.js'), 'utf8');
-    assert.match(levelOneScript, /requireSessionOrRedirect/);
+    assert.doesNotMatch(levelOneScript, /requireSessionOrRedirect/);
     const levelTwo = fs.readFileSync(require.resolve('../levels/level-2-tycoon/index.html'), 'utf8');
     assert.ok(levelTwo.indexOf('shared/student-session.js') < levelTwo.indexOf('script.js"'));
 });
