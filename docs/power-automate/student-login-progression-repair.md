@@ -4,8 +4,9 @@
 
 ## Canonical roster contract
 
-`GGR_Students.Level` is the teacher-assigned starting level from the CSV/JSON
-roster. Keep that SharePoint column named `Level`; do not add or rename an
+The display-name `GGR_Students.Level` is the teacher-assigned starting level from
+the CSV/JSON roster. The supplied tenant output confirms its internal name is
+`YearLevel`. Preserve that column; do not add or rename an
 `AssignedLevel` column. The application maps it to API/session
 `assignedLevel`. The two new Number columns are `ProgressedLevel` (highest
 unlocked, 1–5) and `CurrentLevel` (currently played, 1–5). Until those columns
@@ -33,7 +34,7 @@ the existing checkpoint fields/status vocabulary, and the `StudentCode` /
 | Student login | The client accepts `YearLevel`, `yearLevel`, `Level`, `level`, or `assignedLevel` (including SharePoint `{Value}` wrappers), rejects invalid/conflicting roster-level aliases, then retains `ok:true`, complete-identity and request-match checks. | `GGR_LoginStudent` must return the assigned game level from the matched active `GGR_Students` row. Inspect its actual run history to distinguish response mapping from PIN/lookup failure. |
 | Session and PIN | PIN hashes are sent to the flow but never included in saved sessions. PIN change continues to require transport success **and** `data.ok === true`; a success-only response is not accepted. | Verify PIN validation, first-time setup/old-PIN requirements, lockout policy, and persistence in `GGR_ChangeStudentPin`. Do not make PIN change update progression. |
 | Import/dashboard | CSV/JSON `Level` is checked as an integer 1–5; new/imported records initialize ProgressedLevel and CurrentLevel from that student's validated Level. Dashboard normalization reads the three distinct levels. | Update `GGR_UpsertStudentProfile` and `GGR_GetDashboardData`; ordinary reimport must preserve legitimate progression/current state and credentials. Verify SharePoint internal field names. |
-| Starting access | A student may start at their teacher-assigned level (and practice earlier levels) without checkpoints for levels below that assignment. Existing home/game behavior unlocks later levels from `quiz_passed`; approval fields are not currently a mandatory access gate. | Confirm whether teacher approval is intended to gate play. No new teacher-approval gate is introduced here; any policy change must be made consistently in home, game, and remote access. A client-side saved quiz is not backend authorization. |
+| Starting access | Level 1 is public practice. Students may start at their teacher-assigned level without earlier checkpoints. Home/game access beyond roster entitlement requires `quiz_passed` and `approved`; passing a quiz alone does not navigate to the next level. | Enforce completed-level quiz evidence and teacher/admin approval server-side. A client-side saved quiz or decision is not backend authorization. |
 | Saves and retry | Saves retain per-level `Level`, canonical ProgressKey, request IDs and the existing queue/retry behavior. Student payloads distinguish the played `currentLevel` from roster assignment. | `GGR_SaveProgress` must validate the roster server-side, preserve `GGR_Students.Level` and teacher decision fields, and update only roster CurrentLevel when it is valid and no higher than the stored ProgressedLevel. |
 | Restore | Same-device autosave is only loaded when it belongs to the signed-in student. Configured `getStudentProgress` failures are bounded and do not block login. | Remote progress currently restores checkpoint evidence, not the complete game state. Full cloud/cross-device game restore requires a separately verified retrieval payload and mapping. No such live restore is claimed here. |
 | Approval and unlock | Existing status strings and progress-row schema remain intact; no per-approval increment is performed in client code. | The approval flow must authenticate/authorize the teacher, verify a passed checkpoint, update one canonical per-level progress row idempotently, and set roster ProgressedLevel to `max(existing, approved checkpoint level + 1)` capped at 5. |
@@ -79,7 +80,7 @@ request. The success response must map the matching roster row:
 }
 ```
 
-`assignedLevel` is sourced from `GGR_Students.Level`; `progressedLevel` and
+`assignedLevel` is sourced from `GGR_Students.YearLevel` (display name Level); `progressedLevel` and
 `currentLevel` are sourced from their corresponding columns when present and
 valid. When either optional field is absent/blank, return `Level` for that
 field during migration. Never create an `AssignedLevel` list column or use a
@@ -91,7 +92,7 @@ For a `Level` value wrapped as a SharePoint object, a response mapping can use
 the equivalent of:
 
 ```text
-int(first(body('<actual Get items action name>')?['value'])?['Level'])
+int(first(body('<actual Get items action name>')?['value'])?['YearLevel'])
 ```
 
 If the connector returns a Choice/Lookup-style object, select its `Value`
@@ -140,9 +141,9 @@ and dashboard response rather than retrying blindly.
 
 Implement an upsert by `StudentCode` and apply this policy on the server:
 
-1. Validate `Level` as an integer 1–5. On create set SharePoint `Level`,
+1. Validate wire `Level` as an integer 1–5. On create set SharePoint `YearLevel`,
    `ProgressedLevel`, and `CurrentLevel` to that value.
-2. On ordinary reimport, update teacher-assigned `Level` from the import.
+2. On ordinary reimport, update teacher-assigned `YearLevel` from wire `Level`.
    Preserve an existing valid ProgressedLevel and CurrentLevel; initialize
    only blank/missing new fields from that student's own valid `Level`.
    Ensure `ProgressedLevel` is at least the newly assigned Level. Keep

@@ -906,7 +906,7 @@ function updateCheckpointQuizCopy(quiz) {
 
     if (promptEl) {
         promptEl.textContent = nextLevel
-            ? `You've reached the Level ${currentLevel} goal of $${goal}. Answer 5 questions to progress to Level ${nextLevel}.`
+            ? `You've reached the Level ${currentLevel} goal of $${goal}. Pass the quiz, then receive teacher/admin approval for Level ${nextLevel}.`
             : `You've reached the Level ${currentLevel} goal of $${goal}. Answer 5 questions to complete the final progression checkpoint.`;
     }
 
@@ -1066,7 +1066,7 @@ function displayQuizResults(result, quiz) {
             const nextLevel = getNextAssignedLevel();
             continueBtn.style.display = 'block';
             continueBtn.disabled = false;
-            continueBtn.textContent = nextLevel ? `Continue to Level ${nextLevel} →` : 'Continue Playing';
+            continueBtn.textContent = nextLevel ? 'Keep Playing While Awaiting Approval' : 'Continue Playing';
             continueBtn.onclick = () => continueAfterPassedQuiz(continueBtn, nextLevel);
         }
     } else {
@@ -1089,13 +1089,15 @@ function displayQuizResults(result, quiz) {
 }
 
 /**
- * After a passed checkpoint quiz: wait (briefly) for the cloud progress save so
- * the quiz_passed checkpoint reaches GGR_StudentProgress, then open the next
- * level. The local autosave already holds quiz_passed, which the access guard reads.
+ * Passing a quiz records eligibility for review, not permission to advance.
  */
 async function continueAfterPassedQuiz(button, nextLevel) {
     if (!requireAuthenticatedStudent()) return;
     if (!nextLevel) {
+        closeAllModals();
+        return;
+    }
+    if (!new LevelAccessGuard(nextLevel).isLevelAccessible()) {
         closeAllModals();
         return;
     }

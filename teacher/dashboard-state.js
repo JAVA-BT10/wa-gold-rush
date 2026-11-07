@@ -667,8 +667,38 @@ class TeacherDashboard {
         };
         const identity = this.normalizeDashboardStudentIdentity(record);
         const level = toFinite(record.level ?? record.Level ?? record.assignedLevel ?? record.AssignedLevel);
-        const checkpoint = this.extractCheckpointFields(record, level);
         const optionalText = (keys) => this.readListText(record, keys) || undefined;
+        const classCode = this.readListText(record, ['classCode', 'ClassCode']).toUpperCase();
+        const rawSnapshot = record.progressionMarkersJson ?? record.ProgressionMarkersJson;
+        let snapshot = {};
+        let snapshotError = '';
+        if (rawSnapshot) {
+            try {
+                const parsed = typeof rawSnapshot === 'string' ? JSON.parse(rawSnapshot) : rawSnapshot;
+                const snapshotCode = String(parsed?.player?.studentCode || '').trim().toUpperCase();
+                const snapshotClass = String(parsed?.player?.classCode || '').trim().toUpperCase();
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+                    || Number(parsed.assignedLevel) !== level
+                    || (snapshotCode && snapshotCode !== identity.studentCodeKey)
+                    || (snapshotClass && snapshotClass !== classCode)) {
+                    snapshotError = 'snapshot_identity_or_level_mismatch';
+                } else {
+                    snapshot = parsed;
+                }
+            } catch (error) {
+                if (!(error instanceof SyntaxError)) throw error;
+                snapshotError = 'snapshot_json_invalid';
+            }
+            if (snapshotError) console.warn(`[Dashboard] Progress snapshot cannot supply missing metrics: ${snapshotError}.`);
+        }
+        const checkpoint = this.extractCheckpointFields(snapshotError
+            ? { ...record, progressionMarkersJson: null, ProgressionMarkersJson: null }
+            : record, level);
+        const mines = snapshot.ownedMines && typeof snapshot.ownedMines === 'object'
+            ? Object.values(snapshot.ownedMines).filter(mine => mine?.owned === true).length : undefined;
+        const machinery = Array.isArray(snapshot.machinery) ? snapshot.machinery.length : undefined;
+        const totalProfitLoss = toFinite(record.totalProfitLoss ?? record.TotalProfitLoss ?? snapshot.totalProfitLoss);
+        const completedRounds = Array.isArray(snapshot.roundHistory) ? snapshot.roundHistory.length : 0;
         return {
             ...record,
             ...checkpoint,
@@ -683,16 +713,20 @@ class TeacherDashboard {
             ).trim().toUpperCase(),
             progressKey: optionalText(['progressKey', 'ProgressKey']),
             level,
-            round: toFinite(record.round ?? record.Round ?? record.currentRound ?? record.CurrentRound),
-            cash: toFinite(record.cash ?? record.Cash ?? record.currentCash ?? record.CurrentCash),
-            netWorth: toFinite(record.netWorth ?? record.NetWorth),
-            minesOwned: toFinite(record.minesOwned ?? record.MinesOwned ?? record.ownedMines ?? record.OwnedMines),
-            machineryOwned: toFinite(record.machineryOwned ?? record.MachineryOwned ?? record.machinery ?? record.Machinery),
-            totalProfitLoss: toFinite(record.totalProfitLoss ?? record.TotalProfitLoss),
-            averageRoundProfit: toFinite(record.averageRoundProfit ?? record.AverageRoundProfit),
-            strategyLabel: optionalText(['strategyLabel', 'StrategyLabel']),
-            companyName: optionalText(['companyName', 'CompanyName']),
-            investmentProfile: optionalText(['investmentProfile', 'InvestmentProfile']),
+            round: toFinite(record.round ?? record.Round ?? record.currentRound ?? record.CurrentRound ?? snapshot.round),
+            cash: toFinite(record.cash ?? record.Cash ?? record.currentCash ?? record.CurrentCash ?? snapshot.cash),
+            netWorth: toFinite(record.netWorth ?? record.NetWorth ?? snapshot.netWorth),
+            minesOwned: toFinite(record.minesOwned ?? record.MinesOwned ?? record.ownedMines ?? record.OwnedMines) ?? mines,
+            machineryOwned: toFinite(record.machineryOwned ?? record.MachineryOwned ?? record.machinery ?? record.Machinery) ?? machinery,
+            totalProfitLoss,
+            averageRoundProfit: toFinite(record.averageRoundProfit ?? record.AverageRoundProfit)
+                ?? (completedRounds && totalProfitLoss !== undefined ? totalProfitLoss / completedRounds : undefined),
+            strategyLabel: optionalText(['strategyLabel', 'StrategyLabel']) || snapshot.strategyLabel,
+            companyName: optionalText(['companyName', 'CompanyName']) || snapshot.companyName,
+            investmentProfile: optionalText(['investmentProfile', 'InvestmentProfile'])
+                || (snapshot.investmentProfile ? JSON.stringify(snapshot.investmentProfile) : undefined),
+            snapshotSavedAt: snapshot.savedAt || null,
+            snapshotError,
             updatedAt: optionalText([
                 'updatedAt', 'UpdatedAt', 'lastPlayed', 'LastPlayed', 'LastPlayedUtc',
                 'LaastPlayedUtc', 'clientTimestampUtc', 'ClientTimestampUtc', 'UpdatedUtc', 'Modified'
@@ -790,12 +824,12 @@ class TeacherDashboard {
             progressRecords: progressRows,
             checkpointsByLevel,
             gameState: {
-                round: pick(latest?.round, 1),
-                cash: pick(latest?.cash, 200),
-                netWorth: pick(latest?.netWorth, 300),
-                ownedMines: pick(latest?.minesOwned, 1),
-                machinery: pick(latest?.machineryOwned, 0),
-                totalProfitLoss: pick(latest?.totalProfitLoss, 0),
+                round: pick(latest?.round, null),
+                cash: pick(latest?.cash, null),
+                netWorth: pick(latest?.netWorth, null),
+                ownedMines: pick(latest?.minesOwned, null),
+                machinery: pick(latest?.machineryOwned, null),
+                totalProfitLoss: pick(latest?.totalProfitLoss, null),
                 averageRoundProfit: latest?.averageRoundProfit,
                 strategyLabel: latest?.strategyLabel,
                 companyName: latest?.companyName,
@@ -809,7 +843,9 @@ class TeacherDashboard {
                 approverName: currentCheckpoint.approverName || null,
                 approvalTimestamp: currentCheckpoint.approvalTimestamp || null,
                 progressionStateByLevel: latest?.progressionStateByLevel || {},
-                lastPlayed: latest?.updatedAt || null
+                lastPlayed: latest?.snapshotSavedAt || latest?.updatedAt || null,
+                listModifiedAt: latest?.updatedAt || null,
+                snapshotError: latest?.snapshotError || ''
             }
         };
     }
@@ -2115,12 +2151,15 @@ class TeacherDashboard {
             return this.classStats;
         }
 
-        const totalNetWorth = this.students.reduce(
+        const wealthRecords = this.students.filter(s => Number.isFinite(s?.gameState?.netWorth));
+        const roundRecords = this.students.filter(s => Number.isFinite(s?.gameState?.round));
+        const mineRecords = this.students.filter(s => Number.isFinite(s?.gameState?.ownedMines));
+        const totalNetWorth = wealthRecords.reduce(
             (sum, s) => sum + this.toNumber(s?.gameState?.netWorth), 0);
-        const totalRounds = this.students.reduce(
+        const totalRounds = roundRecords.reduce(
             (sum, s) => sum + this.toNumber(s?.gameState?.round), 0);
 
-        const sortedByNetWorth = [...this.students]
+        const sortedByNetWorth = [...wealthRecords]
             .map((s, i) => ({ s, i }))
             .sort((a, b) => {
                 const d = this.toNumber(b.s?.gameState?.netWorth) - this.toNumber(a.s?.gameState?.netWorth);
@@ -2128,7 +2167,7 @@ class TeacherDashboard {
             })
             .map(e => e.s);
 
-        const sortedByMines = [...this.students]
+        const sortedByMines = [...mineRecords]
             .map((s, i) => ({ s, i }))
             .sort((a, b) => {
                 const d = this.toNumber(b.s?.gameState?.ownedMines) - this.toNumber(a.s?.gameState?.ownedMines);
@@ -2138,12 +2177,12 @@ class TeacherDashboard {
 
         this.classStats = {
             totalStudents: this.students.length,
-            averageNetWorth: totalNetWorth / this.students.length,
+            averageNetWorth: wealthRecords.length ? totalNetWorth / wealthRecords.length : 0,
             highestNetWorth: this.toNumber(sortedByNetWorth[0]?.gameState?.netWorth),
             wealthiestStudent: sortedByNetWorth[0],
             mostMinesOwned: this.toNumber(sortedByMines[0]?.gameState?.ownedMines),
             topMineOwner: sortedByMines[0],
-            averageRound: totalRounds / this.students.length
+            averageRound: roundRecords.length ? totalRounds / roundRecords.length : 0
         };
 
         return this.classStats;

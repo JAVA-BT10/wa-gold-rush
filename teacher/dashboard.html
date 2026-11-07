@@ -962,9 +962,9 @@
                     <td><input class="edit-input" ${fieldAttrs('studentId')}       data-field="studentId"       data-id="${id}" value="${si}" aria-label="Student ID"></td>
                     <td><input class="edit-input" ${fieldAttrs('classCode')}       data-field="classCode"       data-id="${id}" value="${cc}" aria-label="Class Code"></td>
                     <td><select class="edit-select" ${fieldAttrs('level')} data-field="level" data-id="${id}" aria-label="Level">${levelOpts}</select>${levelError ? `<span class="muted">${escHtml(levelError)}</span>` : ''}</td>
-                    <td>$${Number(s.gameState?.netWorth || 0).toFixed(2)}</td>
-                    <td>${Number(s.gameState?.round) || 1}</td>
-                    <td>${escHtml(s.gameState?.lastPlayed ? new Date(s.gameState.lastPlayed).toLocaleString() : 'Never')}</td>
+                    <td>${Number.isFinite(s.gameState?.netWorth) ? `$${s.gameState.netWorth.toFixed(2)}` : 'N/A'}</td>
+                    <td>${Number.isFinite(s.gameState?.round) ? s.gameState.round : 'N/A'}</td>
+                    <td>${escHtml(s.gameState?.lastPlayed ? new Date(s.gameState.lastPlayed).toLocaleString() : 'Never')}${s.gameState?.snapshotError ? '<span class="muted" role="status">Saved snapshot needs review; metrics may be incomplete.</span>' : ''}</td>
                     <td>
                         <div class="inline-actions">
                             <button class="btn-secondary" data-action="save"   data-id="${id}">Save</button>

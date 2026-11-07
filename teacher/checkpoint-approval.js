@@ -59,6 +59,10 @@ const CheckpointApproval = (() => {
         return attempts.length ? attempts[attempts.length - 1] : null;
     }
 
+    function hasPassedCheckpoint(checkpoint = {}) {
+        return checkpoint.checkpointStatus === 'quiz_passed';
+    }
+
     function buildApprovalPayload({ student = {}, level, status, reviewer }) {
         const classCode = String(student.classCode || '').trim().toUpperCase();
         const studentCode = String(student.studentCode || student.displayId || '').trim();
@@ -101,19 +105,38 @@ const CheckpointApproval = (() => {
         if (!['approved', 'retake_requested', 'rejected'].includes(status)) {
             return { success: false, error: 'Unknown approval decision.' };
         }
+        const numericLevel = Number(level);
+        if (!Number.isInteger(numericLevel) || ![2, 3, 4, 5].includes(numericLevel)) {
+            return { success: false, error: 'Select a valid assessed level (2–5).' };
+        }
+        if (status === 'approved' && !hasPassedCheckpoint(student.checkpointsByLevel?.[numericLevel])) {
+            return { success: false, error: 'A passed checkpoint quiz is required before approval.' };
+        }
 
         const payload = buildApprovalPayload({ student, level, status, reviewer });
         const result = await target.postFlowPayload(APPROVAL_FLOW_NAME, payload);
-        if (!result?.success) {
+        if (!result?.success || result.data?.ok !== true) {
             return {
                 success: false,
-                error: String(result?.error || 'GGR_SaveCheckpointApproval did not confirm the decision.')
+                error: String(result?.error || 'GGR_SaveCheckpointApproval did not explicitly confirm the decision.')
             };
         }
 
         const hydration = typeof target.rehydrateAfterWrite === 'function'
             ? await target.rehydrateAfterWrite()
             : null;
+        const savedStudent = target.students?.find(record =>
+            String(record.studentCode || '').trim().toUpperCase() === payload.studentCode.toUpperCase()
+            && String(record.classCode || '').trim().toUpperCase() === payload.classCode);
+        const savedCheckpoint = savedStudent?.checkpointsByLevel?.[numericLevel];
+        if (!hydration?.success
+            || savedCheckpoint?.approvalStatus !== status
+            || (status === 'approved' && !hasPassedCheckpoint(savedCheckpoint))) {
+            return {
+                success: false, writeConfirmed: true, stage: 'readback', hydration,
+                error: 'The flow acknowledged the decision, but Microsoft Lists read-back did not verify it. Refresh before retrying.'
+            };
+        }
         return { success: true, payload, hydration };
     }
 
@@ -197,6 +220,7 @@ const CheckpointApproval = (() => {
         const flowConfigured = isApprovalFlowConfigured(dashboard);
         const reviewer = getReviewerIdentity(dashboard);
         const actionsEnabled = flowConfigured && !!reviewer;
+        const approvalEnabled = actionsEnabled && hasPassedCheckpoint(checkpoint);
 
         document.getElementById('checkpointReviewModal')?.remove();
 
@@ -242,6 +266,8 @@ const CheckpointApproval = (() => {
             : (!reviewer ? 'Sign in to the Teacher Dashboard before reviewing checkpoints.' : '');
         const disabledAttr = actionsEnabled ? '' : 'disabled aria-disabled="true"';
         const disabledStyle = actionsEnabled ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: 0.55;';
+        const approvalDisabledAttr = approvalEnabled ? '' : 'disabled aria-disabled="true"';
+        const approvalDisabledStyle = approvalEnabled ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: 0.55;';
 
         content.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
@@ -263,8 +289,8 @@ const CheckpointApproval = (() => {
 
             <p class="checkpoint-approval-unavailable" role="status" aria-live="polite" style="color: #b45309; font-size: 13px; margin: 0 0 12px; ${unavailableNotice ? '' : 'display: none;'}">${escapeHtml(unavailableNotice)}</p>
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <button type="button" class="btn-approve-checkpoint" ${disabledAttr} style="flex: 1; min-width: 120px; padding: 12px; background: #4caf50; color: white; border: none; border-radius: 6px; font-weight: bold; font-size: 14px; ${disabledStyle}">
-                    ✅ Approve for Next Level
+                <button type="button" class="btn-approve-checkpoint" ${approvalDisabledAttr} style="flex: 1; min-width: 120px; padding: 12px; background: #4caf50; color: white; border: none; border-radius: 6px; font-weight: bold; font-size: 14px; ${approvalDisabledStyle}">
+                    ✅ ${level < 5 ? 'Approve for Next Level' : 'Approve Level Completion'}
                 </button>
                 <button type="button" class="btn-retake-checkpoint" ${disabledAttr} style="flex: 1; min-width: 120px; padding: 12px; background: #ff9800; color: white; border: none; border-radius: 6px; font-weight: bold; font-size: 14px; ${disabledStyle}">
                     🔄 Request Retake
@@ -282,25 +308,27 @@ const CheckpointApproval = (() => {
         content.querySelector('.btn-close-checkpoint').addEventListener('click', () => modal.remove());
 
         const submitDecision = async (status, successMessage) => {
-            if (!actionsEnabled) return;
+            if (!actionsEnabled || (status === 'approved' && !approvalEnabled)) return;
             approveBtn.disabled = true;
             retakeBtn.disabled = true;
             resultEl.style.color = '#1d4ed8';
             resultEl.textContent = 'Saving decision to Microsoft Lists…';
             const result = await saveApproval({ dashboard, student, level, status });
             if (!result.success) {
-                approveBtn.disabled = false;
+                approveBtn.disabled = !approvalEnabled;
                 retakeBtn.disabled = false;
                 resultEl.style.color = '#b91c1c';
                 resultEl.setAttribute('role', 'alert');
-                resultEl.textContent = `Decision was not saved. ${result.error}`;
+                resultEl.textContent = `${result.writeConfirmed ? 'Decision could not be verified.' : 'Decision was not saved.'} ${result.error}`;
                 return;
             }
             modal.remove();
             if (typeof options.onSaved === 'function') options.onSaved(result, successMessage);
         };
 
-        approveBtn.addEventListener('click', () => submitDecision('approved', `Approved ${studentName} for Level ${level + 1}.`));
+        approveBtn.addEventListener('click', () => submitDecision('approved', level < 5
+            ? `Approved ${studentName} for Level ${level + 1}.`
+            : `Approved ${studentName}'s Level ${level} completion.`));
         retakeBtn.addEventListener('click', () => submitDecision('retake_requested', `Requested a retake for ${studentName}.`));
     }
 
@@ -312,6 +340,7 @@ const CheckpointApproval = (() => {
         isApprovalFlowConfigured,
         getReviewerIdentity,
         getLatestAttempt,
+        hasPassedCheckpoint,
         buildApprovalPayload,
         saveApproval,
         generateQuizReviewHTML,
