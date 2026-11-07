@@ -2,7 +2,7 @@
 
 > **Status:**
 > - **Client:** implemented, gated OFF (`featureFlags.saveProtocolV2`). Code is in `shared/save-protocol.js` and `shared/sharepoint-sync.js`.
-> - **Server:** **not implemented in the tenant.** The reference semantics live in `tests/support/reference-save-server.js`. That file is an in-memory **mock** used by `node --test`; it does not prove that SharePoint / Power Automate can provide the same guarantees.
+> - **Server:** **not deployed by this repository and not tenant-verified.** The reference semantics live in `tests/support/reference-save-server.js`. That file is an in-memory **mock** used by `node --test`; it does not prove that SharePoint / Power Automate can provide the same guarantees.
 > - **Before turning the flag ON:** the tenant must pass the acceptance rows in [release-and-acceptance](../operations/release-and-acceptance.md#tenant-acceptance-matrix).
 >
 > This document deliberately corrects earlier advice. A client that increments its own `saveRevision` and has the server reject `incoming <= stored` is **not sufficient**:
@@ -18,7 +18,7 @@
 | `baseRevision` | client (sealed) | The revision the client's change is based on. `null` = create-only: "I believe no row exists". |
 | `runGeneration` / `runId` | **server** for advancement | Identifies the current run (game life) of one level. Only an authorised reset (`GGR_ResetLevelProgress`) advances the generation. A client-side restart cannot. |
 | `saveRequestId` | client | Immutable ID per captured save. Kept across all retries. |
-| `contentHash` | client, verified or recomputed by server | Canonical-JSON, non-cryptographic 53-bit (cyrb53-style) hash (`shared/level-save-store.js` `hashValue`) of the payload **excluding** `saveRequestId`, `clientTimestampUtc`, `clientVersion`, `contentHash`, `baseRevision`. It is an equality fingerprint, **not** a security control. The server should recompute it from the received payload with the same canonicalisation or, if it cannot, store and compare the client value **and** the raw payload length. Verify feasibility in the tenant. |
+| `contentHash` | client, independently checked by server | Canonical-JSON, non-cryptographic 53-bit (cyrb53-style) hash (`shared/level-save-store.js` `hashValue`) of the payload **excluding** `saveRequestId`, `clientTimestampUtc`, `clientVersion`, `contentHash`, `baseRevision`. Diagnostic equality fingerprint, **not** authentication or collision-safe dedup. The server must compare canonical content and immutable base/run binding, or a validated server-computed collision-resistant digest with stored request. Client hash plus raw length is insufficient. Power Automate canonicalization/hash feasibility remains a blocker; use a validated gateway if necessary. |
 
 ## 2. Client behaviour (implemented, gated)
 
@@ -38,7 +38,11 @@
 4. **Reset.** "Restart This Level" discards pending and queued saves for that key (`superseded_by_reset`). The client then starts a new local run. Under v2 this new local run cannot advance the server generation, so its saves fail closed until `GGR_ResetLevelProgress` exists.
 5. **Rollback safety:**
    - With the flag OFF, v2 queue items are **held**, not sent to a legacy flow.
-   - With the flag ON, legacy queue items are **quarantined intact** (`legacy_item_held_v2_active`), never upgraded to the current revision or generation. This is a manual-reconciliation hold, not an automatic retry: turning the flag OFF must not replay an obsolete unconditional capture over a newer v2 save. The existing quarantine retains at most 50 entries; export recovery evidence before capacity is reached.
+   - Legacy progress queue items are **held intact**, never upgraded to the
+     current revision/generation or dispatched. Existing quarantined items
+     remain recovery evidence. Turning flags OFF must not replay obsolete
+     captures over newer v2 data. Queue/quarantine capacity is bounded; export
+     evidence before capacity is reached.
 
 ## 3. Server algorithm (required; reference = mock)
 
@@ -47,11 +51,11 @@ The checks must run in **this order**.
 ```text
 validate request shape and auth; recompute ProgressKey; verify roster ownership/class/level entitlement
 1. Idempotency (BEFORE stale checks):
-   a. receipt := GGR_SaveReceipts[SaveRequestId]
-      - exists and (ProgressKey, ContentHash, BaseRevision) match → return the stored original response (+ deduplicated:true)
+   a. receipt := GGR_SaveReceipts[AuthorisedPrincipal, ProgressKey, SaveRequestId]
+      - exists and exact canonical content, BaseRevision, run identity match → return the stored original response (+ deduplicated:true)
       - exists and differs → request_id_reused
    b. row := GGR_StudentProgress[ProgressKey]
-      - SaveRequestId ∈ row.RecentRequests (with matching ContentHash/RunGeneration) → return ack with the recorded revision (+ deduplicated:true), and repair the missing receipt
+      - SaveRequestId ∈ row.RecentRequests (with matching verified canonical content/base/run binding) → return ack with the recorded revision (+ deduplicated:true), and repair the missing receipt
       - present with different content → request_id_reused
 2. Generation:
    - request.runGeneration < row.RunGeneration → generation_stale
@@ -60,10 +64,10 @@ validate request shape and auth; recompute ProgressKey; verify roster ownership/
    - baseRevision = null and row exists → row_exists
    - baseRevision ≠ row.Revision or runId ≠ row.RunId → revision_conflict / precondition_failed
 4. Conditional write (one atomic item update guarded by the row ETag):
-   Revision = Revision + 1, data fields, LastSaveRequestId, RecentRequests (bounded ring of {id, hash, revision}), ContentHash
-   - ETag mismatch (HTTP 412) → re-read and restart from step 1
-   - create path: Create item on a column with unique values enforced; a duplicate failure → re-read and restart from step 1
-5. Write the receipt (best effort after the row; see crash recovery)
+   Revision = Revision + 1, data fields, LastSaveRequestId, RecentRequests (bounded verified request bindings + original acknowledgement), ContentHash
+   - ETag mismatch (HTTP 412) → bounded re-read for dedup, otherwise precondition_failed
+   - create path: Create item on a column with unique values enforced; duplicate failure → bounded re-read for dedup, otherwise row_exists
+5. Write the receipt; if it fails, retain row-atomic recovery metadata until repaired
 6. Respond { ok:true, protocolVersion:2, saveRequestId, progressKey, runGeneration, revision }
 ```
 
@@ -72,7 +76,9 @@ validate request shape and auth; recompute ProgressKey; verify roster ownership/
 - **Dedup before stale.** If request A was accepted but its response was lost, the retry of A carries an old `baseRevision`. Without step 1, A would be reported as a conflict even though it was acknowledged. Step 1 returns A's *original* success, **even after newer writes B, C, …**, provided the receipt (or the row's recent-request ring) still holds A.
 - **Same ID, different content → reject.** This stops a buggy or replayed client from smuggling new data under an old acknowledgement.
 - **Unique `ProgressKey` + create-only `baseRevision:null`.** Two first saves racing from two devices cannot both create a row; the loser gets `row_exists`.
-- **ETag / If-Match.** This closes the read → check → write race between concurrent flow runs. Two devices sending the same `baseRevision` produce one success and one `revision_conflict`. There is no last-writer data loss.
+- **ETag / If-Match.** When exact conditional writes and unique creates are
+  validated on every writer, two requests on the same base cannot both commit.
+  This protects that race, not a global no-data-loss guarantee.
 - **Generation.** A delayed pre-reset request (older generation) can never resurrect the old game.
 
 ### Crash recovery between the row write and the receipt
@@ -82,10 +88,20 @@ SharePoint offers no multi-list transaction, so the row update and the receipt c
 - **Row first, as the commit point.** `RecentRequests` is inside the **same** item update as the data, so dedup of recent requests is atomic with the write.
 - **Then the receipt.** If the receipt write fails, a retry is still recognised via `RecentRequests`, and the missing receipt is repaired.
 - **Retention limits** (document these to teachers and operators):
-  - `RecentRequests` holds the last *N* request IDs. **N = 20 is proposed**; the mock uses N = 1 via `LastSaveRequestId`. Verify column size limits; a multi-line text column is suggested.
+  - `RecentRequests` holds bounded request bindings/acknowledgements. **N = 20
+    is proposed for tenant evaluation**; the reference model uses a configurable
+    ring (default 10) and pins unreceipted entries. Verify serialized column
+    size and capacity, not just entry count.
   - Receipts are retained for *T* days (**proposed: the term length**), then purged by a scheduled flow.
-  - A retry older than both windows can no longer be recognised. It gets an honest `revision_conflict`, never a silent re-apply, because its `baseRevision` is stale. The client treats that as a conflict and does not mark the write as lost.
-  - Because only one sealed request per key is in flight per device, this only happens after very long offline periods.
+  - Do not evict row-atomic recovery metadata before its separate receipt is
+    proven durable. Receipt failure followed by another device's save can
+    exhaust a ring immediately, not only after long offline periods. Block new
+    writes rather than evict unrepaired history.
+  - Publish a bounded retry/receipt lifetime and reject expired IDs explicitly.
+    Stale revision alone is insufficient if an old create is retried after a
+    row is deleted/reset. Reset must retain a generation tombstone/receipt
+    policy. The reference model exercises exact binding and pinned crash
+    recovery, not deployed retention/expiry or transactional tenant capacity.
 
 ### Tenant feasibility: actions to verify (do not assume)
 
@@ -144,6 +160,9 @@ The mock tests in `tests/per-level-architecture.test.js` exercise these vectors 
 
 ## 6. Legacy compatibility
 
-- With the flag OFF, the wire format is unchanged apart from per-level correctness, `progressKey` and an optional `run` block inside the snapshot JSON.
-- Existing v1 status handling is unchanged: 400/410/422 or `ok:false` → quarantine; 5xx or network → retry.
+- With the flag OFF, local capture format remains compatible, but progress
+  dispatch is held. No unconditional legacy progress request is authorised.
+- Existing queued v1 captures are recovery evidence, not permission to replay.
+  Keep the server legacy-write refusal during rollback and export before bounded
+  local queue/quarantine capacity is reached.
 - **Never** run a shared-slot writer, i.e. an old client build, against vNext rows. A rollback must keep the per-level client.

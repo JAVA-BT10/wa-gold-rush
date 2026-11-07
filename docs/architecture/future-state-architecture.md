@@ -182,8 +182,11 @@ Errors, timeouts and partial or checkpoint-only responses are **never** treated 
 | Cloud state unknown | `resume_local_unsynced` / `start_local_unsynced`, disclosed as unsynced in the UI |
 
 Unknown cloud state never initialises a cloud row:
-- with v2 OFF, the slot's uploads are held;
-- with v2 ON, CAS (`baseRevision:null` = create-only) protects any existing row.
+- uploads are held for **all** slots, including existing/unverified slots and
+  disabled or unconfigured restore;
+- dispatch requires authenticated v2 and a successful exact-slot reconciliation
+  in this browser session. A stored acknowledgement alone is not verification.
+  CAS still protects writes after verification.
 
 The request is bounded by an 8 s timeout and never blocks authentication. The existing checkpoint-only `getStudentProgress` access-guard path remains as an explicit **compatibility mode**.
 
@@ -191,7 +194,7 @@ The request is bounded by an 8 s timeout and never blocks authentication. The ex
 
 The full specification is in [save-protocol-v2](../power-automate/save-protocol-v2.md).
 
-- **Legacy (default, unchanged wire format):**
+- **Legacy compatibility (local-only, cloud dispatch held):**
   - per-level payloads with the canonical `progressKey`;
   - an immutable `saveRequestId` per capture;
   - queue coalescing per `progressKey`.
@@ -202,7 +205,17 @@ The full specification is in [save-protocol-v2](../power-automate/save-protocol-
   - conflicts are held for reconciliation, never retried as an overwrite;
   - a legacy-shaped `200` is classified as **unconfirmed**, never as a v2 save.
 - **Dispatch protection:** direct saves and retries consult both the upload hold and per-level write protection. Envelope conflicts/holds, unreadable or unsupported slots, and ledger/run mismatches block dispatch without modifying the slot, ledger, or queued request. A provisional `unverified_new_slot` still blocks uploads even though local writes are permitted.
-- **Rollback:** v2 queue items remain queued (not replayed) while the flag is OFF. With it ON, legacy items are preserved in `wa_gr_sync_quarantine` as `legacy_item_held_v2_active`, not upgraded or sent. They require manual reconciliation and do not automatically replay after rollback over newer v2 data. Quarantine is bounded (50 entries); it is not an indefinite archive.
+- **Recovery:** read/reconcile retry is separate from write permission. Network
+  holds do not prohibit local saving; malformed/schema/conflict protections are
+  not bypassed. Cloud adoption archives the source and journals envelope/ledger
+  writes; interrupted adoption is protected until a matching recovery succeeds.
+  localStorage is not a cross-tab transactional database; ambiguous concurrent
+  journal changes require review. See the controlling
+  [operations runbook](../operations/release-and-acceptance.md).
+- **Rollback:** progress items remain held while prerequisites are OFF or
+  unverified. Legacy captures remain intact in the queue, not upgraded or sent;
+  previously quarantined items remain recovery evidence. Neither automatically
+  replays over newer v2 data. Queues/quarantine are bounded, not permanent archives.
 
 ## 8. Leaderboards (Implemented (repo) + mock-tested; server leaderboard planned)
 
@@ -267,7 +280,7 @@ Values come from `shared/game-config.json`; goals are the configured `progressio
 | Level | Player experience | Start cash | Goal | Max active mines | Rounds | Infrastructure |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 Basic Mining | Single mine, dice digs, learn safe / medium / deep risk | 100 | — | 1 | 10 fixed | Login only; state held in the page |
-| 2 Goldfields Venture | Multiple mines, equipment, unending growth; checkpoint quiz unlocks Level 3 | 250 | 2,500 | 2 | Unending | Per-level slot, ledger, SaveProgress (legacy; v2 gated), dashboard |
+| 2 Goldfields Venture | Multiple mines, equipment, unending growth; checkpoint quiz unlocks Level 3 | 250 | 2,500 | 2 | Unending | Per-level slot, ledger, local-only until verified v2, dashboard |
 | 3 WA Goldfields | Mine upgrades and infrastructure strategy | 300 | 10,000 | 3 | Unending | Same as Level 2 |
 | 4 Advanced Operations | Random events, advanced infrastructure | 400 | 50,000 | 4 | Unending | Same as Level 2 |
 | 5 Classroom Challenge | Multi-site portfolio, competition focus | 500 | 250,000 | 3 | Unending | Same as Level 2; competition snapshots planned |
@@ -277,12 +290,16 @@ Mechanics common to Levels 2–5:
 
 - **Each round:** the player sets an investment plan per mine (safe / medium / deep dig) and rolls 2d6. Each dig type has a configured success range. Machinery bonuses, mine upgrades and random events (rolled on a d6) modify the outcome.
 - **Progression:** reaching the goal opens the checkpoint quiz. Passing it records `quiz_passed` in the ledger and unlocks the next **playable** level.
-- **Restart This Level:** archives the current run and starts a new generation for that level only. Other levels and earned access are preserved.
+- **Restart This Level:** local-only restart archives that level. Cloud-backed or
+  v2 restart is disabled pending an authorised conditional reset service. Other
+  levels and earned access are preserved.
 
 ## 12. Known limitations
 
-- **v2 OFF:** a legacy request already in flight before a restart can still land after it. Restart discards any queued or pending saves for that key, but it cannot recall a request already sent.
-- **v2 ON:** a restart started by the client cannot advance the server generation. Until `GGR_ResetLevelProgress` exists, saves from a restarted level fail closed (`precondition_failed` / conflict) rather than overwriting.
+- **Old clients/in flight:** this guard cannot recall a legacy request already
+  sent or update cached older code. Server refusal at every writer is mandatory.
+- **Reset:** configuring `GGR_ResetLevelProgress` or its flag does not enable
+  cloud-backed restart in this repair; backend atomic archive/reset remains a gate.
 - **Device board:** the in-game leaderboard is device-only.
 - **Dashboard data:** the teacher dashboard depends on `GGR_GetDashboardData` returning per-level rows with `StartingNetWorth` and generation. Until it does, profit and ROI are unrankable.
 - **Checkpoint evidence:** checkpoint evidence stored in the browser is not backend authorisation.

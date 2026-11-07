@@ -93,7 +93,10 @@
                     <h2>🏢 Company & Student Identity</h2>
                     <p id="competition-status" class="competition-status">Checking student sign-in…</p>
                     <p id="levelSaveStatus" class="panel-note" role="status" aria-live="polite">Loading your saved game for this level…</p>
-                    <p id="cloudSaveStatus" class="panel-note">Cloud save status: idle</p>
+                    <p id="cloudSaveStatus" class="panel-note" role="status" aria-live="polite">Local-only until the cloud save has been checked.</p>
+                    <p id="cloudSaveDiagnostics" class="panel-note" role="status" aria-live="polite">Cloud prerequisites have not yet been checked.</p>
+                    <button id="retryCloudSaveButton" class="btn-secondary" type="button" onclick="retryCloudRecovery()">Check cloud / retry sync</button>
+                    <button class="btn-secondary" type="button" onclick="exportRecoveryBackup()">Export local backup</button>
                     <p id="studentLoginHint" class="panel-note">Your identity comes from your class roster and cannot be edited here. Only the company name can be changed.</p>
                     <div class="identity-grid">
                         <label>Student Code <input id="studentCodeInput" type="text" readonly aria-readonly="true"></label>
@@ -254,6 +257,7 @@
     <script src="../../shared/student-session.js"></script>
     <script src="../../shared/level-capabilities.js"></script>
     <script src="../../shared/level-save-store.js"></script>
+    <script src="../../shared/student-progress-auth.js"></script>
     <script src="../../shared/save-protocol.js"></script>
     <script src="../../shared/cloud-restore.js"></script>
     <script src="game-state.js"></script>

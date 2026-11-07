@@ -38,6 +38,7 @@ class GameState {
         this.roundHistory = [];
         this.totalProfitLoss = 0;
         this.investmentPlans = {};
+        this.investmentProfile = null;
 
         this.checkpointStatus = null;
         this.quizAttempts = [];
@@ -724,9 +725,9 @@ class GameState {
 
     recordInvestmentAction(bucket, weight) {
         this.currentRunActivity = true;
-        if (typeof InvestmentProfile === 'undefined') return;
-        const code = this.player?.studentCode || this.player?.studentId || 'anon';
-        InvestmentProfile.recordAction(code, this.assignedLevel, bucket, weight || 1);
+        const identity = this.getSaveIdentity();
+        if (!identity) return;
+        this.getInvestmentProfileApi()?.recordAction(identity, this.assignedLevel, bucket, weight || 1);
     }
 
     getSaveStore() {
@@ -750,6 +751,14 @@ class GameState {
             : null;
     }
 
+    getInvestmentProfileApi() {
+        if (typeof InvestmentProfile !== 'undefined') return InvestmentProfile;
+        if (typeof require === 'function') {
+            try { return require('../../shared/investment-profile.js'); } catch (_) { return null; }
+        }
+        return null;
+    }
+
     /**
      * Detached snapshot of THIS level's economy. Carries only the identity
      * needed to prove ownership (no StudentName/StudentID).
@@ -757,6 +766,11 @@ class GameState {
     captureLevelSnapshot() {
         this.persistProgressionStateForLevel(this.assignedLevel);
         const clone = (value) => JSON.parse(JSON.stringify(value));
+        const profileApi = this.getInvestmentProfileApi();
+        const identity = this.getSaveIdentity();
+        const investmentProfile = profileApi && identity
+            ? profileApi.getBuckets(identity, this.assignedLevel)
+            : (this.investmentProfile || null);
         return {
             level: this.assignedLevel,
             round: this.round,
@@ -771,6 +785,7 @@ class GameState {
             machinery: clone(Array.isArray(this.machinery) ? this.machinery : []),
             roundHistory: clone(Array.isArray(this.roundHistory) ? this.roundHistory : []),
             investmentPlans: clone(this.investmentPlans || {}),
+            investmentProfile: clone(investmentProfile),
             totalProfitLoss: typeof this.totalProfitLoss === 'number' && Number.isFinite(this.totalProfitLoss) ? this.totalProfitLoss : 0,
             currentRunActivity: this.currentRunActivity,
             progression: clone(this.getProgressionState(this.assignedLevel))
@@ -871,6 +886,10 @@ class GameState {
             this.roundHistory = snapshot.roundHistory;
             this.totalProfitLoss = snapshot.totalProfitLoss;
             this.investmentPlans = snapshot.investmentPlans;
+            this.investmentProfile = store.clone(snapshot.investmentProfile || null);
+            if (this.investmentProfile) {
+                this.getInvestmentProfileApi()?.mergeBuckets(identity, level, this.investmentProfile);
+            }
             if (snapshot.player?.companyName) this.player.companyName = snapshot.player.companyName;
             if (snapshot.progression && typeof snapshot.progression === 'object') {
                 const key = this.getLevelKey(level);
@@ -978,6 +997,7 @@ class GameState {
         this.roundHistory = [];
         this.totalProfitLoss = 0;
         this.investmentPlans = {};
+        this.investmentProfile = null;
         this.ensureProgressionStateMap();
         this.applyProgressionStateForAssignedLevel();
         return true;

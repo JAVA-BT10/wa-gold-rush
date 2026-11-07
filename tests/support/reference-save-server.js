@@ -9,14 +9,21 @@
  *
  * Model of server state:
  *   rows        – GGR_StudentProgress: one row per ProgressKey
- *                 { revision, runGeneration, runId, contentHash, lastSaveRequestId, payload }
+ *                 { revision, runGeneration, runId, contentHash, lastSaveRequestId,
+ *                   payload, recentRequests:[{saveRequestId,binding,response}] }
  *   receipts    – separate durable request-receipt store keyed by saveRequestId
- *                 { progressKey, contentHash, baseRevision, response }
+ *                 { progressKey, binding, response }
  *   generations – authoritative run generation per ProgressKey (advanced by reset)
  *
  * Order of checks (important): validate → idempotency receipt → generation →
- * compare-and-swap on revision → write row + receipt together → respond.
+ * compare-and-swap on revision → atomic row + recentRequests → durable receipt.
+ * The bounded row ring pins every entry whose durable receipt is still missing.
+ * Receipt storage capacity blocks persistence rather than pruning old receipts.
+ * This synchronous in-memory model is NOT tenant concurrency/auth/ETag evidence.
  */
+const store = require('../../shared/level-save-store.js');
+const NON_BINDING_FIELDS = new Set(['saveRequestId', 'clientTimestampUtc', 'clientVersion', 'contentHash']);
+
 class ReferenceSaveServer {
     constructor(options = {}) {
         this.rows = new Map();
@@ -24,7 +31,18 @@ class ReferenceSaveServer {
         this.generations = new Map();
         this.log = [];
         this.failNextReceiptWrite = false;
-        this.receiptRetentionLimit = Number.isInteger(options.receiptRetentionLimit) ? options.receiptRetentionLimit : Infinity;
+        this.receiptRetentionLimit = Number.isInteger(options.receiptRetentionLimit) && options.receiptRetentionLimit >= 0
+            ? options.receiptRetentionLimit : Infinity;
+        this.recentRequestLimit = Number.isInteger(options.recentRequestLimit) && options.recentRequestLimit >= 1
+            ? options.recentRequestLimit : 10;
+    }
+
+    static binding(request) {
+        const content = {};
+        Object.keys(request).forEach((key) => {
+            if (!NON_BINDING_FIELDS.has(key)) content[key] = request[key];
+        });
+        return store.canonicalJson(content);
     }
 
     static ack(request, revision, extra = {}) {
@@ -51,27 +69,26 @@ class ReferenceSaveServer {
             return { ok: false, protocolVersion: 2, code: 'invalid_request' };
         }
 
-        // 1. Idempotency BEFORE any stale/conflict check.
+        const binding = ReferenceSaveServer.binding(request);
+        // 1. Idempotency BEFORE any stale/conflict check. Never trust a browser
+        // hash (or payload length) as proof that the immutable content matches.
         const receipt = this.receipts.get(request.saveRequestId);
         if (receipt) {
-            if (receipt.progressKey === request.progressKey
-                && receipt.contentHash === request.contentHash
-                && receipt.baseRevision === request.baseRevision) {
+            if (receipt.progressKey === request.progressKey && receipt.binding === binding) {
                 return { ...receipt.response, deduplicated: true };
             }
             return { ok: false, protocolVersion: 2, code: 'request_id_reused' };
         }
-        // Crash-recovery fallback: the row write committed but the receipt
-        // write did not. The row remembers its last request id + content.
-        const row = this.rows.get(request.progressKey);
-        if (row && row.lastSaveRequestId === request.saveRequestId) {
-            if (row.contentHash === request.contentHash && row.runGeneration === request.runGeneration) {
-                const response = ReferenceSaveServer.ack(request, row.revision);
-                this.storeReceipt(request, response);
-                return { ...response, deduplicated: true };
-            }
-            return { ok: false, protocolVersion: 2, code: 'request_id_reused' };
+        // Crash recovery includes older requests after intervening writes. Scan
+        // every row so an unreceipted ID cannot be rebound to a different key.
+        for (const savedRow of this.rows.values()) {
+            const pending = savedRow.recentRequests.find((entry) => entry.saveRequestId === request.saveRequestId);
+            if (!pending) continue;
+            if (pending.binding !== binding) return { ok: false, protocolVersion: 2, code: 'request_id_reused' };
+            this.storeReceipt(request, pending.response);
+            return { ...pending.response, deduplicated: true };
         }
+        const row = this.rows.get(request.progressKey);
 
         // 2. Run generation (server-authoritative; advanced only by reset).
         const generation = this.currentGeneration(request.progressKey);
@@ -96,41 +113,64 @@ class ReferenceSaveServer {
             };
         }
 
-        // 4. Conditional write + receipt (one transaction in a real backend).
+        // 4. A ring entry is evictable only after its exact original receipt is
+        // durable. Otherwise hold this write; a retry of the old request repairs it.
+        const recentRequests = [...(row?.recentRequests || [])];
+        if (recentRequests.length >= this.recentRequestLimit) {
+            const oldest = recentRequests[0];
+            if (!this.hasDurableReceipt(oldest)) return { ok: false, protocolVersion: 2, code: 'receipt_repair_required' };
+            recentRequests.shift();
+        }
         const revision = (row?.revision || 0) + 1;
+        const response = ReferenceSaveServer.ack(request, revision);
+        recentRequests.push({ saveRequestId: request.saveRequestId, binding, response: store.clone(response) });
+        // The row and recovery ring commit atomically in this reference model.
         this.rows.set(request.progressKey, {
             revision,
             runGeneration: request.runGeneration,
             runId: request.runId,
             contentHash: request.contentHash,
             lastSaveRequestId: request.saveRequestId,
-            payload: JSON.parse(JSON.stringify(request))
+            payload: store.clone(request),
+            recentRequests
         });
-        const response = ReferenceSaveServer.ack(request, revision);
+        this.storeReceipt(request, response);
+        return response;
+    }
+
+    hasDurableReceipt(entry) {
+        const receipt = this.receipts.get(entry.saveRequestId);
+        return !!receipt && receipt.binding === entry.binding
+            && store.canonicalJson(receipt.response) === store.canonicalJson(entry.response);
+    }
+
+    storeReceipt(request, response) {
         if (this.failNextReceiptWrite) {
             this.failNextReceiptWrite = false;
             const error = new Error('simulated crash after row write');
             error.crashed = true;
             throw error;
         }
-        this.storeReceipt(request, response);
-        return response;
-    }
-
-    storeReceipt(request, response) {
+        if (!this.receipts.has(request.saveRequestId) && this.receipts.size >= this.receiptRetentionLimit) {
+            const error = new Error('simulated durable receipt capacity exhausted');
+            error.code = 'receipt_capacity';
+            throw error;
+        }
         this.receipts.set(request.saveRequestId, {
             progressKey: request.progressKey,
-            contentHash: request.contentHash,
-            baseRevision: request.baseRevision,
-            response
+            binding: ReferenceSaveServer.binding(request),
+            response: store.clone(response)
         });
-        while (this.receipts.size > this.receiptRetentionLimit) {
-            this.receipts.delete(this.receipts.keys().next().value);
-        }
     }
 
     /** Authorised, audited reset of ONE level: advances the generation. */
     reset(progressKey) {
+        const row = this.rows.get(progressKey);
+        if (row?.recentRequests.some((entry) => !this.hasDurableReceipt(entry))) {
+            const error = new Error('reset held until missing durable receipts are repaired');
+            error.code = 'receipt_repair_required';
+            throw error;
+        }
         const next = this.currentGeneration(progressKey) + 1;
         this.generations.set(progressKey, next);
         this.rows.delete(progressKey);

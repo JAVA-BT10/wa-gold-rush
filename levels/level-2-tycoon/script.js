@@ -26,6 +26,9 @@ let progressSaveScheduler = null;
 // Why cloud uploads for this level are held on this device ('' = not held).
 let cloudUploadHold = '';
 let levelLoadState = { status: 'loading', reason: '' };
+let cloudCheckPromise = null;
+let adoptionRecoveryBlocked = false;
+const RECOVERABLE_CLOUD_HOLDS = ['unverified_new_slot', 'startup_lookup_required', 'cloud_state_unknown', 'cloud_restore_failed', 'restore_unconfigured', 'local_only_legacy_writes_disabled'];
 
 function createProgressSaveScheduler(options = {}) {
     const activeSaves = new Map();
@@ -51,10 +54,7 @@ function createProgressSaveScheduler(options = {}) {
         }
         const savePromise = Promise.resolve(dispatchSave(payload))
             .catch((error) => {
-                console.warn('[Level2] Progress save dispatch error', {
-                    progressKey,
-                    error: error?.message || error
-                });
+                console.warn('[Level2] Progress save dispatch failed; local progress was kept.');
                 return { ok: false, error: error?.message || String(error || 'Progress save dispatch failed.') };
             })
             .finally(() => {
@@ -170,15 +170,19 @@ const LEVEL_LOAD_MESSAGES = {
     cloud_conflict: 'Your cloud save for this level differs from this device. Playing from this device; cloud saving is paused until your teacher helps reconcile them.',
     local_only: 'Playing from this device. The cloud save could not be checked, so progress is not yet synced.',
     restored: 'Restored your saved game for this level from the cloud.',
+    protected: 'Your local save is protected and was not changed. Export a backup for your teacher.',
     error: 'The game could not load your saved progress. Please reload the page.'
 };
 
 function updateLevelSaveStatusLabel() {
     const el = document.getElementById('levelSaveStatus');
     if (!el) return;
-    const base = LEVEL_LOAD_MESSAGES[levelLoadState.status] || LEVEL_LOAD_MESSAGES.error;
+    let base = LEVEL_LOAD_MESSAGES[levelLoadState.status] || LEVEL_LOAD_MESSAGES.error;
+    if (levelLoadState.status === 'protected') base += ` Cloud lookup: ${levelLoadState.reason}.`;
     const hold = cloudUploadHold
-        ? ' Cloud saving for this level is paused on this device until your teacher reviews an earlier save.'
+        ? (RECOVERABLE_CLOUD_HOLDS.includes(cloudUploadHold)
+            ? ' Local-only: keep playing and saving here. Check cloud again when available, or export a backup.'
+            : ' Cloud saving is paused for review. Your local game is kept; export a backup for your teacher.')
         : '';
     el.textContent = `${base}${hold}`;
 }
@@ -189,17 +193,11 @@ function setLevelLoadState(status, reason = '') {
 }
 
 function protectCloudSave(reason, session, level) {
-    if (!cloudUploadHold || cloudUploadHold === 'unverified_new_slot') {
+    if (!cloudUploadHold || RECOVERABLE_CLOUD_HOLDS.includes(cloudUploadHold)) {
         cloudUploadHold = reason;
     }
-    gameState.saveLocked = true;
-    const store = getLevelSaveStore();
-    const ledger = store?.readLedger(localStorage, session);
-    const run = ledger?.levelRuns?.[String(level)];
-    if (run && (!run.cloudUploadHold || run.cloudUploadHold === 'unverified_new_slot')) {
-        run.cloudUploadHold = cloudUploadHold;
-        store.writeLedger(localStorage, ledger);
-    }
+    // Transport/reconciliation holds are not local write protections. The
+    // dispatch layer independently requires a fresh verified lookup.
 }
 
 /**
@@ -208,12 +206,68 @@ function protectCloudSave(reason, session, level) {
  * never overwrites unsent local changes and never treats an unknown cloud
  * answer (error/timeout/legacy response) as "no cloud save".
  */
+function recoverLocalSaveAccess(session, level) {
+    const store = getLevelSaveStore();
+    if (!store) return false;
+    const recovery = store.recoverCloudAdoption?.(localStorage, session, level);
+    if (recovery?.ok === false) {
+        adoptionRecoveryBlocked = true;
+        gameState.saveLocked = true;
+        protectCloudSave('cloud_restore_failed', session, level);
+        setLevelLoadState('error', recovery.reason || 'adoption_pending');
+        return false;
+    }
+    if (recovery?.committed || adoptionRecoveryBlocked || levelLoadState.reason === 'adoption_pending') {
+        adoptionRecoveryBlocked = false;
+        if (typeof store.getLevelWriteProtection === 'function'
+            && !store.getLevelWriteProtection(localStorage, session, level)) {
+            gameState.saveLocked = false;
+        }
+        loadLevelGameForSession(session, level);
+    }
+    if (gameState.saveLocked && RECOVERABLE_CLOUD_HOLDS.includes(levelLoadState.reason)
+        && typeof store.getLevelWriteProtection === 'function'
+        && !store.getLevelWriteProtection(localStorage, session, level)) {
+        const local = store.readLevelSave(localStorage, session, level);
+        const sameRun = local.status === 'found'
+            && local.envelope.runId === gameState.activeRun?.runId
+            && local.envelope.generation === gameState.activeRun?.generation;
+        if (sameRun || local.status === 'missing') {
+            gameState.saveLocked = false;
+            if (!sameRun) loadLevelGameForSession(session, level);
+        }
+    }
+    return !gameState.saveLocked;
+}
+
 async function maybeRestoreLevelFromCloud(session, level) {
     const restore = globalThis.WA_GOLD_RUSH_CLOUD_RESTORE;
     const store = getLevelSaveStore();
-    if (!restore || !store || !restore.isEnabled() || gameState.saveLocked) return null;
-    const cloud = await restore.fetchLevelSave({ session, level });
+    if (!store) return null;
+    recoverLocalSaveAccess(session, level);
+    if (!restore || !restore.isEnabled()) {
+        protectCloudSave('restore_unconfigured', session, level);
+        setLevelLoadState(gameState.saveLocked ? 'protected' : 'local_only', gameState.saveLocked ? 'unavailable' : '');
+        return null;
+    }
+    const sessionStamp = JSON.stringify(session);
+    const cloud = typeof SharePointSync !== 'undefined' && SharePointSync.checkLevelSave
+        ? await SharePointSync.checkLevelSave(session, level)
+        : await restore.fetchLevelSave({ session, level });
+    if (JSON.stringify(getAuthenticatedStudentSession()) !== sessionStamp
+        || gameState.assignedLevel !== level) return null;
     const local = store.readLevelSave(localStorage, session, level);
+    const protection = store.getLevelWriteProtection?.(localStorage, session, level);
+    if (gameState.saveLocked || protection) {
+        gameState.saveLocked = true;
+        if (!cloudUploadHold || RECOVERABLE_CLOUD_HOLDS.includes(cloudUploadHold)) {
+            cloudUploadHold = protection || 'local_save_protected';
+        }
+        const cloudStatus = ['found', 'missing', 'failed', 'incomplete', 'unavailable'].includes(cloud?.status)
+            ? cloud.status : 'unknown';
+        setLevelLoadState('protected', cloudStatus);
+        return { action: 'protected_local', reason: 'local_save_protected', cloudStatus };
+    }
     const decision = restore.reconcile(local, cloud);
     const protocolOn = !!getSaveProtocolApi()?.isEnabled();
     let safeReconcile = ['resume_local', 'start_new', 'upload_local_create'].includes(decision.action);
@@ -232,18 +286,22 @@ async function maybeRestoreLevelFromCloud(session, level) {
     } else if (decision.action === 'resume_local_unsynced' || decision.action === 'start_local_unsynced') {
         // Without server compare-and-swap, an upload could overwrite cloud
         // progress this device has not seen: hold until the next load.
-        if (!protocolOn) protectCloudSave('cloud_state_unknown', session, level);
+        protectCloudSave('cloud_state_unknown', session, level);
         setLevelLoadState('local_only', decision.reason);
     }
-    if (safeReconcile && cloudUploadHold === 'unverified_new_slot') {
+    if (safeReconcile && (RECOVERABLE_CLOUD_HOLDS.includes(cloudUploadHold) || cloudUploadHold === 'cloud_conflict')) {
         const ledger = store.readLedger(localStorage, session);
         const run = ledger.levelRuns?.[String(level)];
-        if (run?.cloudUploadHold === 'unverified_new_slot') {
+        if (RECOVERABLE_CLOUD_HOLDS.includes(run?.cloudUploadHold)) {
             delete run.cloudUploadHold;
             if (!store.writeLedger(localStorage, ledger)) return decision;
         }
         cloudUploadHold = store.getUploadHold(localStorage, session, level) || '';
         updateLevelSaveStatusLabel();
+    }
+    if (safeReconcile && !protocolOn) {
+        protectCloudSave('local_only_legacy_writes_disabled', session, level);
+        setLevelLoadState('local_only');
     }
     return decision;
 }
@@ -304,10 +362,7 @@ function loadLevelGameForSession(session, level) {
         return levelLoadState;
     }
     cloudUploadHold = store.getUploadHold(localStorage, session, level) || '';
-    if (!cloudUploadHold && levelLoadState.status !== 'resumed'
-        && getLevelCapabilitiesApi()?.isFeatureEnabled?.('holdUnverifiedNewSlotUploads')) {
-        cloudUploadHold = 'unverified_new_slot';
-    }
+    if (!cloudUploadHold) cloudUploadHold = 'startup_lookup_required';
     levelLoadState.migration = migration;
     updateLevelSaveStatusLabel();
     return levelLoadState;
@@ -429,7 +484,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         return;
     }
 
+    if (JSON.stringify(getAuthenticatedStudentSession()) !== JSON.stringify(session)) return;
     if (!(await resolveCurrentLevelAccess())) return;
+    if (JSON.stringify(getAuthenticatedStudentSession()) !== JSON.stringify(session)) return;
 
     try {
         // Only this student's save for THIS level is ever loaded; there is no
@@ -439,8 +496,10 @@ document.addEventListener('DOMContentLoaded', async function() {
         try {
             await maybeRestoreLevelFromCloud(session, requestedLevel);
         } catch (restoreError) {
+            protectCloudSave('cloud_state_unknown', session, requestedLevel);
             console.warn('[Level2] Cloud restore skipped', restoreError?.message || restoreError);
         }
+        if (JSON.stringify(getAuthenticatedStudentSession()) !== JSON.stringify(session)) return;
         if (!enforceCurrentLevelAccess()) return;
         ensureInvestmentPlansForOwnedMines();
         hydrateIdentityInputs();
@@ -1491,7 +1550,100 @@ function handleStudentSessionChange() {
 function updateCloudSaveStatusLabel(status) {
     const statusEl = document.getElementById('cloudSaveStatus');
     if (!statusEl) return;
-    statusEl.textContent = `Cloud save status: ${String(status || 'idle')}`;
+    statusEl.textContent = cloudUploadHold ? 'Cloud save paused. Local saving and backup export are available.' : `Cloud save status: ${String(status || 'idle')}`;
+    const diagnosticsEl = document.getElementById('cloudSaveDiagnostics');
+    const diagnostics = typeof SharePointSync !== 'undefined'
+        ? SharePointSync.getDiagnostics?.({ level: gameState?.assignedLevel }) : null;
+    if (diagnosticsEl && diagnostics) {
+        diagnosticsEl.textContent = `Cloud checks: build ${diagnostics.buildVersion}; protocol v${diagnostics.protocolVersion || 'unavailable'}; conditional saves ${diagnostics.conditionalSavesEnabled ? 'on' : 'off'}; restore ${diagnostics.restoreConfigured ? 'configured' : 'unconfigured'}; authentication provider ${diagnostics.proofProviderConfigured ? 'configured' : 'unconfigured'}; this startup lookup ${diagnostics.startupSlotVerified ? 'verified' : 'not verified'}; local save ${diagnostics.localSaveStatus}.`;
+    }
+}
+
+async function retryCloudRecovery() {
+    if (cloudCheckPromise) return cloudCheckPromise;
+    const session = requireAuthenticatedStudent();
+    if (!session) return;
+    const button = document.getElementById('retryCloudSaveButton');
+    if (button) button.disabled = true;
+    cloudCheckPromise = (async () => {
+        const level = gameState.assignedLevel;
+        const writable = recoverLocalSaveAccess(session, level);
+        const store = getLevelSaveStore();
+        if (!store) return;
+        const local = store.readLevelSave(localStorage, session, level);
+        // Persist any play since the last check before comparing either copy.
+        // A fresh provisional run is not evidence of local work: keep its slot
+        // absent so a later verified cloud response can still be adopted.
+        const localChanged = writable && (local.status === 'found'
+            ? local.envelope.runId !== gameState.activeRun?.runId
+                || local.envelope.generation !== gameState.activeRun?.generation
+                || store.canonicalJson(gameState.captureLevelSnapshot()) !== store.canonicalJson(local.envelope.snapshot)
+            : !isPristineLevelGame());
+        if (localChanged && !gameState.saveToLocalStorage()) return;
+        await maybeRestoreLevelFromCloud(session, gameState.assignedLevel);
+        if (JSON.stringify(getAuthenticatedStudentSession()) !== JSON.stringify(session)) return;
+        updateAllUI();
+        if (typeof SharePointSync !== 'undefined') {
+            await SharePointSync.retryQueue();
+            if (JSON.stringify(getAuthenticatedStudentSession()) !== JSON.stringify(session)) return;
+            if (cloudUploadHold === 'cloud_conflict' && !gameState.saveLocked) {
+                await maybeRestoreLevelFromCloud(session, gameState.assignedLevel);
+            }
+            if (!cloudUploadHold) syncPlayerRecord();
+        }
+        updateLevelSaveStatusLabel();
+        updateCloudSaveStatusLabel(typeof SharePointSync !== 'undefined' ? SharePointSync.getCloudSaveStatus?.() : 'local-only');
+    })().catch(() => {
+        setLevelLoadState('local_only');
+    }).finally(() => {
+        cloudCheckPromise = null;
+        if (button) button.disabled = false;
+    });
+    return cloudCheckPromise;
+}
+
+function exportRecoveryBackup() {
+    const session = requireAuthenticatedStudent();
+    if (!session) return;
+    if (!confirm('This private backup may contain identifying game history. Keep it secure and do not post it publicly. Continue?')) return;
+    const store = getLevelSaveStore();
+    const key = store?.buildSaveKey(session, gameState.assignedLevel);
+    let rawStoredSave;
+    let pendingAdoption;
+    try {
+        if (!key) throw new Error('save_store_unavailable');
+        rawStoredSave = localStorage.getItem(key);
+        pendingAdoption = localStorage.getItem(`${key}|adoption`);
+    } catch (_) {
+        alert('Backup could not read the stored source. Nothing was exported.');
+        return;
+    }
+    const local = store.readLevelSave(localStorage, session, gameState.assignedLevel);
+    if (local.status === 'unavailable' && local.reason !== 'adoption_pending') {
+        alert('Backup could not read the stored source. Nothing was exported.');
+        return;
+    }
+    const backup = {
+        format: 'ggr.local-backup.v1',
+        privateBackup: true,
+        warning: 'Contains private local save data. Keep it secure, share only with your teacher, and do not post it publicly.',
+        level: gameState.assignedLevel,
+        sourceStatus: local.status,
+        rawStoredSave,
+        pendingAdoption,
+        savedGame: local?.envelope || null,
+        currentGame: !gameState.saveLocked && ['found', 'missing'].includes(local.status)
+            && (local.status === 'found' || !isPristineLevelGame())
+            ? gameState.captureLevelSnapshot() : null
+    };
+    const json = JSON.stringify(backup, (key, value) =>
+        /^(studentId|studentName|pin|token|accessToken|authProof|sessionProof)$/i.test(key) ? undefined : value, 2);
+    const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `gold-rush-level-${gameState.assignedLevel}-backup.json`;
+    link.click();
+    URL.revokeObjectURL(url);
 }
 
 function getProgressSaveScheduler() {
@@ -1553,6 +1705,7 @@ function updateStudentLoginCta(competition = getCompetitionContext()) {
 function logoutCompetitionSession() {
     // The autosave keeps its owner so the same student can resume after
     // signing in again; it is never loaded for a different student.
+    if (typeof SharePointSync !== 'undefined') SharePointSync.clearStartupVerification?.();
     const api = getStudentSessionApi();
     if (api) api.clearSession(localStorage);
     else localStorage.removeItem(STUDENT_SESSION_KEY);
@@ -1733,7 +1886,7 @@ function syncPlayerRecord() {
     // Cloud uploads for this level are held while an earlier device save
     // still needs review (fail closed).
     if (cloudUploadHold) {
-        updateCloudSaveStatusLabel('paused for teacher review');
+        updateCloudSaveStatusLabel('local-only');
         return;
     }
 
@@ -1879,8 +2032,13 @@ function resetGame() {
     const session = requireAuthenticatedStudent();
     if (!session) return;
     const level = gameState.assignedLevel;
+    const existing = getLevelSaveStore()?.readLevelSave(localStorage, session, level);
+    if (getSaveProtocolApi()?.isEnabled() || Number.isInteger(existing?.envelope?.cloud?.revision)) {
+        alert('Cloud-backed games cannot be restarted until an authorised backend reset is available. Your current game is kept.');
+        return;
+    }
     if (gameState.getRunProtectionReason()
-        || (cloudUploadHold && cloudUploadHold !== 'unverified_new_slot')) {
+        || (cloudUploadHold && !RECOVERABLE_CLOUD_HOLDS.includes(cloudUploadHold))) {
         alert('❌ This save is protected. Reload or ask your teacher to resolve it before restarting.');
         return;
     }
@@ -1905,6 +2063,7 @@ function resetGame() {
     applyCompetitionSessionToIdentity(false);
     hydrateIdentityInputs();
     gameState.saveToLocalStorage();
+    cloudUploadHold = 'startup_lookup_required';
     setLevelLoadState('started', 'restarted');
     updateAssignedLevelBadge();
     updateAllUI();

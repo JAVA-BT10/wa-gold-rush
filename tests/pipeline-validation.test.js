@@ -1,7 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
@@ -26,7 +25,7 @@ test('PR builds and exact-revision deployments cannot bypass regression tests', 
 
 test('the actual Pages build verifies PR artifacts without secrets and rejects secretless deployment builds', () => {
     assert.equal(buildBlocks.length, 2);
-    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-gr-pipeline-'));
+    const temporary = fs.mkdtempSync(path.join(__dirname, '.pipeline-test-'));
     const env = {
         ...process.env,
         WA_GGR_API_KEY: '',

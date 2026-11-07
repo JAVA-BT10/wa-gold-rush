@@ -2,6 +2,12 @@
 
 > **Per-level architecture (draft):** browser saves are now one slot per Class|Student|Level. The planned server-authoritative revision/idempotency protocol, full student-scoped restore and other future flows are specified in [save-protocol-v2](save-protocol-v2.md), [flow-registry-and-contracts](flow-registry-and-contracts.md) and the [future-state architecture](../architecture/future-state-architecture.md). They are gated OFF and not live-verified.
 
+> **Historical legacy repair reference, not rollout instructions.** Unconditional
+> upsert guidance below must not be used on protected slots. Current clients
+> hold legacy/unverified cloud writes; old cached writers must be refused
+> server-side. Follow the single [phased operations runbook](../operations/release-and-acceptance.md)
+> for authentication, conditional writes, migration and retrieval before activation.
+
 ## Scope of this PR
 
 This repository PR adds client-side reliability, telemetry, queue normalization, and documentation for `GGR_SaveProgress`.
@@ -103,7 +109,7 @@ The client payload (built by `shared/sharepoint-sync.js` via `shared/progression
 | `approvalStatus` | `ApprovalStatus` | Single line of text |
 | `approverName` | `ApproverName` | Single line of text |
 | `approvalTimestamp` | `ApprovalTimestamp` | Single line of text (ISO timestamp) |
-| `progressionStateJson` | `ProgressionStateJson` | Multiple lines of text (plain) |
+| `progressionStateJson` | `ProgressionStateByLevel` (observed internal name; confirm tenant type/mapping) | JSON-bearing text; verify actual column configuration |
 
 **Teacher decisions are owned by GGR_SaveCheckpointApproval.** The student's browser never learns of a teacher decision, so its payload always carries its own local `approvalStatus` (`pending` after a pass). To stop student saves from undoing approvals, SaveProgress must follow these rules:
 
@@ -245,9 +251,10 @@ The flow must echo `saveRequestId` and canonical `progressKey` in success and fa
 - [ ] `GGR_Students` remains the only source of student identity truth
 - [ ] malformed or incomplete identity is rejected before any write attempt
 
-## Progress retrieval investigation before building `GGR_GetStudentProgress`
+## Progress retrieval findings and boundaries
 
-Before implementing `GGR_GetStudentProgress`, inspect the actual `GGR_GetDashboardData` response and verify whether each progress record already contains:
+User-supplied tenant evidence reports a complete correct record from
+`GGR_GetDashboardData` Response_2, including:
 
 - `ProgressionMarkersJson`
 - `BadgesJson`
@@ -255,6 +262,17 @@ Before implementing `GGR_GetStudentProgress`, inspect the actual `GGR_GetDashboa
 - `CurrentAssets`
 - `SessionStatus`
 
-If those fields are present and sufficient to fully restore student gameplay state, defer `GGR_GetStudentProgress` and document the required restoration parsing work instead.
+Full state already travels in `ProgressionMarkersJson`; summary columns are not
+the only saved state. Do not reconstruct precise economy from rounded totals.
 
-If those fields are absent or insufficient, produce a follow-up design proposal for `GGR_GetStudentProgress` rather than implementing that flow in this PR.
+That evidence does **not** establish a historical dashboard-to-playable-game
+restore path. Current home login normalizes roster identity and progression,
+not economy; the same normalizer predates per-level saves. Dashboard hydration
+is teacher-scoped. Never send dashboard datasets/endpoints to student pages.
+
+`GGR_GetStudentProgress` full retrieval remains planned/unverified and optional/
+unconfigured in the repository. It requires authenticated exact-slot lookup
+and `ggr.getStudentProgress.v2` with validated `save` envelope, persistent
+revision and explicit matched `found:false` only for confirmed absence.
+Deploying it is a tenant operator action, after server write protection, not
+proof that adding an endpoint or login response field restores games safely.

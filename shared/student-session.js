@@ -233,7 +233,12 @@
         const parsed = parseSession(session);
         if (!store || !parsed) return false;
         try {
-            store.setItem(STORAGE_KEY, JSON.stringify(parsed));
+            // Lifecycle marker only, never authentication proof. Even an
+            // identical same-tab relogin must invalidate in-flight save checks.
+            const sessionInstanceId = typeof globalObj.crypto?.randomUUID === 'function'
+                ? globalObj.crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            store.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, sessionInstanceId }));
             return true;
         } catch (_) {
             return false;
