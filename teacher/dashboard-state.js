@@ -691,7 +691,7 @@ class TeacherDashboard {
             investmentProfile: optionalText(['investmentProfile', 'InvestmentProfile']),
             updatedAt: optionalText([
                 'updatedAt', 'UpdatedAt', 'lastPlayed', 'LastPlayed', 'LastPlayedUtc',
-                'clientTimestampUtc', 'ClientTimestampUtc', 'Modified'
+                'LaastPlayedUtc', 'clientTimestampUtc', 'ClientTimestampUtc', 'UpdatedUtc', 'Modified'
             ])
         };
     }
@@ -771,7 +771,7 @@ class TeacherDashboard {
     buildHydratedStudent(student, progressRows = []) {
         const studentCode = String(student.studentCode || '').trim();
         const latest = this.selectLatestProgressRow(progressRows);
-        const level = student.level || Number(latest?.level) || 1;
+        const level = student.level;
         const checkpointsByLevel = this.buildCheckpointsByLevel(progressRows);
         const currentCheckpoint = checkpointsByLevel[Number(latest?.level) || level] || {};
         const pick = (value, fallback) => (value === undefined || value === null ? fallback : value);
@@ -824,6 +824,12 @@ class TeacherDashboard {
         // roster, teacher or progress data is merged in.
         const progressByCode = new Map();
         const progressById = new Map();
+        const rosterCodeCounts = new Map();
+        const rosterIdCounts = new Map();
+        normalized.students.forEach((student) => {
+            if (student.studentCodeKey) rosterCodeCounts.set(student.studentCodeKey, (rosterCodeCounts.get(student.studentCodeKey) || 0) + 1);
+            if (student.studentIdKey) rosterIdCounts.set(student.studentIdKey, (rosterIdCounts.get(student.studentIdKey) || 0) + 1);
+        });
         normalized.progress.forEach((record) => {
             if (record.studentCodeKey) {
                 if (!progressByCode.has(record.studentCodeKey)) progressByCode.set(record.studentCodeKey, []);
@@ -834,21 +840,24 @@ class TeacherDashboard {
             }
         });
 
+        const matchedProgress = new Set();
         this.students = normalized.students.map((student) => {
-            let rows = student.studentCodeKey ? (progressByCode.get(student.studentCodeKey) || []) : [];
+            const matchingRows = (rows, rosterCount) => rows.filter((row) => {
+                if (row.classCode && student.classCode) return row.classCode === student.classCode;
+                return rosterCount === 1;
+            });
+            let rows = matchingRows(progressByCode.get(student.studentCodeKey) || [], rosterCodeCounts.get(student.studentCodeKey));
             if (!rows.length && student.studentIdKey) {
-                rows = progressById.get(student.studentIdKey) || [];
+                rows = matchingRows(progressById.get(student.studentIdKey) || [], rosterIdCounts.get(student.studentIdKey));
             }
-            const classRows = student.classCode
-                ? rows.filter(row => !row.classCode || row.classCode === student.classCode)
-                : rows;
-            return this.buildHydratedStudent(student, classRows.length ? classRows : rows);
+            rows.forEach(row => matchedProgress.add(row));
+            return this.buildHydratedStudent(student, rows);
         });
         this.teachers = normalized.teachers;
         this.progress = normalized.progress;
         this.calculateClassStats();
 
-        return this.successResult({ data: normalized });
+        return this.successResult({ data: normalized, unmatchedProgressCount: normalized.progress.length - matchedProgress.size });
     }
 
     clearDashboardData() {
@@ -1000,21 +1009,26 @@ class TeacherDashboard {
 
             const counts = this.getHydrationCounts();
             const missingArrays = inspection.missingArrays;
+            const unmatchedProgressCount = hydrated.unmatchedProgressCount;
             const summary = `Loaded from Microsoft Lists: ${counts.students} student${counts.students === 1 ? '' : 's'}, ${counts.teachers} teacher${counts.teachers === 1 ? '' : 's'}, ${counts.progress} progress record${counts.progress === 1 ? '' : 's'}.`;
+            const notices = [
+                missingArrays.length ? `Flow response did not include: ${missingArrays.join(', ')}.` : '',
+                unmatchedProgressCount ? `${unmatchedProgressCount} progress record${unmatchedProgressCount === 1 ? '' : 's'} could not be matched to the roster; check student and class codes.` : ''
+            ].filter(Boolean);
             const response = this.successResult({
                 source: 'flow',
                 status: result.status,
-                statusTone: missingArrays.length ? 'info' : 'success',
-                statusMessage: missingArrays.length
-                    ? `${summary} Flow response did not include: ${missingArrays.join(', ')}.`
-                    : summary,
+                statusTone: notices.length ? 'info' : 'success',
+                statusMessage: [summary, ...notices].join(' '),
                 counts,
                 missingArrays,
+                unmatchedProgressCount,
                 data: hydrated.data,
                 diagnostics: this.setHydrationDiagnostics({
                     hydrationFailed: false,
                     failureReason: '',
                     missingArrays,
+                    unmatchedProgressCount,
                     studentsReturned: counts.students,
                     teachersReturned: counts.teachers,
                     progressReturned: counts.progress
@@ -1501,7 +1515,7 @@ class TeacherDashboard {
         const classCode = String(studentData.classCode || '').trim().toUpperCase();
         const level = normalizeRosterLevel(studentData);
         if (!level) {
-            return this.failureResult('Assigned Level must be a whole number from 1 to 5 in the roster Level field.');
+            return this.failureResult('Assigned Level must be a whole number from 1 to 5, and roster level fields must agree.');
         }
 
         if (!studentCode) {
@@ -1566,7 +1580,7 @@ class TeacherDashboard {
      * Bulk import students from CSV or JSON.
      *
      * CSV header (accepted):
-     *   StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level
+     *   StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level (or YearLevel)
      *   — or legacy —
      *   name,email,level
      *
@@ -1624,6 +1638,7 @@ class TeacherDashboard {
                         classCode:       idx(f, 'classcode'),
                         Level:           idx(f, 'level'),
                         level:           idx(f, 'level'),
+                        YearLevel:       idx(f, 'yearlevel'),
                         assignedLevel:   idx(f, 'assignedlevel')
                     });
                 } else {
@@ -1674,6 +1689,8 @@ class TeacherDashboard {
                     classCode:       (item.classCode       || item.ClassCode       || '').toString().trim(),
                     Level: item.Level,
                     level: item.level,
+                    YearLevel: item.YearLevel,
+                    yearLevel: item.yearLevel,
                     assignedLevel: item.assignedLevel,
                     AssignedLevel: item.AssignedLevel
                 });
@@ -1935,6 +1952,10 @@ class TeacherDashboard {
         if (updates.level !== undefined) {
             const v = normalizeRosterLevel({ level: updates.level });
             if (!v) return this.failureResult('Assigned Level must be a whole number from 1 to 5.');
+            delete student.Level;
+            delete student.YearLevel;
+            delete student.yearLevel;
+            delete student.AssignedLevel;
             student.level = v;
             student.assignedLevel = v;
         }

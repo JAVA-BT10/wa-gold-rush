@@ -1312,6 +1312,53 @@ test('dashboard progress joins are StudentCode-first with StudentID only as fall
     assert.equal(studentB.gameState.round, 5);
 });
 
+test('dashboard joins progress by class and reports rows that cannot safely match', async () => {
+    const dashboard = setupTeacherDashboardGlobals({
+        callFlow: async () => ({
+            success: true,
+            status: 200,
+            data: {
+                students: [
+                    { StudentCode: 'SHARED', StudentID: 'id-a', ClassCode: '6A', Level: 2 },
+                    { StudentCode: 'SHARED', StudentID: 'id-b', ClassCode: '6B', Level: 2 },
+                    { StudentCode: 'UNIQUE', StudentID: 'id-c', ClassCode: '6C', Level: 2 },
+                    { StudentCode: 'NO-MATCH', StudentID: 'id-d', ClassCode: '6D', Level: 2 }
+                ],
+                teachers: [],
+                progress: [
+                    { StudentCode: 'SHARED', ClassCode: '6A', Level: 2, CurrentRound: 3 },
+                    { StudentCode: 'SHARED', ClassCode: '6B', Level: 2, CurrentRound: 4 },
+                    { StudentCode: 'SHARED', Level: 2, CurrentRound: 9 },
+                    { StudentCode: 'UNIQUE', Level: 2, CurrentRound: 5 },
+                    { StudentCode: 'NO-MATCH', ClassCode: '6E', Level: 2, CurrentRound: 8 },
+                    { StudentID: 'id-d', ClassCode: '6D', Level: 2, CurrentRound: 6 }
+                ]
+            }
+        })
+    });
+    const result = await dashboard.hydrateDashboardFromFlow();
+    assert.equal(result.success, true);
+    assert.deepEqual(dashboard.students.map(student => student.gameState.round), [3, 4, 5, 6]);
+    assert.deepEqual(dashboard.students.map(student => student.progressRecords.length), [1, 1, 1, 1]);
+    assert.equal(result.unmatchedProgressCount, 2);
+    assert.equal(result.statusTone, 'info');
+    assert.match(result.statusMessage, /2 progress records could not be matched/);
+});
+
+test('dashboard recognizes legacy List timestamps when selecting latest progress', () => {
+    const dashboard = setupTeacherDashboardGlobals();
+    dashboard.hydrateDashboardFromNormalizedData({
+        students: [{ StudentCode: 'SC-1', ClassCode: '6B', Level: 2 }],
+        teachers: [],
+        progress: [
+            { StudentCode: 'SC-1', ClassCode: '6B', Level: 4, CurrentRound: 2, LaastPlayedUtc: '2025-01-01' },
+            { StudentCode: 'SC-1', ClassCode: '6B', Level: 2, CurrentRound: 7, LaastPlayedUtc: '2025-02-01' }
+        ]
+    }, { enabled: true });
+    assert.equal(dashboard.students[0].gameState.round, 7);
+    assert.equal(dashboard.students[0].gameState.lastPlayed, '2025-02-01');
+});
+
 test('dashboard hydration fails closed when teacher session is missing', async () => {
     const dashboard = setupTeacherDashboardGlobals({
         session: false,
@@ -2091,6 +2138,11 @@ test('roster Level is normalized as assignedLevel and optional progression colum
     }
     assert.equal(api.createSessionFromLogin({ ...identity, level: { value: 2 } }).session.assignedLevel, 2);
     assert.equal(api.createSessionFromLogin({ ...identity, assignedLevel: '2' }).session.assignedLevel, 2);
+    assert.equal(api.createSessionFromLogin({ ...identity, YearLevel: { Value: '2' }, ProgressedLevel: 4, CurrentLevel: 3 }).session.currentLevel, 3);
+    assert.equal(api.createSessionFromLogin({ ...identity, yearLevel: 2 }).session.assignedLevel, 2);
+    assert.equal(api.createSessionFromLogin({ ...identity, YearLevel: 2, Level: 2 }).session.assignedLevel, 2);
+    assert.deepEqual(api.normalizeRosterLevel({ YearLevel: 2, Level: 3 }), { assignedLevel: null, error: 'conflictingAssignedLevel' });
+    assert.equal(api.createSessionFromLogin({ ...identity, YearLevel: 6 }).ok, false);
     assert.equal(api.createSessionFromLogin({ ...identity, Level: 2, assignedLevel: 3 }).ok, false);
     assert.equal(api.createSessionFromLogin({ ...identity, Level: 6 }).ok, false);
     assert.equal(api.createSessionFromLogin(identity).ok, false);
@@ -2138,6 +2190,10 @@ test('student login accepts authoritative roster Level and rejects conflicting a
     result = await respond({ ...identity, assignedLevel: 3 }).loginStudent({ classCode: '6B', studentId: '123456', pin: '1234' });
     assert.equal(result.success, false);
     assert.match(result.error, /conflictingAssignedLevel/);
+    const { Level, ...identityWithoutLevel } = identity;
+    result = await respond({ ...identityWithoutLevel, YearLevel: 2 }).loginStudent({ classCode: '6B', studentId: '123456', pin: '1234' });
+    assert.equal(result.success, true);
+    assert.equal(result.response.assignedLevel, 2);
 });
 
 test('student import initializes assignment/progression only from valid Level 1–5', () => {
@@ -2170,6 +2226,45 @@ test('student import initializes assignment/progression only from valid Level 1�
     }), 'json');
     assert.equal(jsonImport.added[0].assignedLevel, 3);
     assert.equal(jsonImport.added[0].progressedLevel, 3);
+    const yearCsv = dashboard.bulkImportStudents(
+        'StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,YearLevel,Level\nSC-6,Gold,127,Lee,6B,2,\nSC-7,Gold,128,Lee,6B,2,3',
+        'csv'
+    );
+    assert.equal(yearCsv.added[0].assignedLevel, 2);
+    assert.equal(yearCsv.skipped.length, 1);
+    const yearJson = dashboard.bulkImportStudents(JSON.stringify({
+        StudentCode: 'SC-8', LeaderboardName: 'Silver', StudentID: '129',
+        StudentName: 'Lee', ClassCode: '6B', yearLevel: 4
+    }), 'json');
+    assert.equal(yearJson.added[0].assignedLevel, 4);
+});
+
+test('dashboard hydrates YearLevel and rejects conflicting levels instead of assuming L1', async () => {
+    const calls = [];
+    const dashboard = setupTeacherDashboardGlobals({
+        endpoints: { upsertStudentProfile: 'https://example.com/upsert' },
+        callFlow: async (name, payload) => {
+            calls.push({ name, payload });
+            if (name === 'upsertStudentProfile') return { success: true, status: 200, data: { ok: true } };
+            return { success: true, status: 200, data: {
+                students: [
+                    { StudentCode: 'SC-1', LeaderboardName: 'Gold', ClassCode: '6B', YearLevel: 2, CurrentLevel: 2, ProgressedLevel: 2 },
+                    { StudentCode: 'SC-2', LeaderboardName: 'Silver', ClassCode: '6B', YearLevel: 2, Level: 3 }
+                ],
+                teachers: [], progress: [{ StudentCode: 'SC-2', ClassCode: '6B', Level: 4 }]
+            } };
+        }
+    });
+    await dashboard.hydrateDashboardFromFlow();
+    assert.equal(dashboard.students[0].level, 2);
+    assert.equal(dashboard.students[0].currentLevel, 2);
+    assert.equal(dashboard.students[1].level, null);
+    const rejected = await dashboard.updateStudent('SC-2', { leaderboardName: 'Silver' });
+    assert.equal(rejected.success, false);
+    assert.equal(calls.filter(call => call.name === 'upsertStudentProfile').length, 0);
+    const saved = await dashboard.updateStudent('SC-1', { level: 3 });
+    assert.equal(saved.success, true);
+    assert.equal(calls.find(call => call.name === 'upsertStudentProfile').payload.Level, 3);
 });
 
 test('assigned starting level is playable without fabricated prior checkpoints', () => {
@@ -2725,6 +2820,23 @@ test('roster controls have unique escaped id and name attributes and saves still
     assert.equal(updates[0].changes.leaderboardName, 'Quote');
     assert.equal(updates[0].changes.level, 3);
     assert.match(harness.getElement('rosterActionMsg').innerHTML, /Saved changes for Quote/);
+});
+
+test('roster renders YearLevel and shows an explicit unavailable selection for conflicting aliases', () => {
+    setupTeacherDashboardGlobals();
+    setTeacherSession({ classCode: '6B', classCodes: ['6B'] });
+    const harness = createDashboardDomHarness();
+    harness.dashboard.hydrateDashboardFromNormalizedData({
+        students: [
+            { StudentCode: 'SC-1', LeaderboardName: 'Gold', ClassCode: '6B', YearLevel: 2 },
+            { StudentCode: 'SC-2', LeaderboardName: 'Silver', ClassCode: '6B', YearLevel: 2, Level: 3 }
+        ],
+        teachers: [], progress: []
+    }, { enabled: true });
+    harness.run('renderRoster();');
+    const levelControls = harness.rosterControls().filter(control => control.attrs['data-field'] === 'level');
+    assert.deepEqual(levelControls.map(control => control.value), ['2', '']);
+    assert.match(harness.getElement('rosterBody').innerHTML, /Level unavailable — select a level/);
 });
 
 test('addTeacher for an existing teacher whose role is a SharePoint reference still sends GGR_UpsertTeacher', async () => {

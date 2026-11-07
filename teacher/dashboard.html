@@ -941,10 +941,10 @@
                 const sn   = escHtml(s.studentName     || s.name     || '');
                 const si   = escHtml(s.studentId       || s.email    || '');
                 const cc   = escHtml(s.classCode       || '');
-                const level = Number(s.level) || 1;
+                const level = Number(s.level);
                 // Level 6 is recognised but not assignable until it is built
                 // and deployed; an existing value is shown, never offered.
-                const levelOpts = [1,2,3,4,5,6].map(l => l === 6
+                const levelOpts = (level ? '' : '<option value="" selected disabled>Level unavailable — select a level</option>') + [1,2,3,4,5,6].map(l => l === 6
                     ? `<option value="6" ${level === 6 ? 'selected ' : ''}disabled>L6 (planned)</option>`
                     : `<option value="${l}" ${level === l ? 'selected' : ''}>${l === 1 ? 'L1' : 'L'+l}</option>`
                 ).join('');

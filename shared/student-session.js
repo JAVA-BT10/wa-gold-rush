@@ -65,7 +65,7 @@
      */
     function normalizeRosterLevel(record = {}) {
         const source = record && typeof record === 'object' ? record : {};
-        const aliases = ['Level', 'level', 'assignedLevel', 'AssignedLevel'];
+        const aliases = ['YearLevel', 'yearLevel', 'Level', 'level', 'assignedLevel', 'AssignedLevel'];
         const values = [];
         for (const key of aliases) {
             if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
