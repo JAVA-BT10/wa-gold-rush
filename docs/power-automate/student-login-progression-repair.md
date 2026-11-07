@@ -129,6 +129,15 @@ The dashboard sends JSON properties `studentCode`, `studentId`,
 the client includes its validated Level as the initial-state suggestion for
 both new progression columns.
 
+The client treats `ok:true` from `GGR_UpsertStudentProfile` as write
+acknowledgement, not proof that the assigned level was persisted. After a
+teacher changes a level, `GGR_GetDashboardData` must return the updated
+assigned-level field (`YearLevel` or `Level`, according to the verified List
+mapping) for the same student and class before the dashboard reports the
+change as successful. A missing, conflicting, stale, or failed read-back is
+reported as unverified; inspect the upsert mapping, List internal field name,
+and dashboard response rather than retrying blindly.
+
 Implement an upsert by `StudentCode` and apply this policy on the server:
 
 1. Validate `Level` as an integer 1–5. On create set SharePoint `Level`,
