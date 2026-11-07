@@ -948,6 +948,9 @@
                     ? `<option value="6" ${level === 6 ? 'selected ' : ''}disabled>L6 (planned)</option>`
                     : `<option value="${l}" ${level === l ? 'selected' : ''}>${l === 1 ? 'L1' : 'L'+l}</option>`
                 ).join('');
+                const levelError = s.rosterLevelError === 'conflictingAssignedLevel'
+                    ? 'Roster level fields conflict. Check the List/flow mapping.'
+                    : s.rosterLevelError ? 'Assigned level is missing or invalid in the flow response.' : '';
                 const fieldAttrs = (field) => {
                     const name = rosterControlName(field, s.id);
                     return `id="${escHtml(`${name}-${index}`)}" name="${escHtml(name)}"`;
@@ -958,7 +961,7 @@
                     <td><input class="edit-input" ${fieldAttrs('studentName')}     data-field="studentName"     data-id="${id}" value="${sn}" aria-label="Student Name"></td>
                     <td><input class="edit-input" ${fieldAttrs('studentId')}       data-field="studentId"       data-id="${id}" value="${si}" aria-label="Student ID"></td>
                     <td><input class="edit-input" ${fieldAttrs('classCode')}       data-field="classCode"       data-id="${id}" value="${cc}" aria-label="Class Code"></td>
-                    <td><select class="edit-select" ${fieldAttrs('level')} data-field="level" data-id="${id}" aria-label="Level">${levelOpts}</select></td>
+                    <td><select class="edit-select" ${fieldAttrs('level')} data-field="level" data-id="${id}" aria-label="Level">${levelOpts}</select>${levelError ? `<span class="muted">${escHtml(levelError)}</span>` : ''}</td>
                     <td>$${Number(s.gameState?.netWorth || 0).toFixed(2)}</td>
                     <td>${Number(s.gameState?.round) || 1}</td>
                     <td>${escHtml(s.gameState?.lastPlayed ? new Date(s.gameState.lastPlayed).toLocaleString() : 'Never')}</td>
@@ -995,9 +998,11 @@
             }
             const result = await dashboard.updateStudent(studentId, updates);
             if (!result.success) {
+                if (result.hydration) applyHydrationResult(result.hydration);
                 const error = getResultError(result, 'Unable to save student changes.');
-                setStatusMessage('rosterActionMsg', 'error', `Could not save student changes. ${error}`);
-                setStatusMessage('dashboardStatus', 'error', `Could not save student changes. ${error}`);
+                const message = result.writeConfirmed ? error : `Could not save student changes. ${error}`;
+                setStatusMessage('rosterActionMsg', 'error', message);
+                setStatusMessage('dashboardStatus', 'error', message);
                 return;
             }
             applyHydrationResult(result.hydration);

@@ -2241,14 +2241,18 @@ test('student import initializes assignment/progression only from valid Level 1â
 
 test('dashboard hydrates YearLevel and rejects conflicting levels instead of assuming L1', async () => {
     const calls = [];
+    let assignedLevel = 2;
     const dashboard = setupTeacherDashboardGlobals({
         endpoints: { upsertStudentProfile: 'https://example.com/upsert' },
         callFlow: async (name, payload) => {
             calls.push({ name, payload });
-            if (name === 'upsertStudentProfile') return { success: true, status: 200, data: { ok: true } };
+            if (name === 'upsertStudentProfile') {
+                assignedLevel = payload.Level;
+                return { success: true, status: 200, data: { ok: true } };
+            }
             return { success: true, status: 200, data: {
                 students: [
-                    { StudentCode: 'SC-1', LeaderboardName: 'Gold', ClassCode: '6B', YearLevel: 2, CurrentLevel: 2, ProgressedLevel: 2 },
+                    { StudentCode: 'SC-1', LeaderboardName: 'Gold', ClassCode: '6B', YearLevel: assignedLevel, CurrentLevel: 2, ProgressedLevel: 2 },
                     { StudentCode: 'SC-2', LeaderboardName: 'Silver', ClassCode: '6B', YearLevel: 2, Level: 3 }
                 ],
                 teachers: [], progress: [{ StudentCode: 'SC-2', ClassCode: '6B', Level: 4 }]
@@ -2265,6 +2269,53 @@ test('dashboard hydrates YearLevel and rejects conflicting levels instead of ass
     const saved = await dashboard.updateStudent('SC-1', { level: 3 });
     assert.equal(saved.success, true);
     assert.equal(calls.find(call => call.name === 'upsertStudentProfile').payload.Level, 3);
+});
+
+test('selected roster level must be read back before reporting success', async () => {
+    for (const [fields, detail] of [
+        [{}, /missing or invalid/],
+        [{ YearLevel: 2, Level: 3 }, /fields conflict/],
+        [{ YearLevel: 2 }, /level is 2, not 3/],
+        [null, /not returned/]
+    ]) {
+        const dashboard = setupTeacherDashboardGlobals({
+            endpoints: { upsertStudentProfile: 'https://example.com/upsert' },
+            callFlow: async name => ({
+                success: true, status: 200,
+                data: name === 'upsertStudentProfile' ? { ok: true } : {
+                    students: fields ? [{ StudentCode: 'SC-1', LeaderboardName: 'Gold', ClassCode: '6B', ...fields }] : [],
+                    teachers: [], progress: []
+                }
+            })
+        });
+        dashboard.hydrateDashboardFromNormalizedData({
+            students: [{ StudentCode: 'SC-1', LeaderboardName: 'Gold', ClassCode: '6B', YearLevel: 2 }],
+            teachers: [], progress: []
+        }, { enabled: true });
+        const result = await dashboard.updateStudent('SC-1', { level: 3 });
+        assert.equal(result.success, false);
+        assert.equal(result.writeConfirmed, true);
+        assert.equal(result.stage, 'readback');
+        assert.match(result.error, detail);
+        assert.match(result.error, /request Level.*YearLevel/);
+    }
+});
+
+test('a failed reload cannot verify a confirmed roster level write', async () => {
+    const dashboard = setupTeacherDashboardGlobals({
+        endpoints: { upsertStudentProfile: 'https://example.com/upsert' },
+        callFlow: async name => name === 'upsertStudentProfile'
+            ? { success: true, status: 200, data: { ok: true } }
+            : { success: false, status: 502, error: 'Reload failed' }
+    });
+    dashboard.hydrateDashboardFromNormalizedData({
+        students: [{ StudentCode: 'SC-1', LeaderboardName: 'Gold', ClassCode: '6B', YearLevel: 2 }],
+        teachers: [], progress: []
+    }, { enabled: true });
+    const result = await dashboard.updateStudent('SC-1', { level: 3 });
+    assert.equal(result.success, false);
+    assert.equal(result.writeConfirmed, true);
+    assert.match(result.error, /dashboard reload failed/);
 });
 
 test('assigned starting level is playable without fabricated prior checkpoints', () => {

@@ -633,7 +633,10 @@ class TeacherDashboard {
 
     normalizeDashboardStudent(student = {}) {
         const identity = this.normalizeDashboardStudentIdentity(student);
-        const level = normalizeRosterLevel(student);
+        const rosterApi = getStudentRosterLevelApi();
+        if (!rosterApi) throw new Error('Student roster level validation is unavailable.');
+        const rosterLevel = rosterApi.normalizeRosterLevel(student);
+        const level = rosterLevel.assignedLevel;
         const progressedLevel = normalizeOptionalRosterLevel(this.readListValue(student.progressedLevel ?? student.ProgressedLevel));
         const currentLevel = normalizeOptionalRosterLevel(this.readListValue(student.currentLevel ?? student.CurrentLevel));
         const activeRaw = this.readListValue(student?.active ?? student?.Active);
@@ -648,6 +651,7 @@ class TeacherDashboard {
             classCode: this.readListText(student, ['classCode', 'ClassCode']).toUpperCase(),
             level,
             assignedLevel: level,
+            rosterLevelError: rosterLevel.error,
             progressedLevel: progressedLevel && level ? Math.max(level, progressedLevel) : level,
             currentLevel: currentLevel && progressedLevel && currentLevel <= progressedLevel ? currentLevel : level,
             active: !(activeRaw === false || /^(false|no|0|inactive)$/i.test(String(activeRaw ?? '').trim()))
@@ -1973,6 +1977,28 @@ class TeacherDashboard {
         }
 
         const hydration = await this.rehydrateAfterWrite(options);
+        if (updates.level !== undefined) {
+            const refreshedStudent = hydration.success ? this.students.find(entry =>
+                entry.studentCodeKey === this.normalizeStudentCodeKey(student.studentCode)
+                && entry.classCode === student.classCode
+            ) : null;
+            if (!refreshedStudent || refreshedStudent.assignedLevel !== student.assignedLevel) {
+                const detail = !hydration.success
+                    ? 'The dashboard reload failed.'
+                    : !refreshedStudent
+                        ? 'The student was not returned by the dashboard flow.'
+                        : refreshedStudent.rosterLevelError === 'conflictingAssignedLevel'
+                            ? 'The returned roster level fields conflict.'
+                            : refreshedStudent.assignedLevel === null
+                                ? 'The returned assigned level is missing or invalid.'
+                                : `The returned assigned level is ${refreshedStudent.assignedLevel}, not ${student.assignedLevel}.`;
+                return this.failureResult(
+                    `GGR_UpsertStudentProfile confirmed the request, but the selected level could not be verified. ${detail} Check that the flow maps request Level to the assigned-level column in GGR_Students (YearLevel if that is its actual internal name), and that GGR_GetDashboardData returns that same value.`,
+                    { student: refreshedStudent || original, writeConfirmed: true, stage: 'readback', hydration }
+                );
+            }
+            return { success: true, student: refreshedStudent, confirmed: true, hydration };
+        }
         return { success: true, student, confirmed: true, hydration };
     }
 
