@@ -12,6 +12,14 @@ unlocked, 1–5) and `CurrentLevel` (currently played, 1–5). Until those colum
 are deployed, a valid `Level` initializes both fields in the client session;
 their absence must not reject login or imply a higher unlock.
 
+The client also accepts `YearLevel`/`yearLevel` as aliases for the assigned
+game level in login, dashboard and roster imports. All nonblank aliases must
+be valid and agree; conflicting values are rejected rather than prioritized.
+The dashboard displays an unavailable selection for a missing or conflicting
+assignment instead of silently showing Level 1. Confirm the live List's
+internal name and semantics before changing flow mappings; this compatibility
+does not rename a List column or establish the tenant mapping.
+
 `GGR_StudentProgress.Level` is a different field: it identifies the game level
 for that progress row and is part of the canonical
 `UPPER(ClassCode)|UPPER(StudentCode)|Level` `ProgressKey`. Keep that column,
@@ -22,7 +30,7 @@ the existing checkpoint fields/status vocabulary, and the `StudentCode` /
 
 | Area | Fixed or confirmed in this repository | Still requires live deployment / evidence |
 | --- | --- | --- |
-| Student login | The client accepts `Level`, `level`, or `assignedLevel` (including SharePoint `{Value}` wrappers), rejects invalid/conflicting roster-level aliases, then retains `ok:true`, complete-identity and request-match checks. | `GGR_LoginStudent` must return `Level` as `assignedLevel` from the matched active `GGR_Students` row. Inspect its actual run history to distinguish response mapping from PIN/lookup failure. |
+| Student login | The client accepts `YearLevel`, `yearLevel`, `Level`, `level`, or `assignedLevel` (including SharePoint `{Value}` wrappers), rejects invalid/conflicting roster-level aliases, then retains `ok:true`, complete-identity and request-match checks. | `GGR_LoginStudent` must return the assigned game level from the matched active `GGR_Students` row. Inspect its actual run history to distinguish response mapping from PIN/lookup failure. |
 | Session and PIN | PIN hashes are sent to the flow but never included in saved sessions. PIN change continues to require transport success **and** `data.ok === true`; a success-only response is not accepted. | Verify PIN validation, first-time setup/old-PIN requirements, lockout policy, and persistence in `GGR_ChangeStudentPin`. Do not make PIN change update progression. |
 | Import/dashboard | CSV/JSON `Level` is checked as an integer 1–5; new/imported records initialize ProgressedLevel and CurrentLevel from that student's validated Level. Dashboard normalization reads the three distinct levels. | Update `GGR_UpsertStudentProfile` and `GGR_GetDashboardData`; ordinary reimport must preserve legitimate progression/current state and credentials. Verify SharePoint internal field names. |
 | Starting access | A student may start at their teacher-assigned level (and practice earlier levels) without checkpoints for levels below that assignment. Existing home/game behavior unlocks later levels from `quiz_passed`; approval fields are not currently a mandatory access gate. | Confirm whether teacher approval is intended to gate play. No new teacher-approval gate is introduced here; any policy change must be made consistently in home, game, and remote access. A client-side saved quiz is not backend authorization. |
@@ -150,7 +158,7 @@ Return the existing `Students`, `Teachers`, and `Progress` arrays. Each student
 row must contain distinct `StudentCode` and `StudentID`, `StudentName`,
 `LeaderboardName`, `ClassCode`, `Level`, `ProgressedLevel`, `CurrentLevel`,
 and status needed by the existing dashboard. The app exposes canonical
-`assignedLevel` from `Level`, with the other two canonical names unchanged.
+`assignedLevel` from `Level` or `YearLevel`, with the other two canonical names unchanged.
 Return progress rows with their own per-record `Level`, canonical
 `ProgressKey`, and existing checkpoint fields
 (`CheckpointStatus`, `QuizScore`, `QuizPassedAt`, `QuizAttemptsJson`,

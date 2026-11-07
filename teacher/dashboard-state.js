@@ -771,7 +771,7 @@ class TeacherDashboard {
     buildHydratedStudent(student, progressRows = []) {
         const studentCode = String(student.studentCode || '').trim();
         const latest = this.selectLatestProgressRow(progressRows);
-        const level = student.level || Number(latest?.level) || 1;
+        const level = student.level;
         const checkpointsByLevel = this.buildCheckpointsByLevel(progressRows);
         const currentCheckpoint = checkpointsByLevel[Number(latest?.level) || level] || {};
         const pick = (value, fallback) => (value === undefined || value === null ? fallback : value);
@@ -1515,7 +1515,7 @@ class TeacherDashboard {
         const classCode = String(studentData.classCode || '').trim().toUpperCase();
         const level = normalizeRosterLevel(studentData);
         if (!level) {
-            return this.failureResult('Assigned Level must be a whole number from 1 to 5 in the roster Level field.');
+            return this.failureResult('Assigned Level must be a whole number from 1 to 5, and roster level fields must agree.');
         }
 
         if (!studentCode) {
@@ -1580,7 +1580,7 @@ class TeacherDashboard {
      * Bulk import students from CSV or JSON.
      *
      * CSV header (accepted):
-     *   StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level
+     *   StudentCode,LeaderboardName,StudentID,StudentName,ClassCode,Level (or YearLevel)
      *   — or legacy —
      *   name,email,level
      *
@@ -1638,6 +1638,7 @@ class TeacherDashboard {
                         classCode:       idx(f, 'classcode'),
                         Level:           idx(f, 'level'),
                         level:           idx(f, 'level'),
+                        YearLevel:       idx(f, 'yearlevel'),
                         assignedLevel:   idx(f, 'assignedlevel')
                     });
                 } else {
@@ -1688,6 +1689,8 @@ class TeacherDashboard {
                     classCode:       (item.classCode       || item.ClassCode       || '').toString().trim(),
                     Level: item.Level,
                     level: item.level,
+                    YearLevel: item.YearLevel,
+                    yearLevel: item.yearLevel,
                     assignedLevel: item.assignedLevel,
                     AssignedLevel: item.AssignedLevel
                 });
@@ -1949,6 +1952,10 @@ class TeacherDashboard {
         if (updates.level !== undefined) {
             const v = normalizeRosterLevel({ level: updates.level });
             if (!v) return this.failureResult('Assigned Level must be a whole number from 1 to 5.');
+            delete student.Level;
+            delete student.YearLevel;
+            delete student.yearLevel;
+            delete student.AssignedLevel;
             student.level = v;
             student.assignedLevel = v;
         }
