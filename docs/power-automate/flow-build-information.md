@@ -48,7 +48,7 @@
 | `GGR_GetDashboardData` | Endpoint wired; dashboard data load integrated | Used by teacher dashboard | Successful runs shown Nov 7–8; owner reports dashboard still works; device-only game saves are absent |
 | `GGR_TeacherUnlockStudent` | Endpoint wired; dashboard action integrated | Used by teacher unlock action | Successful runs shown Oct 18–19 and Nov 8; owner reports it still works; authorization/effect not verified |
 | `GGR_SaveCheckpointApproval` | Optional Pages-build endpoint injection and UI integration | Used only when configured; otherwise unavailable/disabled | Successful runs shown Oct 18–19; approval outcome not verified |
-| `GGR_GetStudentProgress` | Optional endpoint; checkpoint compatibility and v2 restore contracts | Compatibility hook exists; full restore is gated OFF | Optional/unconfigured; full restore planned |
+| `GGR_GetStudentProgress` | Proposed flow; repository compatibility and v2 restore hooks only | Full restore is gated OFF | Owner confirms Nov 8 that no such tenant flow exists |
 | `GGR_TeacherResetStudentPin` | Placeholder endpoint only | No production caller | Optional/unused |
 | `GGR_RebuildLevelLeaderboard_OnProgressChange` | Placeholder endpoint only | No production caller | Optional/unused |
 | `GGR_UpsertInvestmentProfile_OnProgressChange` | Placeholder endpoint only | No production caller | Optional/unused |
@@ -143,6 +143,14 @@ in browser storage while unverified cloud uploads are held. This target is not
 implemented. The owner has also stated that the existing student and teacher
 login systems are working; this repair should leave those login flows and their
 user-facing behavior unchanged.
+
+On Nov 8 the owner confirmed that **no `GGR_GetStudentProgress` flow exists**.
+Its repository hooks describe a proposed integration, not a deployed flow that
+has failed. `GGR_GetDashboardData` remains the existing working teacher read.
+The historical student restore path still needs to be traced; absence of the
+proposed flow does not invalidate the owner's report of earlier cross-device
+behavior. The repair needs a new exact-slot student read within the existing
+Power Automate/Lists setup, not exposure of the teacher dataset to students.
 
 1. **Endpoint registry:** `shared/flow-endpoints.js` provides endpoint defaults
    for the core flows and merges runtime/dashboard overrides. Placeholder and
@@ -453,9 +461,11 @@ user-facing behavior unchanged.
 - **References:** [approval security and migration contract](checkpoint-approval-security.md),
   [save repair spec](GGR_SaveProgress-repair-spec.md#ggr_savecheckpointapproval-new-optional).
 
-### `GGR_GetStudentProgress` — checkpoint lookup / full restore
+### `GGR_GetStudentProgress` — proposed student lookup / full restore
 
-- **Build / use:** optional/unconfigured endpoint. The access guard has a
+- **Tenant status:** the owner explicitly confirmed Nov 8, 2026 that no such
+  flow exists. This is new flow construction, not repair of a deployed flow.
+- **Repository hooks:** optional/unconfigured endpoint. The access guard has a
   checkpoint-compatibility hook. `shared/cloud-restore.js` supports a separate
   full exact-slot v2 restore, but it requires `fullCloudRestore:true` and a
   configured endpoint; the flag defaults OFF.
@@ -468,8 +478,9 @@ user-facing behavior unchanged.
   unauthorized request is never treated as “not found.”
 - **Flow rules:** return only the authenticated student's exact progress
   slot; never use the teacher dashboard data endpoint for student restore.
-- **Build verification:** no tenant endpoint, full-save payload or cross-device
-  gameplay restoration is verified.
+- **Build verification:** no tenant flow exists according to the owner.
+  The proposed full-save response and new cross-device restore path still
+  require construction and acceptance.
 - **Reference:** [flow contract](flow-registry-and-contracts.md#ggr_getstudentprogress).
 
 ### `GGR_TeacherResetStudentPin` — teacher-forced PIN reset

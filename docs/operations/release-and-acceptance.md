@@ -22,6 +22,14 @@ concurrent writes. Home checkpoint hydration alone is not full game restore.
 The owner's historical account and the supplied old snapshot must not be
 misread as evidence that cloud saving never worked.
 
+The owner confirmed Nov 8, 2026 that `GGR_GetStudentProgress` does not exist.
+Stages below therefore require constructing a new exact-slot student read in
+the existing Power Automate/Lists setup. Preserve the working teacher
+`GGR_GetDashboardData`; do not use its roster/teacher dataset for student restore.
+Existing student and teacher login flows and their user-facing behavior remain
+unchanged. Verification of save/read authorization is not a request to replace
+login or introduce a separate Azure service.
+
 **Remaining promotion blockers:** deployed server-verifiable student proof,
 conditional writer/receipt feasibility, exact authorised retrieval, migration/
 configuration consistency checks, run-aware profile reconciliation, measured
