@@ -104,6 +104,30 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
 
 ## How flows are built and wired
 
+### Previously working behavior and current interruption
+
+The owner reports that cross-device saving and progress tracking worked before
+the upgrades associated with PRs 68–72, which were intended to address
+backlogged runs and errors. This is the reported historical baseline, not a
+claim that cloud saving or restoration never existed. The historical Oct 28
+snapshot retrieved by Get Progress corroborates cloud storage and retrieval,
+but by itself does not demonstrate cross-device game restoration.
+
+Repository history confirms that PR 72, merged Nov 7, 2026, introduced an
+explicit hold on unconditional legacy progress uploads. The current client
+requires enabled v2 conditional saving, configured exact-slot retrieval,
+server-verifiable student proof and a verified startup lookup before dispatch.
+Its local-only/paused messages are therefore not evidence that the legacy
+Power Automate flow stopped executing. The supplied gameplay screenshot shows
+these prerequisites are not configured or verified for that session.
+
+The supplied legacy save flow does not implement the v2 response contract.
+This establishes a gap between the current client's prerequisites and the
+supplied tenant save definition; it does not establish the exact first failing
+deployment or exclude other changes in PRs 68–71. Restoring the previously
+working user outcome requires resolving that integration gap safely, not
+merely marking the legacy flow failed or turning off save protections.
+
 1. **Endpoint registry:** `shared/flow-endpoints.js` provides endpoint defaults
    for the core flows and merges runtime/dashboard overrides. Placeholder and
    empty values are treated as unconfigured. Do not copy endpoint values into
