@@ -297,6 +297,12 @@ Power Automate/Lists setup, not exposure of the teacher dataset to students.
 
 ### `GGR_SaveProgress` — per-level progress save
 
+- **Current amendment instructions:** see the
+  [action-by-action guide](GGR_SaveProgress-amendment-steps.md). It follows the
+  owner's API-key decision for this phase while retaining conditional writes,
+  full-state validation and durable lost-response recovery. This is not a
+  deployed flow or authorization upgrade.
+
 - **Owner-supplied deployed definition (Nov 8, 2026):** the HTTP POST trigger
   has a schema describing a snapshot with nested `player` fields. The schema
   does not list top-level `studentCode`, `classCode`, `level` or

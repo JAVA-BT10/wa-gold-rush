@@ -3,6 +3,13 @@
 > Status: approved plan (Nov 8, 2026). Not implemented. No tenant flow or List
 > has been changed by this document.
 
+> **Corrections to the initial simplified proposal:** use the
+> [action-by-action writer guide](../power-automate/GGR_SaveProgress-amendment-steps.md).
+> One last request ID is insufficient for durable retry receipts; migration
+> must preserve valid existing runs and initialize revisions only once.
+> Matching run ID and a higher round do not authorize overwriting cloud state.
+> The owner selected API-key trust for this phase, not reduced write integrity.
+
 ## Owner requirements
 
 - Cloud progress is the normal source of truth.
@@ -48,18 +55,22 @@ is held before any HTTP request (`shared/sharepoint-sync.js` `_uploadHold`).
 ## Flow work (tenant)
 
 1. Back up `GGR_StudentProgress` again; confirm the restore procedure.
-2. Add columns: `Revision` (number), `RunId`, `RunGeneration` (number),
-   `LastSaveRequestId` (text). Set `Revision = 1` on existing rows.
+2. Add `Revision`, `RunId`, `RunGeneration`, `LastSaveRequestId` and
+   `LastRequestBodyJson`, plus durable `GGR_SaveReceipts`. Validate/migrate
+   existing rows individually, preserving run identity and initializing
+   revision once. See the writer guide for types and recovery ordering.
 3. Upgrade `GGR_SaveProgress`:
    - Require explicit `level`; reject instead of defaulting to 2.
    - Get items by exact `ProgressKey`, top 2; duplicates → 409 `duplicate_rows`.
-   - Same `saveRequestId` as `LastSaveRequestId` → return original ack,
-     `deduplicated:true`.
+   - Check durable receipt/full request binding before stale checks. Recover a
+     missing receipt from row-atomic last-request metadata. Do not overwrite
+     that metadata until its receipt is durable.
    - `baseRevision` must equal `Revision` (null only when no row) else 409
      `revision_conflict`; older `runGeneration` → 422 `generation_stale`.
    - Update via *Send an HTTP request to SharePoint* (MERGE) with the read
      ETag in `IF-MATCH`; HTTP 412 → 409 `precondition_failed`.
-   - Map `CheckpointPassed` from `quiz_passed`/`approved`, not `Passed`.
+   - Map observed quiz-pass evidence from `quiz_passed`, not `Passed`; client
+     approval claims must not become teacher authority.
    - Do not write teacher approval fields from student saves.
    - Success: `{ok:true,protocolVersion:2,saveRequestId,progressKey,
      runGeneration,revision,deduplicated}`; errors `{ok:false,code,retryable}`.
@@ -74,9 +85,10 @@ is held before any HTTP request (`shared/sharepoint-sync.js` `_uploadHold`).
    button drains the queue.
 3. 409 conflict: export local copy, show "newer progress on another device",
    load cloud copy. 401/422: stop sending, show error, keep export available.
-4. Saves stranded since Nov 7: upload only when `runId` matches the cloud
-   snapshot's `run.runId` and local round ≥ cloud round; otherwise flag for
-   teacher review.
+4. Preserve/export stranded saves. Matching run ID and a higher round are
+   evidence for review, not permission to overwrite. Use a verified base
+   revision, exact content/receipt comparison, or an explicit operator-approved
+   reconciliation against the backed-up cloud row's ETag.
 5. Replace the proof-provider requirement with the agreed API-key check; keep
    envelope/ledger protection and conflict checks.
 6. Fix defects 1–5 with regression tests.
