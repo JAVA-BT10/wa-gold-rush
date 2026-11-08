@@ -46,7 +46,7 @@
 | `GGR_UpsertTeacher` | Endpoint wired; teacher upsert integrated | Used by dashboard teacher management/import | Not verified; legacy inventory reports working |
 | `GGR_SaveProgress` | Endpoint wired; legacy and v2 contracts documented | Capture/retry infrastructure exists; uploads are held by default pending gates | Successful runs shown Nov 6; saved progress outcome not verified |
 | `GGR_GetDashboardData` | Endpoint wired; dashboard data load integrated | Used by teacher dashboard | Successful runs shown Nov 7–8; owner reports dashboard still works; device-only game saves are absent |
-| `GGR_TeacherUnlockStudent` | Endpoint wired; dashboard action integrated | Used by teacher unlock action | Not verified; legacy inventory reports built/published, but wiring and first live run were outstanding |
+| `GGR_TeacherUnlockStudent` | Endpoint wired; dashboard action integrated | Used by teacher unlock action | Successful runs shown Oct 18–19 and Nov 8; owner reports it still works; authorization/effect not verified |
 | `GGR_SaveCheckpointApproval` | Optional Pages-build endpoint injection and UI integration | Used only when configured; otherwise unavailable/disabled | Successful runs shown Oct 18–19; approval outcome not verified |
 | `GGR_GetStudentProgress` | Optional endpoint; checkpoint compatibility and v2 restore contracts | Compatibility hook exists; full restore is gated OFF | Optional/unconfigured; full restore planned |
 | `GGR_TeacherResetStudentPin` | Placeholder endpoint only | No production caller | Optional/unused |
@@ -82,7 +82,9 @@ on Nov 7–8; the owner reports that the dashboard still works. The owner also
 reports that saved games are currently device-only and are missing from the
 dashboard data. The PIN screenshot shows the flow is on, but the owner has not
 recently changed a PIN and cannot independently confirm that the current
-PIN-change path works.
+PIN-change path works. `GGR_TeacherUnlockStudent` is on and its screenshot
+shows runs marked **Succeeded** on Oct 18–19 and Nov 8; the owner reports that
+the unlock flow still works.
 Screenshots show run status (and, for some flows, selected input columns), not
 the action outputs, resulting SharePoint rows or subsequent application
 behavior. They therefore improve the evidence to “successful run observed,”
@@ -279,8 +281,10 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
   live run were still to be confirmed. It also contains HTTP-trigger metadata;
   this page omits the trigger URL and does not treat client-supplied email as
   authenticated identity.
-- **Build verification:** current trigger authorization, dashboard wiring and
-  server-side authorization remain unverified.
+- **Build verification:** the owner reports that the flow still works, and a
+  supplied screenshot shows runs marked Succeeded on Oct 18–19 and Nov 8.
+  The run history does not verify current trigger authorization, server-side
+  class authorization or the exact account change.
 
 ### `GGR_SaveCheckpointApproval` — teacher checkpoint approval
 
