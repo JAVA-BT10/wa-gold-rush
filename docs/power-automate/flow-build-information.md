@@ -117,7 +117,7 @@ record. These reports do not establish present-day flow behavior.
 ### `GGR_LoginTeacher` — teacher sign-in
 
 - **Build / use:** existing endpoint; `teacher/dashboard-state.js` calls it
-  when a teacher signs in, with teacher email and optional class code.
+  when a teacher signs in, with teacher email and a required class code.
 - **Expected flow work:** validate an active `GGR_Teachers` row and return
   authoritative teacher identity, role and class scope. Admin status comes
   from the teacher row; there is no client-side admin bypass.
