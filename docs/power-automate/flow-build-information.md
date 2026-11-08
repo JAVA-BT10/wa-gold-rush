@@ -249,6 +249,42 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
 
 ### `GGR_SaveProgress` — per-level progress save
 
+- **Owner-supplied deployed definition (Nov 8, 2026):** the HTTP POST trigger
+  has a schema describing a snapshot with nested `player` fields. The schema
+  does not list top-level `studentCode`, `classCode`, `level` or
+  `progressionMarkersJson`, but the supplied compose expressions read those
+  top-level fields. The schema has no top-level `required` list. This
+  discrepancy does not by itself prove a request is rejected: actual trigger
+  validation and action inputs require a redacted run or further verification.
+  The checked-in client builds a flat progress payload and holds its cloud
+  uploads pending safety gates; it does not send the snapshot as the entire
+  request body.
+- **Observed lookup and write:** `StudentCodeNorm` and `ClassCodeNorm` trim
+  and uppercase the top-level request fields. `LevelIn` uses
+  `int(coalesce(triggerBody()?['level'], 2))`, so a missing or null level
+  defaults to 2. `Get items` queries `GGR_StudentProgress` by normalized
+  student code, class code and level with a limit of one row. If a row is
+  returned the flow updates the first match using its existing `ProgressKey`;
+  otherwise it creates a row with `CLASS|STUDENT|LEVEL` as the key. A limit of
+  one cannot detect duplicate matching rows. `MarkersIn` reads the top-level
+  `progressionMarkersJson`, defaulting to `{}`.
+- **Observed mappings and response:** create/update map progress, economy,
+  checkpoint and quiz fields, including the existing `LaastPlayedUtc` internal
+  name. The supplied update parameters do not explicitly map approval fields;
+  that alone does not establish whether the connector preserves them in every
+  case. `CheckpointPassed` compares `checkpointStatus` with `Passed`, whereas
+  the checked-in checkpoint UI uses `quiz_passed`; confirm the tenant's actual
+  values and resulting behavior. After the condition succeeds the supplied
+  response is HTTP 200 with `{ "ok": true, "saved": true }`; it does not
+  contain the v2 revision, generation and request receipt expected by the v2
+  client. The diagram shows an API-key condition and an alternate response,
+  but its comparison, failure response and other compose inputs have not yet
+  been supplied. A shared browser key is not student authentication.
+- **Safety:** do not enable or replay cloud writes based on the successful
+  legacy run history. The supplied flow does not establish the authenticated
+  conditional writes and exact-slot retrieval required by the current client.
+  Verify concurrency, duplicate handling, authorization, checkpoint values
+  and approval preservation before any rollout; see the acceptance runbook.
 - **Build / use:** existing endpoint key, called through
   `shared/sharepoint-sync.js`. Client capture, queue, retry, quarantine and
   protocol-v2 code exist. Cloud uploads are held by default until the
