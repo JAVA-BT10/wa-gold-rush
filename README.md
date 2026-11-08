@@ -71,10 +71,18 @@ The original working game - preserved as-is for reference and student access.
 
 ## Data Privacy
 
-✅ **No identifying data stored offsite**
-- All game data stored locally on student devices
-- Teacher can export progress to OneDrive (encrypted, education tenant)
-- Compliant with education department data policies
+Game saves are stored locally in the browser. When cloud sync is enabled and
+working, progress is also sent through Power Automate to Microsoft Lists /
+SharePoint in the configured education tenant so it can be tracked across
+devices. Roster and save records can contain student codes, IDs, names, class
+codes, progression and game-state data. Do not describe the system as
+"local-only" or "no identifying data stored offsite" when cloud records exist.
+
+The current guarded build keeps unverified progress uploads local and provides
+a local backup export. A local export is not represented as encrypted unless
+the export implementation explicitly provides encryption. Schools must verify
+their tenant, access controls, retention and applicable education privacy
+requirements; this repository does not certify policy compliance.
 
 ## Progression Note
 
