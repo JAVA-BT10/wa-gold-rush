@@ -323,6 +323,15 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
 - **Build / use:** existing endpoint; the teacher dashboard uses it as the
   source for `Teachers`, `Students` and `Progress`. On failure the UI clears
   tables and provides retry; it does not substitute cached dashboard data.
+- **Owner-supplied deployed actions (Nov 8, 2026):** `Get_Students`,
+  `Get_Progress` and `Get_Teachers` are SharePoint Get items actions. Their
+  supplied code views contain no filter, explicit column selection or row
+  limit; pagination settings have not been verified. The supplied HTTP 200
+  response returns `success:true` and each action's `body/value` directly as
+  the `students`, `progress` and `teachers` arrays. Other actions or
+  authorization before those reads have not yet been established. Verify
+  class scoping and which columns, including private fields, the connector
+  actually returns; avoid sharing unredacted response bodies.
 - **Observed behavior:** the owner reports the dashboard still works, and a
   supplied screenshot shows runs marked Succeeded on Nov 7–8. The owner says
   saved games are device-only and absent from the dashboard data. This is
