@@ -328,10 +328,15 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
   supplied code views contain no filter, explicit column selection or row
   limit; pagination settings have not been verified. The supplied HTTP 200
   response returns `success:true` and each action's `body/value` directly as
-  the `students`, `progress` and `teachers` arrays. Other actions or
-  authorization before those reads have not yet been established. Verify
-  class scoping and which columns, including private fields, the connector
-  actually returns; avoid sharing unredacted response bodies.
+  the `students`, `progress` and `teachers` arrays. The supplied diagram shows
+  `ExpectedKey` and `IncomingKey` followed by an `API Key Valid` condition;
+  its true branch runs `TeacherEmailNorm`, `Get Teacher` and a `Teacher Exists`
+  condition before the three list reads. Its false branches have response
+  actions. The expressions for the key check and teacher lookup and the failure
+  responses have not been supplied. A teacher lookup alone does not establish
+  authenticated identity or class-scoped authorization. Verify which columns,
+  including private fields, the connector actually returns; avoid sharing
+  unredacted response bodies.
 - **Observed behavior:** the owner reports the dashboard still works, and a
   supplied screenshot shows runs marked Succeeded on Nov 7–8. The owner says
   saved games are device-only and absent from the dashboard data. This is
