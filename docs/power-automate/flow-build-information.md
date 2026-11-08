@@ -313,8 +313,9 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
   SharePoint progress row contains a Level 2 snapshot saved and modified on
   Oct 28, 2026, including economy, mines, machinery and round history. This is
   evidence of a historical cloud-stored snapshot, not only a summary row.
-  The source action of the pasted row has not been confirmed, so it cannot
-  be attributed to a particular save run or final dashboard response. Its
+  The owner confirmed the row came from `GGR_GetDashboardData`'s Get Progress
+  output. It cannot be attributed to a particular save run, and the final
+  dashboard response and rendered UI have not been inspected for this row. Its
   snapshot includes run metadata, but no top-level v2 revision or receipt is
   shown; a SharePoint ETag/version is not proof of the application's v2
   protocol. Current-device synchronization and cross-device restoration
@@ -348,9 +349,10 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
   supplied screenshot shows runs marked Succeeded on Nov 7–8. The owner says
   current saved games are device-only and absent from the dashboard data.
   A subsequently supplied progress row contains a historical Oct 28 cloud
-  snapshot; this means not all historical game data is device-only. Whether
-  that row came from `Get_Progress`, the final response or another source is
-  still unconfirmed. A successful dashboard read cannot include newer local
+  snapshot; this means not all historical game data is device-only. The owner
+  confirmed it came from Get Progress output, establishing that this action
+  retrieved the historical snapshot. Final response delivery and UI rendering
+  for this row remain unverified. A successful dashboard read cannot include newer local
   saves that have not reached its cloud data source.
 - **Observed row shape:** the supplied progress row includes
   `ProgressionMarkersJson`, economy fields, checkpoint fields and SharePoint
