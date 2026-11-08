@@ -44,7 +44,7 @@
 | `GGR_ChangeStudentPin` | Endpoint wired; PIN setup/change integrated | Used by student PIN form | Successful runs shown Oct 20–22 and Nov 7; recent PIN change not independently tested |
 | `GGR_UpsertStudentProfile` | Endpoint wired; roster import integrated | Used by teacher dashboard/import | Run entries shown Nov 7; per-run status not visible; persisted roster behavior not verified |
 | `GGR_UpsertTeacher` | Endpoint configured; teacher upsert integrated | Used by dashboard teacher management/import | Owner reports never run; screenshot shows no runs in 28-day history; live routing and writes unverified |
-| `GGR_SaveProgress` | Endpoint wired; legacy and v2 contracts documented | Capture/retry infrastructure exists; uploads are held by default pending gates | Successful runs shown Nov 6; saved progress outcome not verified |
+| `GGR_SaveProgress` | Endpoint wired; legacy and v2 contracts documented | Capture/retry infrastructure exists; uploads are held by default pending gates | Successful runs shown Nov 6; historical cloud snapshot supplied; current saves and writer provenance unverified |
 | `GGR_GetDashboardData` | Endpoint wired; dashboard data load integrated | Used by teacher dashboard | Successful runs shown Nov 7–8; owner reports dashboard still works; device-only game saves are absent |
 | `GGR_TeacherUnlockStudent` | Endpoint wired; dashboard action integrated | Used by teacher unlock action | Successful runs shown Oct 18–19 and Nov 8; owner reports it still works; authorization/effect not verified |
 | `GGR_SaveCheckpointApproval` | Optional Pages-build endpoint injection and UI integration | Used only when configured; otherwise unavailable/disabled | Successful runs shown Oct 18–19; approval outcome not verified |
@@ -309,11 +309,18 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
   conditional/ETag write. Conflicts are held for reconciliation, not blindly
   overwritten. The reference server is a test mock.
 - **Build verification:** a supplied screenshot shows multiple runs marked
-  Succeeded on Nov 6, including a `studentCode` column. This does not verify
-  persisted progress, saved payload contents or gameplay restore; the supplied
-  gameplay screenshot reports cloud saving paused and local-only saving.
-  Legacy inventory says Level 2 SharePoint sync needs verification and may be
-  non-functional. Timeouts are unknown outcomes, not proof of failure.
+  Succeeded on Nov 6, including a `studentCode` column. A subsequently supplied
+  SharePoint progress row contains a Level 2 snapshot saved and modified on
+  Oct 28, 2026, including economy, mines, machinery and round history. This is
+  evidence of a historical cloud-stored snapshot, not only a summary row.
+  The source action of the pasted row has not been confirmed, so it cannot
+  be attributed to a particular save run or final dashboard response. Its
+  snapshot includes run metadata, but no top-level v2 revision or receipt is
+  shown; a SharePoint ETag/version is not proof of the application's v2
+  protocol. Current-device synchronization and cross-device restoration
+  remain unverified. The supplied gameplay screenshot reports cloud saving
+  paused and local-only saving. Timeouts are unknown outcomes, not proof of
+  failure.
 - **References:** [save repair spec](GGR_SaveProgress-repair-spec.md),
   [save protocol v2](save-protocol-v2.md),
   [controlling release and acceptance runbook](../operations/release-and-acceptance.md).
@@ -339,10 +346,19 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
   unredacted response bodies.
 - **Observed behavior:** the owner reports the dashboard still works, and a
   supplied screenshot shows runs marked Succeeded on Nov 7–8. The owner says
-  saved games are device-only and absent from the dashboard data. This is
-  consistent with local saves not being uploaded as `GGR_SaveProgress` rows;
-  a successful dashboard read cannot include game saves that are not in its
-  cloud data source.
+  current saved games are device-only and absent from the dashboard data.
+  A subsequently supplied progress row contains a historical Oct 28 cloud
+  snapshot; this means not all historical game data is device-only. Whether
+  that row came from `Get_Progress`, the final response or another source is
+  still unconfirmed. A successful dashboard read cannot include newer local
+  saves that have not reached its cloud data source.
+- **Observed row shape:** the supplied progress row includes
+  `ProgressionMarkersJson`, economy fields, checkpoint fields and SharePoint
+  author/editor and link metadata. Its `LaastPlayedUtc` and `UpdatedUtc`
+  values contain dates only, while `Modified` and the nested snapshot
+  `savedAt` include times. The raw row therefore carries more information than
+  the dashboard needs; verify the final response projection and authorized
+  access. Personal details and raw row contents are not reproduced here.
 - **Expected response:** teacher-authorized roster and progress arrays.
   Progress rows carry their per-level `Level`, class/student matching fields
   and checkpoint/approval fields used by the dashboard.
