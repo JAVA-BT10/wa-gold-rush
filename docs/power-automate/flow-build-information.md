@@ -40,10 +40,10 @@
 | Power Automate flow | Repository build state | Checked-in client usage | Tenant evidence / acceptance |
 |---|---|---|---|
 | `GGR_LoginStudent` | Endpoint wired; student login integrated | Used by student sign-in | Successful runs shown Nov 6–7; response/roster outcome not verified |
-| `GGR_LoginTeacher` | Endpoint wired; teacher login integrated | Used by teacher sign-in | Not verified |
+| `GGR_LoginTeacher` | Endpoint wired; teacher login integrated | Used by teacher sign-in | Successful runs shown Oct 27–29 and Nov 6–8; owner reports teacher login worked |
 | `GGR_ChangeStudentPin` | Endpoint wired; PIN setup/change integrated | Used by student PIN form | Successful runs shown Oct 20–22 and Nov 7; recent PIN change not independently tested |
-| `GGR_UpsertStudentProfile` | Endpoint wired; roster import integrated | Used by teacher dashboard/import | Successful runs shown Nov 6–7; persisted roster behavior not verified |
-| `GGR_UpsertTeacher` | Endpoint wired; teacher upsert integrated | Used by dashboard teacher management/import | Not verified; legacy inventory reports working |
+| `GGR_UpsertStudentProfile` | Endpoint wired; roster import integrated | Used by teacher dashboard/import | Run entries shown Nov 7; per-run status not visible; persisted roster behavior not verified |
+| `GGR_UpsertTeacher` | Endpoint configured; teacher upsert integrated | Used by dashboard teacher management/import | Owner reports never run; screenshot shows no runs in 28-day history; live routing and writes unverified |
 | `GGR_SaveProgress` | Endpoint wired; legacy and v2 contracts documented | Capture/retry infrastructure exists; uploads are held by default pending gates | Successful runs shown Nov 6; saved progress outcome not verified |
 | `GGR_GetDashboardData` | Endpoint wired; dashboard data load integrated | Used by teacher dashboard | Successful runs shown Nov 7–8; owner reports dashboard still works; device-only game saves are absent |
 | `GGR_TeacherUnlockStudent` | Endpoint wired; dashboard action integrated | Used by teacher unlock action | Successful runs shown Oct 18–19 and Nov 8; owner reports it still works; authorization/effect not verified |
@@ -61,7 +61,10 @@
 ### Historical inventory notes
 
 The bundled `Current Flow Inventory.docx` reports `GGR_UpsertStudentProfile`
-and `GGR_UpsertTeacher` as working, including observed successful runs. It
+and `GGR_UpsertTeacher` as working, including observed successful runs. The
+owner's later report that `GGR_UpsertTeacher` has never run conflicts with
+that claim; the screenshot shows an empty 28-day history but cannot establish
+whether older runs occurred. Treat the old claim as unconfirmed. The inventory
 reports `GGR_TeacherUnlockStudent` as built/published with saves, but still
 requests endpoint wiring confirmation and a first live run. It calls
 `GGR_LoginTeacher` and `GGR_SaveProgress` unverified, `GGR_LoginStudent`
@@ -76,15 +79,20 @@ Screenshots supplied Nov 8, 2026 show `GGR_LoginStudent` runs marked
 **Succeeded** on Nov 6–7; `GGR_ChangeStudentPin` runs marked **Succeeded** on
 Oct 20–22 and Nov 7; `GGR_SaveCheckpointApproval` runs marked **Succeeded**
 on Oct 18–19; `GGR_SaveProgress` runs marked **Succeeded** on Nov 6; and
-`GGR_UpsertStudentProfile` runs marked **Succeeded** on Nov 6–7.
+`GGR_UpsertStudentProfile` run entries on Nov 7 with the per-run status column
+not visible. The owner described the latter runs as successful, but their
+statuses cannot be independently read from the screenshot.
 `GGR_GetDashboardData` is on and its screenshot shows runs marked **Succeeded**
 on Nov 7–8; the owner reports that the dashboard still works. The owner also
 reports that saved games are currently device-only and are missing from the
-dashboard data. The PIN screenshot shows the flow is on, but the owner has not
+dashboard data. `GGR_LoginTeacher` is on with runs marked **Succeeded** on
+Oct 27–29 and Nov 6–8; the owner reports their teacher login worked. The PIN
+screenshot shows the flow is on, but the owner has not
 recently changed a PIN and cannot independently confirm that the current
 PIN-change path works. `GGR_TeacherUnlockStudent` is on and its screenshot
 shows runs marked **Succeeded** on Oct 18–19 and Nov 8; the owner reports that
-the unlock flow still works.
+the unlock flow still works. `GGR_UpsertTeacher` is on, its 28-day run history
+is empty, and the owner reports that it has never run.
 Screenshots show run status (and, for some flows, selected input columns), not
 the action outputs, resulting SharePoint rows or subsequent application
 behavior. They therefore improve the evidence to “successful run observed,”
@@ -155,9 +163,10 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
   `GGR_GetDashboardData` and all teacher mutations must enforce teacher/class
   authorization on the server. Browser `sessionStorage` fields are not proof
   of identity.
-- **Build verification:** the old inventory specifically asked to verify
-  actual flow invocation, authentication against `GGR_Teachers`, and returned
-  teacher data. No tenant evidence in the repository resolves those checks.
+- **Build verification:** the owner reports their teacher login worked, and a
+  supplied screenshot shows runs marked Succeeded on Oct 27–29 and Nov 6–8.
+  The screenshot does not show the response or establish active-row checks,
+  role/class mapping or rejection of unauthorized requests.
 
 ### `GGR_ChangeStudentPin` — student PIN setup/change
 
@@ -195,24 +204,48 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
   preserve valid progression/current state, PIN data and lockout fields on
   ordinary re-import. Do not write economy state.
 - **Build verification:** the legacy inventory reports runs, success,
-  SharePoint student creation and authentication fixed. Supplied screenshots
-  also show successful runs on Nov 6–7 with student/class/progression columns
-  selected. Neither source verifies the resulting SharePoint values, server
-  preservation rules or current schema mapping.
+  SharePoint student creation and authentication fixed. A supplied screenshot
+  also shows Nov 7 run entries with student/class/progression columns selected,
+  but not their status. The owner describes these runs as successful. Neither
+  source verifies the resulting SharePoint values, server preservation rules
+  or current schema mapping.
 - **Reference:** [student login and progression guide](student-login-progression-repair.md#ggr_upsertstudentprofile-and-imports).
 
 ### `GGR_UpsertTeacher` — teacher creation/import
 
 - **Build / use:** existing endpoint called by dashboard teacher management
   and teacher import.
+- **Purpose and wiring:** create or update `GGR_Teachers` records by email
+  from the dashboard's Add Teacher form, Teacher Import, or teacher rows in a
+  mixed roster import. A single Add Teacher action uses `upsertTeacher`;
+  imports use `bulkImportTeachers` if configured, otherwise send each valid
+  teacher row to `upsertTeacher`. Dashboard reads and teacher sign-in use
+  separate flows, so they can work without this flow running. Existing teacher
+  rows can also be maintained directly in the Microsoft List.
+- **Whether needed:** the checked-in client already has an endpoint and caller;
+  no new client wiring is needed in principle. Verify that the deployed
+  endpoint targets this actual tenant flow before relying on dashboard teacher
+  writes. It is not required for dashboard reads or existing teacher sign-in;
+  it is needed for dashboard Add Teacher and, absent a bulk alternative,
+  teacher imports. Direct List management is an alternative if authorized.
 - **Expected flow work:** upsert teacher roster data and preserve the
   established teacher schema (`TeacherEmail`, `TeacherName`, `Role`, `Active`,
   `AllowedDashboardAccess`, `ClassCodes`, `DomainValidated`,
   `LastUpdatedUtc`). Teacher role/class decisions must be backed by trusted
   administrative policy, not client-supplied session claims.
-- **Build verification:** the legacy inventory reports teachers appearing in
-  SharePoint, successful runs and imports functioning; it also asks for
-  endpoint wiring verification. Current tenant behavior is not verified.
+- **Build verification:** the owner reports this flow has never run. The
+  screenshot shows it enabled and no runs in the 28-day history; it does not
+  establish older history. This conflicts with the legacy inventory's claims
+  of successful runs and working imports, which cannot be relied on here.
+  The reason for the empty history is unknown: teacher write actions may not
+  have been used, imports may use a bulk endpoint, requests may fail before
+  reaching the flow, or the configured endpoint may target another flow.
+  Do not assume any one cause. With an authorized test account, inspect
+  dashboard `?diagnostics=1`, submit a valid test teacher, check the last
+  upsert request and matching flow run, then verify the List row and dashboard
+  read-back. Keep URLs, keys and personal data out of shared diagnostics.
+  Verify admin-only server authorization, class scope, schema mapping and
+  denial cases before enabling routine use.
 
 ### `GGR_SaveProgress` — per-level progress save
 
