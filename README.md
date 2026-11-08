@@ -78,10 +78,17 @@ devices. Roster and save records can contain student codes, IDs, names, class
 codes, progression and game-state data. Do not describe the system as
 "local-only" or "no identifying data stored offsite" when cloud records exist.
 
-The current guarded build keeps unverified progress uploads local and provides
-a local backup export. A local export is not represented as encrypted unless
-the export implementation explicitly provides encryption. Schools must verify
-their tenant, access controls, retention and applicable education privacy
+**Current behavior:** the guarded build stores the game save in browser storage
+and holds unverified cloud uploads. This is local-first and does not meet the
+owner's requested cloud-primary behavior.
+
+**Requested target:** use the cloud save as the normal source of truth; retain a
+local pending save only when connectivity prevents the flow from completing,
+then queue/retry it. This target is not implemented or verified yet. Keep the
+existing student and teacher login flows unchanged during the save/restore
+repair. A local export is not represented as encrypted unless the export
+implementation explicitly provides encryption. Schools must verify their
+tenant, access controls, retention and applicable education privacy
 requirements; this repository does not certify policy compliance.
 
 ## Progression Note

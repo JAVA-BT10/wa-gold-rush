@@ -44,7 +44,10 @@ this client guard repair does not clear any of these gates.
 
 ## Backups and version markers
 
-- **Lists:** export before every schema or flow change, and keep the version history setting ON.
+- **Lists:** the owner reports that all student and progress data is backed up.
+  Before a test write, verify the backup date, list/version coverage and restore
+  procedure in restricted storage. Export again before every schema or flow
+  change, and keep the version history setting ON.
 - **Browser:** the client never deletes `level2_autosave`. It copies it to `wa_gr_legacy_autosave_backups_v1` before migration and records a migration marker in `wa_gr_progression_v1|…`.
 - **Version markers:**
   - Envelopes carry `storageSchemaVersion`. An unsupported (e.g. newer) version fails closed: the level is locked, the slot is neither loaded nor overwritten (test-covered).

@@ -104,6 +104,14 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
 
 ## How flows are built and wired
 
+The owner reports that all student and progress data is backed up. The backup
+location, capture date, coverage of SharePoint versions and browser-local saves,
+and a tested restore have not been independently verified. Keep backup files
+and identifiers in restricted storage; do not commit them to this repository.
+The owner also reports that the Power Automate flows and Microsoft Lists are
+Azure-protected. The repair will use the existing protected tenant resources;
+it does not assume a new Azure service or a replacement login system.
+
 ### Previously working behavior and current interruption
 
 The owner reports that cross-device saving and progress tracking worked before
@@ -127,6 +135,14 @@ supplied tenant save definition; it does not establish the exact first failing
 deployment or exclude other changes in PRs 68–71. Restoring the previously
 working user outcome requires resolving that integration gap safely, not
 merely marking the legacy flow failed or turning off save protections.
+
+The owner wants cloud progress to be the normal source of truth, with local
+persistence used only as a pending queue when connectivity prevents a save from
+reaching the flow. The current build is local-first: it persists each game save
+in browser storage while unverified cloud uploads are held. This target is not
+implemented. The owner has also stated that the existing student and teacher
+login systems are working; this repair should leave those login flows and their
+user-facing behavior unchanged.
 
 1. **Endpoint registry:** `shared/flow-endpoints.js` provides endpoint defaults
    for the core flows and merges runtime/dashboard overrides. Placeholder and
