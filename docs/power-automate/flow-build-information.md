@@ -267,7 +267,11 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
   returned the flow updates the first match using its existing `ProgressKey`;
   otherwise it creates a row with `CLASS|STUDENT|LEVEL` as the key. A limit of
   one cannot detect duplicate matching rows. `MarkersIn` reads the top-level
-  `progressionMarkersJson`, defaulting to `{}`.
+  `progressionMarkersJson`, defaulting to `{}`. Missing or null `currentRound`
+  defaults to 1; `currentCash`, `currentAssets`, `netWorth`, `score` and
+  `achievementsCount` default to 0; `badgesJson` defaults to `[]`;
+  `sessionStatus` to `active`; `needsSupport` to false; and `supportReason`
+  to an empty string.
 - **Observed mappings and response:** create/update map progress, economy,
   checkpoint and quiz fields, including the existing `LaastPlayedUtc` internal
   name. The supplied update parameters do not explicitly map approval fields;
@@ -277,9 +281,11 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
   values and resulting behavior. After the condition succeeds the supplied
   response is HTTP 200 with `{ "ok": true, "saved": true }`; it does not
   contain the v2 revision, generation and request receipt expected by the v2
-  client. The diagram shows an API-key condition and an alternate response,
-  but its comparison, failure response and other compose inputs have not yet
-  been supplied. A shared browser key is not student authentication.
+  client. The supplied API-key condition compares `IncomingKey` with
+  `ExpectedKey`; its false branch returns HTTP 401 with
+  `{ "ok": false, "error": "unauthorized" }`. The sources of those compose
+  outputs were not supplied. A shared browser key is not student
+  authentication.
 - **Safety:** do not enable or replay cloud writes based on the successful
   legacy run history. The supplied flow does not establish the authenticated
   conditional writes and exact-slot retrieval required by the current client.
