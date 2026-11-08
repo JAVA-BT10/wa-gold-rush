@@ -45,7 +45,7 @@
 | `GGR_UpsertStudentProfile` | Endpoint wired; roster import integrated | Used by teacher dashboard/import | Successful runs shown Nov 6–7; persisted roster behavior not verified |
 | `GGR_UpsertTeacher` | Endpoint wired; teacher upsert integrated | Used by dashboard teacher management/import | Not verified; legacy inventory reports working |
 | `GGR_SaveProgress` | Endpoint wired; legacy and v2 contracts documented | Capture/retry infrastructure exists; uploads are held by default pending gates | Successful runs shown Nov 6; saved progress outcome not verified |
-| `GGR_GetDashboardData` | Endpoint wired; dashboard data load integrated | Used by teacher dashboard | Not verified |
+| `GGR_GetDashboardData` | Endpoint wired; dashboard data load integrated | Used by teacher dashboard | Successful runs shown Nov 7–8; owner reports dashboard still works; device-only game saves are absent |
 | `GGR_TeacherUnlockStudent` | Endpoint wired; dashboard action integrated | Used by teacher unlock action | Not verified; legacy inventory reports built/published, but wiring and first live run were outstanding |
 | `GGR_SaveCheckpointApproval` | Optional Pages-build endpoint injection and UI integration | Used only when configured; otherwise unavailable/disabled | Successful runs shown Oct 18–19; approval outcome not verified |
 | `GGR_GetStudentProgress` | Optional endpoint; checkpoint compatibility and v2 restore contracts | Compatibility hook exists; full restore is gated OFF | Optional/unconfigured; full restore planned |
@@ -76,9 +76,13 @@ Screenshots supplied Nov 8, 2026 show `GGR_LoginStudent` runs marked
 **Succeeded** on Nov 6–7; `GGR_ChangeStudentPin` runs marked **Succeeded** on
 Oct 20–22 and Nov 7; `GGR_SaveCheckpointApproval` runs marked **Succeeded**
 on Oct 18–19; `GGR_SaveProgress` runs marked **Succeeded** on Nov 6; and
-`GGR_UpsertStudentProfile` runs marked **Succeeded** on Nov 6–7. The PIN
-screenshot shows the flow is on, but the owner has not recently changed a PIN
-and cannot independently confirm that the current PIN-change path works.
+`GGR_UpsertStudentProfile` runs marked **Succeeded** on Nov 6–7.
+`GGR_GetDashboardData` is on and its screenshot shows runs marked **Succeeded**
+on Nov 7–8; the owner reports that the dashboard still works. The owner also
+reports that saved games are currently device-only and are missing from the
+dashboard data. The PIN screenshot shows the flow is on, but the owner has not
+recently changed a PIN and cannot independently confirm that the current
+PIN-change path works.
 Screenshots show run status (and, for some flows, selected input columns), not
 the action outputs, resulting SharePoint rows or subsequent application
 behavior. They therefore improve the evidence to “successful run observed,”
@@ -242,6 +246,12 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
 - **Build / use:** existing endpoint; the teacher dashboard uses it as the
   source for `Teachers`, `Students` and `Progress`. On failure the UI clears
   tables and provides retry; it does not substitute cached dashboard data.
+- **Observed behavior:** the owner reports the dashboard still works, and a
+  supplied screenshot shows runs marked Succeeded on Nov 7–8. The owner says
+  saved games are device-only and absent from the dashboard data. This is
+  consistent with local saves not being uploaded as `GGR_SaveProgress` rows;
+  a successful dashboard read cannot include game saves that are not in its
+  cloud data source.
 - **Expected response:** teacher-authorized roster and progress arrays.
   Progress rows carry their per-level `Level`, class/student matching fields
   and checkpoint/approval fields used by the dashboard.
@@ -250,8 +260,10 @@ show that gameplay progress was saved by `GGR_SaveProgress`.
   authorization. Keep private student identifiers teacher-only.
 - **Build verification:** live response completeness, exact SharePoint
   internal column mappings and class scoping are not established by code.
-  Legacy inventory says not to change the working path but does not include
-  acceptance evidence.
+  The run-history screenshot and owner observation support that the dashboard
+  read path is currently operating, but do not verify its full response,
+  authorization or cloud game-save coverage. Legacy inventory says not to
+  change the working path but does not include acceptance evidence.
 
 ### `GGR_TeacherUnlockStudent` — teacher account unlock
 
