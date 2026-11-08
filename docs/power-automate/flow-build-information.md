@@ -1,0 +1,388 @@
+# Goldfields Goldrush W.A. — Power Automate flow build information
+
+> **Scope and confidence:** This page reconciles the checked-in application,
+> flow registry, build workflow and `Current Flow Inventory.docx`. It describes
+> repository wiring and documented contracts, not the current contents of a
+> Power Automate environment. The repository does not contain exportable
+> definitions for the flows, tenant run histories, or acceptance evidence.
+> Consequently, **no flow can be certified as live-verified or completely
+> deployed from this page**. Historical inventory notes are undated and may
+> conflict with current code; they are identified as historical, not treated
+> as current tenant proof.
+>
+> Signed trigger URLs, API keys, student credentials and raw flow-definition
+> metadata are intentionally not reproduced here. Treat browser-published
+> runtime configuration and trigger URLs as public, not confidential.
+
+## Status key
+
+- **Endpoint wired:** a non-placeholder endpoint is defined or supported by
+  checked-in configuration. This does not prove that the endpoint currently
+  resolves or that its flow works.
+- **Client-integrated / used:** checked-in application code invokes the flow
+  for the indicated user action. This describes the client path, not whether
+  a tenant run succeeds.
+- **Guarded / held:** integration exists, but the normal deployment is gated
+  or sends no request until prerequisites are met.
+- **Optional / unused:** a hook or placeholder exists, but no normal production
+  caller is wired or the endpoint is unconfigured.
+- **Planned:** a contract or scaffold exists; no deployed flow is established.
+- **Completed / live-verified:** requires recorded tenant acceptance evidence.
+  The repository contains no such evidence for any flow.
+
+## At-a-glance inventory
+
+| Power Automate flow | Repository build state | Checked-in client usage | Tenant completion |
+|---|---|---|---|
+| `GGR_LoginStudent` | Endpoint wired; student login integrated | Used by student sign-in | Not verified |
+| `GGR_LoginTeacher` | Endpoint wired; teacher login integrated | Used by teacher sign-in | Not verified |
+| `GGR_ChangeStudentPin` | Endpoint wired; PIN setup/change integrated | Used by student PIN form | Not verified; legacy inventory says not built/wired |
+| `GGR_UpsertStudentProfile` | Endpoint wired; roster import integrated | Used by teacher dashboard/import | Not verified; legacy inventory reports working |
+| `GGR_UpsertTeacher` | Endpoint wired; teacher upsert integrated | Used by dashboard teacher management/import | Not verified; legacy inventory reports working |
+| `GGR_SaveProgress` | Endpoint wired; legacy and v2 contracts documented | Capture/retry infrastructure exists; uploads are held by default pending gates | Not verified |
+| `GGR_GetDashboardData` | Endpoint wired; dashboard data load integrated | Used by teacher dashboard | Not verified |
+| `GGR_TeacherUnlockStudent` | Endpoint wired; dashboard action integrated | Used by teacher unlock action | Not verified; legacy inventory reports built/published, but wiring and first live run were outstanding |
+| `GGR_SaveCheckpointApproval` | Optional Pages-build endpoint injection and UI integration | Used only when configured; otherwise unavailable/disabled | Optional; not verified |
+| `GGR_GetStudentProgress` | Optional endpoint; checkpoint compatibility and v2 restore contracts | Compatibility hook exists; full restore is gated OFF | Optional/unconfigured; full restore planned |
+| `GGR_TeacherResetStudentPin` | Placeholder endpoint only | No production caller | Optional/unused |
+| `GGR_RebuildLevelLeaderboard_OnProgressChange` | Placeholder endpoint only | No production caller | Optional/unused |
+| `GGR_UpsertInvestmentProfile_OnProgressChange` | Placeholder endpoint only | No production caller | Optional/unused |
+| `GGR_ImportAuditLogger` | Placeholder endpoint only | No production caller | Optional/unused |
+| `GGR_ResetLevelProgress` | Contract and client capability planned | No live caller; `levelResetFlow` defaults OFF | Planned |
+| `GGR_GetLeaderboard` | Server contract planned | No live caller; `serverLeaderboard` defaults OFF | Planned |
+| `GGR_CopyCompetitionSnapshot` | Baseline/freeze contract planned | No live caller; flags default OFF | Planned |
+| `GGR_Level6HistoricalResults` | Level 6 analytics contract planned | No live caller; `level6Analytics` defaults OFF | Planned |
+
+### Historical inventory notes
+
+The bundled `Current Flow Inventory.docx` reports `GGR_UpsertStudentProfile`
+and `GGR_UpsertTeacher` as working, including observed successful runs. It
+reports `GGR_TeacherUnlockStudent` as built/published with saves, but still
+requests endpoint wiring confirmation and a first live run. It calls
+`GGR_LoginTeacher` and `GGR_SaveProgress` unverified, `GGR_LoginStudent`
+unknown, and `GGR_ChangeStudentPin` not built/not wired. Those PIN notes
+conflict with current source, which contains both the endpoint wiring and the
+student form integration; the old document is not a current deployment
+record. These reports do not establish present-day flow behavior.
+
+## How flows are built and wired
+
+1. **Endpoint registry:** `shared/flow-endpoints.js` provides endpoint defaults
+   for the core flows and merges runtime/dashboard overrides. Placeholder and
+   empty values are treated as unconfigured. Do not copy endpoint values into
+   documentation or public messages.
+2. **Capability registry:** `shared/level-capabilities.js` is the canonical
+   flow-status and feature-gate registry. Planned flows require both a
+   literal-`true` runtime flag and a configured endpoint. Flags default OFF.
+3. **Pages build:** `.github/workflows/build-and-deploy.yml` creates
+   `teacher/runtime-config.js` during a GitHub Pages build. It may inject
+   endpoint overrides and feature flags from Actions secrets/variables. The
+   generated file is browser-visible; Actions secret storage does not make
+   values confidential after publication. Pull-request builds use validation
+   configuration, not deployment credentials.
+4. **Callers:** student authentication is in `shared/student-auth-client.js`;
+   progress sync in `shared/sharepoint-sync.js`; full restore in
+   `shared/cloud-restore.js`; teacher API methods in
+   `teacher/dashboard-state.js`; approval UI wiring in
+   `teacher/checkpoint-approval.js`.
+5. **Validation:** repository checks use `node --test tests/*.test.js` and
+   in-memory mocks. They validate client behavior and contracts, not a live
+   Power Automate flow, SharePoint mapping, tenant authorization or student
+   gameplay.
+
+## Flow build details
+
+### `GGR_LoginStudent` — student roster authentication
+
+- **Build / use:** existing endpoint in the shared registry; called by the
+  home-page sign-in through `shared/student-auth-client.js`.
+- **Request:** class code, student ID and a runtime SHA-256 PIN hash. PINs and
+  hashes are not saved in the browser session.
+- **Expected flow work:** find one active `GGR_Students` row matching class
+  and `StudentID`; verify the credential; return authoritative identity and
+  level fields from that roster row. Success requires `ok:true` plus complete
+  identity (`studentCode`, `studentId`, `studentName`, `leaderboardName`,
+  `classCode`, `assignedLevel`). The roster's `Level` is the teacher-assigned
+  level; `ProgressedLevel` and `CurrentLevel` are separate fields.
+- **Security / data rules:** do not echo request identity as verified roster
+  data or return PIN/hash/salt. Generic failures should not reveal whether a
+  student exists. The browser session is not a server-issued authorization
+  token; student-scoped backend operations need server-verifiable proof.
+- **Build verification:** current mapping, PIN policy, active-row behavior,
+  and tenant run history remain unverified. Historical inventory marks this
+  flow unknown.
+- **References:** [student login and progression guide](student-login-progression-repair.md#canonical-roster-contract),
+  [flow contract](flow-registry-and-contracts.md#ggr_loginstudent).
+
+### `GGR_LoginTeacher` — teacher sign-in
+
+- **Build / use:** existing endpoint; `teacher/dashboard-state.js` calls it
+  when a teacher signs in, with teacher email and optional class code.
+- **Expected flow work:** validate an active `GGR_Teachers` row and return
+  authoritative teacher identity, role and class scope. Admin status comes
+  from the teacher row; there is no client-side admin bypass.
+- **Security / data rules:** dashboard filtering is presentation only.
+  `GGR_GetDashboardData` and all teacher mutations must enforce teacher/class
+  authorization on the server. Browser `sessionStorage` fields are not proof
+  of identity.
+- **Build verification:** the old inventory specifically asked to verify
+  actual flow invocation, authentication against `GGR_Teachers`, and returned
+  teacher data. No tenant evidence in the repository resolves those checks.
+
+### `GGR_ChangeStudentPin` — student PIN setup/change
+
+- **Build / use:** endpoint wired and called from the home-page PIN form by
+  `shared/student-auth-client.js`.
+- **Request:** class code and student ID, `newPinHash`, and for ordinary
+  changes `oldPinHash`. First-time setup sets `firstTimeSetup:true` and omits
+  `oldPinHash`.
+- **Expected response:** explicit `{ "ok": true }` only after a persisted
+  update; errors return `ok:false` and a message. The client does not treat a
+  generic success-shaped response as confirmation.
+- **Flow rules:** independently authorize first-time setup/reset; require the
+  old credential for normal changes; update credential/lockout fields only.
+  Do not reset progression or change assigned/current levels as a side effect.
+- **Build verification:** tenant PIN policy, first-time authorization,
+  persistence and subsequent login are unverified. The legacy inventory says
+  “not built / not wired,” which is inconsistent with current client code and
+  does not prove whether the tenant flow exists.
+- **Reference:** [student login and progression guide](student-login-progression-repair.md#ggr_changestudentpin).
+
+### `GGR_UpsertStudentProfile` — roster creation and import
+
+- **Build / use:** existing endpoint called by teacher dashboard student
+  creation and CSV/JSON import.
+- **Payload:** student code and ID (distinct SharePoint fields), student and
+  leaderboard names, class code, assigned `Level`, active state, primary
+  teacher email and timestamp. Optional progression fields may be present in
+  current client payloads as initialization suggestions, not trusted unlock
+  authority.
+- **Expected flow work:** upsert by `StudentCode`; validate `Level` 1–5;
+  initialize new `ProgressedLevel`/`CurrentLevel` from assigned `Level`;
+  preserve valid progression/current state, PIN data and lockout fields on
+  ordinary re-import. Do not write economy state.
+- **Build verification:** the legacy inventory reports runs, success,
+  SharePoint student creation and authentication fixed. These notes are
+  undated; server preservation rules and current schema mapping remain
+  unverified.
+- **Reference:** [student login and progression guide](student-login-progression-repair.md#ggr_upsertstudentprofile-and-imports).
+
+### `GGR_UpsertTeacher` — teacher creation/import
+
+- **Build / use:** existing endpoint called by dashboard teacher management
+  and teacher import.
+- **Expected flow work:** upsert teacher roster data and preserve the
+  established teacher schema (`TeacherEmail`, `TeacherName`, `Role`, `Active`,
+  `AllowedDashboardAccess`, `ClassCodes`, `DomainValidated`,
+  `LastUpdatedUtc`). Teacher role/class decisions must be backed by trusted
+  administrative policy, not client-supplied session claims.
+- **Build verification:** the legacy inventory reports teachers appearing in
+  SharePoint, successful runs and imports functioning; it also asks for
+  endpoint wiring verification. Current tenant behavior is not verified.
+
+### `GGR_SaveProgress` — per-level progress save
+
+- **Build / use:** existing endpoint key, called through
+  `shared/sharepoint-sync.js`. Client capture, queue, retry, quarantine and
+  protocol-v2 code exist. Cloud uploads are held by default until the
+  authenticated writer/retrieval gates pass; v2 behavior is gated OFF.
+- **Save identity:** one `GGR_StudentProgress` row per canonical
+  `UPPER(ClassCode)|UPPER(StudentCode)|Level` key. The `Level` is the game
+  played, not the roster's assigned level or mutable current level.
+- **Legacy contract:** per-level save data, correlation ID
+  (`saveRequestId`), timestamps/version, economy summary, progression
+  snapshot and checkpoint evidence. The server must validate the active
+  roster identity, recompute the key, safely handle legacy keys and preserve
+  teacher-owned approval fields.
+- **v2 contract (implemented client, not tenant-deployed):** protocol version,
+  run generation/run ID, base revision, content hash and starting cash;
+  server-assigned monotonic revision, exact idempotency, durable receipts and
+  conditional/ETag write. Conflicts are held for reconciliation, not blindly
+  overwritten. The reference server is a test mock.
+- **Build verification:** legacy inventory says Level 2 SharePoint sync needs
+  verification and may be non-functional. Timeouts are unknown outcomes, not
+  proof of failure. No live save acceptance is recorded.
+- **References:** [save repair spec](GGR_SaveProgress-repair-spec.md),
+  [save protocol v2](save-protocol-v2.md),
+  [controlling release and acceptance runbook](../operations/release-and-acceptance.md).
+
+### `GGR_GetDashboardData` — teacher dashboard read
+
+- **Build / use:** existing endpoint; the teacher dashboard uses it as the
+  source for `Teachers`, `Students` and `Progress`. On failure the UI clears
+  tables and provides retry; it does not substitute cached dashboard data.
+- **Expected response:** teacher-authorized roster and progress arrays.
+  Progress rows carry their per-level `Level`, class/student matching fields
+  and checkpoint/approval fields used by the dashboard.
+- **Flow rules:** authorize the teacher and class scope server-side; never
+  expose data from another class to a non-admin. Client-side filtering is not
+  authorization. Keep private student identifiers teacher-only.
+- **Build verification:** live response completeness, exact SharePoint
+  internal column mappings and class scoping are not established by code.
+  Legacy inventory says not to change the working path but does not include
+  acceptance evidence.
+
+### `GGR_TeacherUnlockStudent` — teacher account unlock
+
+- **Build / use:** existing endpoint; a teacher dashboard state method posts
+  the teacher email, student code, class code and reason for an unlock.
+- **Expected flow work:** verify the active teacher's class/admin authority,
+  identify the student in that class, then apply only the intended account
+  lockout/unlock change. Do not alter PINs, assigned level or saved progress.
+  Any progression effect must be monotonic and capped at the highest playable
+  level.
+- **Historical build information:** the bundled inventory says the flow was
+  built/published and saved successfully, while endpoint wiring and the first
+  live run were still to be confirmed. It also contains HTTP-trigger metadata;
+  this page omits the trigger URL and does not treat client-supplied email as
+  authenticated identity.
+- **Build verification:** current trigger authorization, dashboard wiring and
+  server-side authorization remain unverified.
+
+### `GGR_SaveCheckpointApproval` — teacher checkpoint approval
+
+- **Build / use:** optional flow. The UI caller exists; Pages may inject an
+  endpoint during deployment when configured. Without it, approval buttons
+  remain disabled and no local-only approval is recorded.
+- **Request:** student code, class code, level, diagnostic progress key,
+  decision (`approved` or `retake_requested`), approver name/email and
+  timestamp.
+- **Expected flow work:** authenticate the teacher, verify class scope and
+  passed checkpoint, recompute the canonical key and update exactly one
+  progress row. Derive reviewer identity/time from trusted server identity;
+  browser-supplied reviewer fields and shared API key do not authenticate a
+  teacher. Approval progression must be monotonic and capped at level 5.
+- **Build verification:** no deployed endpoint or accepted run is evidenced.
+  Approval is optional and is not currently a mandatory level-access gate.
+- **References:** [approval security and migration contract](checkpoint-approval-security.md),
+  [save repair spec](GGR_SaveProgress-repair-spec.md#ggr_savecheckpointapproval-new-optional).
+
+### `GGR_GetStudentProgress` — checkpoint lookup / full restore
+
+- **Build / use:** optional/unconfigured endpoint. The access guard has a
+  checkpoint-compatibility hook. `shared/cloud-restore.js` supports a separate
+  full exact-slot v2 restore, but it requires `fullCloudRestore:true` and a
+  configured endpoint; the flag defaults OFF.
+- **Checkpoint compatibility:** may return checkpoint evidence for an
+  authorized student. This does not restore the full economy or game state.
+- **Planned full restore:** `ggr.getStudentProgress.v2` request includes
+  contract version, full-save mode, class/student/level/key and server-verifiable
+  student proof. The response distinguishes a complete `found:true` save, a
+  definitively queried `found:false`, and errors. Timeout, partial response or
+  unauthorized request is never treated as “not found.”
+- **Flow rules:** return only the authenticated student's exact progress
+  slot; never use the teacher dashboard data endpoint for student restore.
+- **Build verification:** no tenant endpoint, full-save payload or cross-device
+  gameplay restoration is verified.
+- **Reference:** [flow contract](flow-registry-and-contracts.md#ggr_getstudentprogress).
+
+### `GGR_TeacherResetStudentPin` — teacher-forced PIN reset
+
+- **Build / use:** optional placeholder in dashboard configuration; no normal
+  production caller and no configured endpoint are established.
+- **Proposed scope:** reset credentials only through a teacher/admin-authorized
+  operation; do not touch progression, game state or unlocks. A reset should
+  require an audit trail and explicit authorization.
+- **Build verification:** no request/response contract, deployed flow or
+  completed behavior is documented. The student self-service
+  `GGR_ChangeStudentPin` is a separate flow.
+
+### `GGR_RebuildLevelLeaderboard_OnProgressChange` — materialized leaderboard
+
+- **Build / use:** optional placeholder; no production caller. The name
+  suggests a progress-change-triggered/background flow, but trigger details
+  are not present in the repository.
+- **Proposed rules:** rank per-level progress rows using the same exclusions
+  and metrics as `shared/leaderboard.js`; never rank by roster level or mix
+  different level slots. Public output must use leaderboard nicknames and
+  exclude private identifiers.
+- **Build verification:** no definition, endpoint, trigger, or tenant test is
+  provided. This is not the planned server leaderboard query; see
+  `GGR_GetLeaderboard`.
+
+### `GGR_UpsertInvestmentProfile_OnProgressChange` — investment profile
+
+- **Build / use:** optional placeholder; no production caller. Trigger and
+  action sequence are not specified.
+- **Proposed keying:** profile data should be isolated by class, student and
+  game level. Architecture notes that the current browser investment profile
+  uses student plus level, so it is not evidence of a deployed SharePoint
+  contract.
+- **Build verification:** no flow definition, list schema or tenant run
+  evidence is present.
+
+### `GGR_ImportAuditLogger` — import/action audit
+
+- **Build / use:** optional placeholder; no production caller.
+- **Proposed responsibility:** record authorized import/dashboard actions
+  with bounded metadata and a useful audit trail.
+- **Data restrictions:** never log PINs, hashes, signed trigger URLs, API keys,
+  or full request bodies that contain them. Apply retention and access control
+  to audit data.
+- **Build verification:** no schema, trigger, endpoint or deployed flow
+  evidence is present.
+
+### `GGR_ResetLevelProgress` — one-level reset (planned)
+
+- **Build / use:** planned contract; registry gate is `levelResetFlow`,
+  default OFF; no deployed flow is evidenced.
+- **Planned operation:** authorize and audit a reset for one student's one
+  level; archive the existing snapshot; conditionally advance server-owned
+  `RunGeneration`, create a new server `RunId`, and increment `Revision`.
+  Preserve other levels, credentials, approvals and `ProgressedLevel`.
+- **Required safety:** stale queued saves from the previous generation must
+  fail; reset must be idempotent and conditional to prevent overwrites.
+- **References:** [save protocol v2, reset generation](save-protocol-v2.md#4-reset-generation),
+  [flow contract](flow-registry-and-contracts.md#ggr_resetlevelprogress-planned).
+
+### `GGR_GetLeaderboard` — server leaderboard (planned)
+
+- **Build / use:** planned contract; `serverLeaderboard` defaults OFF; no
+  production caller or endpoint is established.
+- **Planned request:** class scope(s), level, metric (`netWorth`, `profit` or
+  `roi`) and limit, plus server-verifiable teacher proof.
+- **Planned response/rules:** ranked public leaderboard names and public score
+  fields; enforce class scope on the server; exclude held, conflicted,
+  unrankable or under-review rows. Never expose student code, ID, name or
+  credentials.
+- **Reference:** [flow contract](flow-registry-and-contracts.md#ggr_getleaderboard-planned).
+
+### `GGR_CopyCompetitionSnapshot` — competition baseline/freeze (planned)
+
+- **Build / use:** planned canonical operation flow under
+  `ggr.competitionSnapshot.v1`; `competitionBaselines` defaults OFF.
+  Freeze/close/export additionally require `competitionSnapshots:true`.
+- **Operations:** `capture_baseline`, `freeze`, `close`, and `export`.
+- **Planned flow work:** authorize teacher and each class; capture baseline
+  net worth, revision and generation from the canonical progress row; freeze
+  immutable results; only close/export frozen snapshots. Never accept
+  student-supplied baseline amounts or modify the progress row.
+- **Privacy:** exports contain public nicknames and scores, not student
+  identifiers or credentials.
+- **Reference:** [competition baselines and freeze runbook](../operations/competition-baselines.md).
+
+### `GGR_Level6HistoricalResults` — Level 6 analytics (planned)
+
+- **Build / use:** planned and gated by `level6Analytics`, default OFF. No
+  playable Level 6 or deployed analytics flow exists.
+- **Planned payload:** versioned historical event/decision data, content and
+  scoring versions, run identity and bounded event logs.
+- **Planned flow work:** validate event IDs and versions; recompute/validate
+  mastery components server-side; never trust a client-asserted competitive
+  `masteryScore`; archive bounded historical event data.
+- **Dependency:** Level 6 gameplay, history/cultural review, curriculum,
+  scoring and save/restore acceptance must be completed first.
+- **Reference:** [Level 6 blueprint](../architecture/level-6-goldfields-mastery-blueprint.md#8-flows-data-and-telemetry).
+
+## What “complete” means for this project
+
+The codebase contains active client integrations, endpoint configuration, and
+detailed proposed contracts, but these are different milestones. To mark any
+flow **completed**, record the deployed definition/version, verified list
+internal names, redacted request/response and run evidence, authorization
+checks, positive and negative test results, and rollback point in the tenant
+acceptance record. Repository tests alone cannot satisfy that bar.
+
+For rollout order, data backups, authentication, old-writer containment,
+conditional save/retrieval, rollback and acceptance tests, use the
+[staged release and tenant acceptance runbook](../operations/release-and-acceptance.md).

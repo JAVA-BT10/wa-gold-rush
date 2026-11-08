@@ -52,6 +52,7 @@ before a pilot; server refusal of old unconditional writers must come first.
 
 - [Future-state architecture](docs/architecture/future-state-architecture.md) — identity, per-level saves, migration, restore, leaderboards, competitions, Level 1 assessment, level guide
 - [Flow registry and contracts](docs/power-automate/flow-registry-and-contracts.md) — existing, optional and planned flows
+- [Power Automate flow build information](docs/power-automate/flow-build-information.md) — per-flow build state, client usage, contracts, dependencies and verification status
 - [Save protocol v2](docs/power-automate/save-protocol-v2.md) — server revision / compare-and-swap, idempotency receipts, reset generation, test vectors
 - [Level 6 Goldfields Mastery blueprint](docs/architecture/level-6-goldfields-mastery-blueprint.md)
 - [Manual repair template (mixed-level histories)](docs/operations/manual-repair-mixed-history.md)

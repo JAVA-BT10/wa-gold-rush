@@ -14,6 +14,9 @@
 >
 > Architecture context: [future-state-architecture](../architecture/future-state-architecture.md). The save concurrency rules are in [save-protocol-v2](save-protocol-v2.md).
 
+For a per-flow build/use inventory, historical status reconciliation and
+deployment-confidence notes, see [Power Automate flow build information](flow-build-information.md).
+
 ## Cross-cutting rules (apply to every flow)
 
 1. **Authentication prerequisite:**
