@@ -1,12 +1,13 @@
 # Goldfields Goldrush W.A. — Power Automate flow build information
 
 > **Scope and confidence:** This page reconciles the checked-in application,
-> flow registry, build workflow and `Current Flow Inventory.docx`. It describes
-> repository wiring and documented contracts, not the current contents of a
-> Power Automate environment. The repository does not contain exportable
-> definitions for the flows, tenant run histories, or acceptance evidence.
-> Consequently, **no flow can be certified as live-verified or completely
-> deployed from this page**. Historical inventory notes are undated and may
+> flow registry, build workflow and `Current Flow Inventory.docx`, supplemented
+> by run-history screenshots supplied by the owner. The repository does not
+> contain exportable flow definitions or a complete tenant acceptance record.
+> Screenshots establish that Power Automate displayed runs as successful, not
+> that the intended SharePoint changes, authorization checks or end-to-end user
+> outcomes were correct. Consequently, **no flow can be certified as fully
+> accepted from this page**. Historical inventory notes are undated and may
 > conflict with current code; they are identified as historical, not treated
 > as current tenant proof.
 >
@@ -27,22 +28,26 @@
 - **Optional / unused:** a hook or placeholder exists, but no normal production
   caller is wired or the endpoint is unconfigured.
 - **Planned:** a contract or scaffold exists; no deployed flow is established.
-- **Completed / live-verified:** requires recorded tenant acceptance evidence.
-  The repository contains no such evidence for any flow.
+- **Successful run observed:** a supplied run-history screenshot shows one or
+  more runs marked Succeeded. This does not confirm the intended data change or
+  satisfy tenant acceptance.
+- **Completed / accepted:** requires recorded tenant acceptance evidence,
+  including verified outcomes and authorization checks. No flow has that
+  complete evidence here.
 
 ## At-a-glance inventory
 
-| Power Automate flow | Repository build state | Checked-in client usage | Tenant completion |
+| Power Automate flow | Repository build state | Checked-in client usage | Tenant evidence / acceptance |
 |---|---|---|---|
-| `GGR_LoginStudent` | Endpoint wired; student login integrated | Used by student sign-in | Not verified |
+| `GGR_LoginStudent` | Endpoint wired; student login integrated | Used by student sign-in | Successful runs shown Nov 6–7; response/roster outcome not verified |
 | `GGR_LoginTeacher` | Endpoint wired; teacher login integrated | Used by teacher sign-in | Not verified |
-| `GGR_ChangeStudentPin` | Endpoint wired; PIN setup/change integrated | Used by student PIN form | Not verified; legacy inventory says not built/wired |
-| `GGR_UpsertStudentProfile` | Endpoint wired; roster import integrated | Used by teacher dashboard/import | Not verified; legacy inventory reports working |
+| `GGR_ChangeStudentPin` | Endpoint wired; PIN setup/change integrated | Used by student PIN form | Successful runs shown Oct 20–22 and Nov 7; recent PIN change not independently tested |
+| `GGR_UpsertStudentProfile` | Endpoint wired; roster import integrated | Used by teacher dashboard/import | Successful runs shown Nov 6–7; persisted roster behavior not verified |
 | `GGR_UpsertTeacher` | Endpoint wired; teacher upsert integrated | Used by dashboard teacher management/import | Not verified; legacy inventory reports working |
-| `GGR_SaveProgress` | Endpoint wired; legacy and v2 contracts documented | Capture/retry infrastructure exists; uploads are held by default pending gates | Not verified |
+| `GGR_SaveProgress` | Endpoint wired; legacy and v2 contracts documented | Capture/retry infrastructure exists; uploads are held by default pending gates | Successful runs shown Nov 6; saved progress outcome not verified |
 | `GGR_GetDashboardData` | Endpoint wired; dashboard data load integrated | Used by teacher dashboard | Not verified |
 | `GGR_TeacherUnlockStudent` | Endpoint wired; dashboard action integrated | Used by teacher unlock action | Not verified; legacy inventory reports built/published, but wiring and first live run were outstanding |
-| `GGR_SaveCheckpointApproval` | Optional Pages-build endpoint injection and UI integration | Used only when configured; otherwise unavailable/disabled | Optional; not verified |
+| `GGR_SaveCheckpointApproval` | Optional Pages-build endpoint injection and UI integration | Used only when configured; otherwise unavailable/disabled | Successful runs shown Oct 18–19; approval outcome not verified |
 | `GGR_GetStudentProgress` | Optional endpoint; checkpoint compatibility and v2 restore contracts | Compatibility hook exists; full restore is gated OFF | Optional/unconfigured; full restore planned |
 | `GGR_TeacherResetStudentPin` | Placeholder endpoint only | No production caller | Optional/unused |
 | `GGR_RebuildLevelLeaderboard_OnProgressChange` | Placeholder endpoint only | No production caller | Optional/unused |
@@ -64,6 +69,24 @@ unknown, and `GGR_ChangeStudentPin` not built/not wired. Those PIN notes
 conflict with current source, which contains both the endpoint wiring and the
 student form integration; the old document is not a current deployment
 record. These reports do not establish present-day flow behavior.
+
+### Owner-supplied run-history evidence
+
+Screenshots supplied Nov 8, 2026 show `GGR_LoginStudent` runs marked
+**Succeeded** on Nov 6–7; `GGR_ChangeStudentPin` runs marked **Succeeded** on
+Oct 20–22 and Nov 7; `GGR_SaveCheckpointApproval` runs marked **Succeeded**
+on Oct 18–19; `GGR_SaveProgress` runs marked **Succeeded** on Nov 6; and
+`GGR_UpsertStudentProfile` runs marked **Succeeded** on Nov 6–7. The PIN
+screenshot shows the flow is on, but the owner has not recently changed a PIN
+and cannot independently confirm that the current PIN-change path works.
+Screenshots show run status (and, for some flows, selected input columns), not
+the action outputs, resulting SharePoint rows or subsequent application
+behavior. They therefore improve the evidence to “successful run observed,”
+but do not establish correctness or acceptance.
+
+The gameplay screenshot reports cloud saving paused and local-only saving.
+Its successful browser asset requests are not Power Automate runs and do not
+show that gameplay progress was saved by `GGR_SaveProgress`.
 
 ## How flows are built and wired
 
@@ -108,9 +131,10 @@ record. These reports do not establish present-day flow behavior.
   data or return PIN/hash/salt. Generic failures should not reveal whether a
   student exists. The browser session is not a server-issued authorization
   token; student-scoped backend operations need server-verifiable proof.
-- **Build verification:** current mapping, PIN policy, active-row behavior,
-  and tenant run history remain unverified. Historical inventory marks this
-  flow unknown.
+- **Build verification:** supplied screenshots show runs marked Succeeded on
+  Nov 6–7, but do not show the response or verify roster mapping, PIN policy,
+  active-row behavior or the returned identity. Historical inventory marks
+  this flow unknown.
 - **References:** [student login and progression guide](student-login-progression-repair.md#canonical-roster-contract),
   [flow contract](flow-registry-and-contracts.md#ggr_loginstudent).
 
@@ -142,8 +166,11 @@ record. These reports do not establish present-day flow behavior.
 - **Flow rules:** independently authorize first-time setup/reset; require the
   old credential for normal changes; update credential/lockout fields only.
   Do not reset progression or change assigned/current levels as a side effect.
-- **Build verification:** tenant PIN policy, first-time authorization,
-  persistence and subsequent login are unverified. The legacy inventory says
+- **Build verification:** supplied screenshots show runs marked Succeeded on
+  Oct 20–22 and Nov 7, but do not show whether a PIN was changed or persisted.
+  The owner has not recently changed a PIN, so current PIN-change behavior and
+  subsequent login have not been independently tested. Tenant PIN policy and
+  first-time authorization remain unverified. The legacy inventory says
   “not built / not wired,” which is inconsistent with current client code and
   does not prove whether the tenant flow exists.
 - **Reference:** [student login and progression guide](student-login-progression-repair.md#ggr_changestudentpin).
@@ -162,9 +189,10 @@ record. These reports do not establish present-day flow behavior.
   preserve valid progression/current state, PIN data and lockout fields on
   ordinary re-import. Do not write economy state.
 - **Build verification:** the legacy inventory reports runs, success,
-  SharePoint student creation and authentication fixed. These notes are
-  undated; server preservation rules and current schema mapping remain
-  unverified.
+  SharePoint student creation and authentication fixed. Supplied screenshots
+  also show successful runs on Nov 6–7 with student/class/progression columns
+  selected. Neither source verifies the resulting SharePoint values, server
+  preservation rules or current schema mapping.
 - **Reference:** [student login and progression guide](student-login-progression-repair.md#ggr_upsertstudentprofile-and-imports).
 
 ### `GGR_UpsertTeacher` — teacher creation/import
@@ -199,9 +227,12 @@ record. These reports do not establish present-day flow behavior.
   server-assigned monotonic revision, exact idempotency, durable receipts and
   conditional/ETag write. Conflicts are held for reconciliation, not blindly
   overwritten. The reference server is a test mock.
-- **Build verification:** legacy inventory says Level 2 SharePoint sync needs
-  verification and may be non-functional. Timeouts are unknown outcomes, not
-  proof of failure. No live save acceptance is recorded.
+- **Build verification:** a supplied screenshot shows multiple runs marked
+  Succeeded on Nov 6, including a `studentCode` column. This does not verify
+  persisted progress, saved payload contents or gameplay restore; the supplied
+  gameplay screenshot reports cloud saving paused and local-only saving.
+  Legacy inventory says Level 2 SharePoint sync needs verification and may be
+  non-functional. Timeouts are unknown outcomes, not proof of failure.
 - **References:** [save repair spec](GGR_SaveProgress-repair-spec.md),
   [save protocol v2](save-protocol-v2.md),
   [controlling release and acceptance runbook](../operations/release-and-acceptance.md).
@@ -252,8 +283,10 @@ record. These reports do not establish present-day flow behavior.
   progress row. Derive reviewer identity/time from trusted server identity;
   browser-supplied reviewer fields and shared API key do not authenticate a
   teacher. Approval progression must be monotonic and capped at level 5.
-- **Build verification:** no deployed endpoint or accepted run is evidenced.
-  Approval is optional and is not currently a mandatory level-access gate.
+- **Build verification:** a supplied screenshot shows runs marked Succeeded
+  on Oct 18–19. It does not show the action outputs or verify the approval
+  update, authorization or progression effect. Approval is optional and is
+  not currently a mandatory level-access gate.
 - **References:** [approval security and migration contract](checkpoint-approval-security.md),
   [save repair spec](GGR_SaveProgress-repair-spec.md#ggr_savecheckpointapproval-new-optional).
 
