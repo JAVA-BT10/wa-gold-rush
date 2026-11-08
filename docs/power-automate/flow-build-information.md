@@ -305,9 +305,9 @@ record. These reports do not establish present-day flow behavior.
 - **Build / use:** optional placeholder; no production caller. Trigger and
   action sequence are not specified.
 - **Proposed keying:** profile data should be isolated by class, student and
-  game level. Architecture notes that the current browser investment profile
-  uses student plus level, so it is not evidence of a deployed SharePoint
-  contract.
+  game level. The current browser investment profile is already scoped by
+  class, student and level; legacy student-only entries remain unclaimed.
+  Browser storage is not evidence of a deployed SharePoint contract.
 - **Build verification:** no flow definition, list schema or tenant run
   evidence is present.
 
