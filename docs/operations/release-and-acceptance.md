@@ -10,11 +10,25 @@ modify lists, restore forensic records, or grant permission to create students.
 
 Investigation scope: merged #67 introduced independent local slots with restore/
 v2 OFF; #69/#71 hardened client protections without deploying a backend; #70
-isolated Pages output. The current and pre-#67 login normalizers retain roster
-identity/progression, not arbitrary game payloads. Home checkpoint hydration
-and teacher dashboard hydration are not proof of an earlier dashboard-to-game
-restore path. Supplied version-history evidence establishes replacement by a
-different run, not safe persistence merely because SaveProgress returned 200.
+isolated Pages output; and #72 explicitly held legacy cloud writes pending
+authenticated v2 save and exact-slot retrieval. The owner reports that
+cross-device saving and progress tracking worked before the PRs 68–72 upgrades,
+which targeted backlogged runs and errors. A supplied October 28 SharePoint
+progress record, confirmed as output from `GGR_GetDashboardData`'s Get Progress
+action, independently establishes that a historical full game snapshot was
+retrieved from cloud storage. This evidence does not establish current-device
+sync or restore, nor whether the earlier implementation was safe against
+concurrent writes. Home checkpoint hydration alone is not full game restore.
+The owner's historical account and the supplied old snapshot must not be
+misread as evidence that cloud saving never worked.
+
+The owner confirmed Nov 8, 2026 that `GGR_GetStudentProgress` does not exist.
+Stages below therefore require constructing a new exact-slot student read in
+the existing Power Automate/Lists setup. Preserve the working teacher
+`GGR_GetDashboardData`; do not use its roster/teacher dataset for student restore.
+Existing student and teacher login flows and their user-facing behavior remain
+unchanged. Verification of save/read authorization is not a request to replace
+login or introduce a separate Azure service.
 
 **Remaining promotion blockers:** deployed server-verifiable student proof,
 conditional writer/receipt feasibility, exact authorised retrieval, migration/
@@ -38,7 +52,10 @@ this client guard repair does not clear any of these gates.
 
 ## Backups and version markers
 
-- **Lists:** export before every schema or flow change, and keep the version history setting ON.
+- **Lists:** the owner reports that all student and progress data is backed up.
+  Before a test write, verify the backup date, list/version coverage and restore
+  procedure in restricted storage. Export again before every schema or flow
+  change, and keep the version history setting ON.
 - **Browser:** the client never deletes `level2_autosave`. It copies it to `wa_gr_legacy_autosave_backups_v1` before migration and records a migration marker in `wa_gr_progression_v1|…`.
 - **Version markers:**
   - Envelopes carry `storageSchemaVersion`. An unsupported (e.g. newer) version fails closed: the level is locked, the slot is neither loaded nor overwritten (test-covered).

@@ -52,6 +52,7 @@ before a pilot; server refusal of old unconditional writers must come first.
 
 - [Future-state architecture](docs/architecture/future-state-architecture.md) — identity, per-level saves, migration, restore, leaderboards, competitions, Level 1 assessment, level guide
 - [Flow registry and contracts](docs/power-automate/flow-registry-and-contracts.md) — existing, optional and planned flows
+- [Power Automate flow build information](docs/power-automate/flow-build-information.md) — per-flow build state, client usage, contracts, dependencies and verification status
 - [Save protocol v2](docs/power-automate/save-protocol-v2.md) — server revision / compare-and-swap, idempotency receipts, reset generation, test vectors
 - [Level 6 Goldfields Mastery blueprint](docs/architecture/level-6-goldfields-mastery-blueprint.md)
 - [Manual repair template (mixed-level histories)](docs/operations/manual-repair-mixed-history.md)
@@ -70,10 +71,25 @@ The original working game - preserved as-is for reference and student access.
 
 ## Data Privacy
 
-✅ **No identifying data stored offsite**
-- All game data stored locally on student devices
-- Teacher can export progress to OneDrive (encrypted, education tenant)
-- Compliant with education department data policies
+Game saves are stored locally in the browser. When cloud sync is enabled and
+working, progress is also sent through Power Automate to Microsoft Lists /
+SharePoint in the configured education tenant so it can be tracked across
+devices. Roster and save records can contain student codes, IDs, names, class
+codes, progression and game-state data. Do not describe the system as
+"local-only" or "no identifying data stored offsite" when cloud records exist.
+
+**Current behavior:** the guarded build stores the game save in browser storage
+and holds unverified cloud uploads. This is local-first and does not meet the
+owner's requested cloud-primary behavior.
+
+**Requested target:** use the cloud save as the normal source of truth; retain a
+local pending save only when connectivity prevents the flow from completing,
+then queue/retry it. This target is not implemented or verified yet. Keep the
+existing student and teacher login flows unchanged during the save/restore
+repair. A local export is not represented as encrypted unless the export
+implementation explicitly provides encryption. Schools must verify their
+tenant, access controls, retention and applicable education privacy
+requirements; this repository does not certify policy compliance.
 
 ## Progression Note
 
