@@ -133,6 +133,8 @@ Notes on the optional flows:
 
 ## GGR_GetStudentProgress
 
+- **Read-only historical data pilot:** [pilot contract and operator guide](read-only-restore-pilot.md).
+  This is a separate diagnostic contract, not the v2 student restore endpoint.
 - **Status:**
   - Checkpoint-only compatibility mode: optional/unconfigured.
   - Full exact-slot retrieval (`ggr.getStudentProgress.v2`): **planned and unverified**.
