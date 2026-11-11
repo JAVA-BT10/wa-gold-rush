@@ -31,6 +31,7 @@ jobs:
           WA_GGR_SAVE_PROGRESS_URL: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.WA_GGR_SAVE_PROGRESS_URL || '' }}
           WA_GGR_SAVE_PROTOCOL_V2: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_SAVE_PROTOCOL_V2 || '' }}
           WA_GGR_FULL_CLOUD_RESTORE: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_FULL_CLOUD_RESTORE || '' }}
+          WA_GGR_PILOT_SHARED_KEY_PROGRESS: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_PILOT_SHARED_KEY_PROGRESS || '' }}
           WA_GGR_SERVER_LEADERBOARD: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_SERVER_LEADERBOARD || '' }}
           WA_GGR_LEVEL_RESET_FLOW: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_LEVEL_RESET_FLOW || '' }}
           WA_GGR_COMPETITION_BASELINES: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WA_GGR_COMPETITION_BASELINES || '' }}
@@ -70,6 +71,7 @@ jobs:
           feature_variables = {
               "saveProtocolV2": "WA_GGR_SAVE_PROTOCOL_V2",
               "fullCloudRestore": "WA_GGR_FULL_CLOUD_RESTORE",
+              "pilotSharedKeyProgress": "WA_GGR_PILOT_SHARED_KEY_PROGRESS",
               "serverLeaderboard": "WA_GGR_SERVER_LEADERBOARD",
               "levelResetFlow": "WA_GGR_LEVEL_RESET_FLOW",
               "competitionBaselines": "WA_GGR_COMPETITION_BASELINES",

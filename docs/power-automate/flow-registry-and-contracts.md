@@ -1,5 +1,9 @@
 # Flow registry and contracts (current, planned and unverified)
 
+> Large full-game saves require the separate
+> [document-library implementation and acceptance requirements](large-cloud-save-requirements.md).
+> That implementation is not deployed by this repository.
+>
 > **Status legend:**
 >
 > | Label | Meaning |
@@ -19,7 +23,11 @@
 1. **Authentication prerequisite:**
    - `X-GGR-Key` and Pages-injected URLs are public browser configuration, not user authentication. See [checkpoint-approval-security](checkpoint-approval-security.md); that guidance is retained.
    - A request whose class/student fields match its source is **not** an authenticated server session. Every student-scoped flow needs a server-verifiable student proof before it is enabled for data that is restorable or competitive. Candidates are a short-lived signed session token issued by `GGR_LoginStudent`, or Entra-backed auth. Every teacher-scoped flow needs a server-verifiable teacher proof.
-   - Until that exists, read flows that expose a full save to students must stay disabled (`fullCloudRestore` OFF).
+   - The owner-selected, default-off `pilotSharedKeyProgress` option permits
+     shared-key-only get/save for a controlled pilot. This is not individual
+     student authorization and must not be enabled without explicit risk
+     acceptance, a scoped deployment and a verified tenant implementation.
+     Otherwise full restore must stay disabled (`fullCloudRestore` OFF).
 2. **The server recomputes the key.** It computes `ProgressKey = UPPER(ClassCode)|UPPER(StudentCode)|Level` itself. A client-supplied `progressKey` is used for diagnostics and for agreement checks only.
 3. **Verify internal column names** in List settings / the REST `$select` output before mapping. A display name change does not change the internal name. Placeholders like `<actual action name>` stand for the real action names in your flow; do not guess them.
 4. **Bounded responses:**
@@ -160,6 +168,8 @@ Notes on the optional flows:
   payloads, local saves, queues or runtime config. Cookie-based gateway
   integration, if selected instead, needs separately validated transport/CSRF
   handling; it is not implemented by this header provider.
+  The separately gated shared-key pilot described above is the only get/save
+  exception; it does not apply to resets and does not imply per-student proof.
 - **Private fields:** the response includes no `StudentName`, `StudentID` or credentials.
 - **Acceptance:**
   - found / missing / failure are each distinguishable;

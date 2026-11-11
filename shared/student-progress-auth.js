@@ -8,6 +8,8 @@
  * dispatch. The provider owns login, expiry/refresh and logout; the server must
  * verify the proof and authorise its subject for the requested slot/operation.
  * Class/student codes, an API key, and browser session data are not proof.
+ * The explicitly enabled shared-key pilot permits get/save without proof;
+ * it is not student authentication and never applies to reset.
  * Never persist, queue, fingerprint or log the returned transport options.
  */
 (function initStudentProgressAuth(globalObj) {
@@ -24,6 +26,14 @@
         }
         const provider = root?.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER;
         if (!provider || typeof provider.getProof !== 'function') {
+            const caps = root?.WA_GOLD_RUSH_LEVEL_CAPABILITIES;
+            const api = root?.WA_GOLD_RUSH_POWER_AUTOMATE;
+            if (['get', 'save'].includes(input.operation)
+                && caps?.isFeatureEnabled?.('pilotSharedKeyProgress', root)
+                && typeof api?.getApiKey === 'function'
+                && api.getApiKey()) {
+                return { ok: true, options: { requireApiKey: true, cache: 'no-store' } };
+            }
             return { ok: false, reason: 'auth_provider_unavailable' };
         }
         const request = Object.freeze({

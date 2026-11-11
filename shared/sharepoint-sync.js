@@ -1216,6 +1216,7 @@ const SharePointSync = (() => {
             restoreConfigured: !!globalThis.WA_GOLD_RUSH_CLOUD_RESTORE?.isEnabled(),
             saveConfigured: !!_resolveEndpoint(CONFIG.progressEndpointKey),
             proofProviderConfigured: typeof globalThis.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER?.getProof === 'function',
+            sharedKeyPilotEnabled: !!globalThis.WA_GOLD_RUSH_LEVEL_CAPABILITIES?.isFeatureEnabled('pilotSharedKeyProgress'),
             authenticatedSessionPresent: !!session,
             startupSlotVerified: !!evidence && evidence.session === _sessionStamp(session),
             localSaveStatus: ['found', 'missing', 'invalid', 'unavailable'].includes(local?.status) ? local.status : 'unavailable',

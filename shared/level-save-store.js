@@ -646,16 +646,18 @@
                     return { ok: false, reason: 'cloud_reconciliation_required' };
                 }
             }
+            let ledger;
             if (sourceLedger !== null) {
-                const parsedLedger = JSON.parse(sourceLedger);
-                const owner = normalizeIdentity(parsedLedger?.owner);
-                if (!isPlainObject(parsedLedger) || parsedLedger.storageSchemaVersion !== STORAGE_SCHEMA_VERSION
+                ledger = JSON.parse(sourceLedger);
+                const owner = normalizeIdentity(ledger?.owner);
+                if (!isPlainObject(ledger) || ledger.storageSchemaVersion !== STORAGE_SCHEMA_VERSION
                     || !owner || owner.classCode !== identity.classCode || owner.studentCode !== identity.studentCode
-                    || !isPlainObject(parsedLedger.levelRuns) || !isPlainObject(parsedLedger.progressionStateByLevel)) {
+                    || !isPlainObject(ledger.levelRuns) || !isPlainObject(ledger.progressionStateByLevel)) {
                     return { ok: false, reason: 'source_ledger_invalid' };
                 }
+            } else {
+                ledger = emptyLedger(identity);
             }
-            const ledger = readLedger(storage, identity);
             const current = ledger.levelRuns[String(level)];
             if (current?.generation > envelope.generation) return { ok: false, reason: 'stale_generation' };
             ledger.levelRuns[String(level)] = {

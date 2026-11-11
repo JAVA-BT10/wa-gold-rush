@@ -29,6 +29,15 @@ server-verifiable student bearer proof is an additional client prerequisite.
 There is no proof issuer in this repository. A matching roster entry or the
 shared browser API key is not proof of the caller's identity.
 
+The separately gated `pilotSharedKeyProgress` option allows get/save calls
+without that proof provider when an API key is configured; it is OFF by default,
+never covers resets, and does not change the existing login. This is the
+owner-selected shared-key trust model, not student-specific authorization.
+Anyone holding the browser-visible key may attempt to address another slot.
+Do not enable it until the school accepts this risk and has deployed and
+verified exact-slot retrieval and conditional writes. The flag does not create
+those flows, bypass v2 requirements, or make old unconditional writes safe.
+
 An HTTP-success missing result requires `ok:true`, the exact contract version
 and requested key, and `found:false`. `runGeneration` is optional, but if
 present must be a positive integer. An HTTP-success found result requires

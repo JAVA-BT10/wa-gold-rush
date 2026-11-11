@@ -445,6 +445,29 @@ test('invalid provider proofs and exceptions do not leak credentials or fall bac
     assert.deepEqual(await auth.authorize(request, root), { ok: false, reason: 'auth_provider_failed' });
 });
 
+test('shared-key pilot is explicit, limited to get/save, and never bypasses an existing provider', async () => {
+    const root = {
+        WA_GOLD_RUSH_LEVEL_CAPABILITIES: {
+            isFeatureEnabled: (name) => name === 'pilotSharedKeyProgress'
+        },
+        WA_GOLD_RUSH_POWER_AUTOMATE: { getApiKey: () => 'test-only-key' }
+    };
+    for (const operation of ['get', 'save']) {
+        assert.deepEqual(await auth.authorize({ ...SLOT, operation }, root), {
+            ok: true, options: { requireApiKey: true, cache: 'no-store' }
+        });
+    }
+    assert.equal((await auth.authorize({ ...SLOT, operation: 'reset' }, root)).reason, 'auth_provider_unavailable');
+    root.WA_GOLD_RUSH_POWER_AUTOMATE.getApiKey = () => '';
+    assert.equal((await auth.authorize({ ...SLOT, operation: 'get' }, root)).reason, 'auth_provider_unavailable');
+    root.WA_GOLD_RUSH_POWER_AUTOMATE.getApiKey = () => 'test-only-key';
+    root.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER = { getProof: async () => ({}) };
+    assert.equal((await auth.authorize({ ...SLOT, operation: 'get' }, root)).reason, 'auth_proof_unavailable');
+    delete root.WA_GOLD_RUSH_STUDENT_PROGRESS_PROOF_PROVIDER;
+    root.WA_GOLD_RUSH_LEVEL_CAPABILITIES.isFeatureEnabled = () => false;
+    assert.equal((await auth.authorize({ ...SLOT, operation: 'get' }, root)).reason, 'auth_provider_unavailable');
+});
+
 test('full restore transports proof only in headers and never calls the flow without it', async () => {
     let calls = 0;
     const root = {

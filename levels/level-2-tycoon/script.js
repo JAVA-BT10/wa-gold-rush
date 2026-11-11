@@ -1555,7 +1555,9 @@ function updateCloudSaveStatusLabel(status) {
     const diagnostics = typeof SharePointSync !== 'undefined'
         ? SharePointSync.getDiagnostics?.({ level: gameState?.assignedLevel }) : null;
     if (diagnosticsEl && diagnostics) {
-        diagnosticsEl.textContent = `Cloud checks: build ${diagnostics.buildVersion}; protocol v${diagnostics.protocolVersion || 'unavailable'}; conditional saves ${diagnostics.conditionalSavesEnabled ? 'on' : 'off'}; restore ${diagnostics.restoreConfigured ? 'configured' : 'unconfigured'}; authentication provider ${diagnostics.proofProviderConfigured ? 'configured' : 'unconfigured'}; this startup lookup ${diagnostics.startupSlotVerified ? 'verified' : 'not verified'}; local save ${diagnostics.localSaveStatus}.`;
+        const auth = diagnostics.proofProviderConfigured ? 'proof provider configured'
+            : diagnostics.sharedKeyPilotEnabled ? 'shared-key pilot enabled' : 'provider unconfigured';
+        diagnosticsEl.textContent = `Cloud checks: build ${diagnostics.buildVersion}; protocol v${diagnostics.protocolVersion || 'unavailable'}; conditional saves ${diagnostics.conditionalSavesEnabled ? 'on' : 'off'}; restore ${diagnostics.restoreConfigured ? 'configured' : 'unconfigured'}; authentication ${auth}; this startup lookup ${diagnostics.startupSlotVerified ? 'verified' : 'not verified'}; local save ${diagnostics.localSaveStatus}.`;
     }
 }
 
