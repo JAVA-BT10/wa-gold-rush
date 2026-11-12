@@ -317,10 +317,13 @@ as written; the expressions refer to those names.
      setProperty(json('{"ok":true}'), 'records', if(equals(outputs('Row'), null), json('[]'), createArray(setProperty(setProperty(setProperty(setProperty(json('{}'), 'studentCode', triggerBody()?['studentCode']), 'classCode', toUpper(triggerBody()?['classCode'])), 'level', triggerBody()?['level']), 'progressionMarkersJson', coalesce(outputs('Row')?['ProgressionMarkersJson'], '')))))
      ```
 
-Old rows without a `Revision` are reported as `found:false` to the full-save
-restore: they were never v2 saves and have no revision. Their original JSON is
-preserved in `LegacyProgressionMarkersJson` the first time the student's
-device uploads a v2 save.
+**Do not enable full cloud restore for students while legacy cloud rows exist
+without a `Revision`.** As written, this flow reports those rows as
+`found:false`; a fresh device would not restore that legacy save. Before
+student rollout, migrate each existing cloud row using a verified migration
+procedure, preserving its original JSON in
+`LegacyProgressionMarkersJson`, and test conversion/restore on a second device.
+Do not treat an old row as an empty slot or let a first save overwrite it.
 
 ## Step 6 – Turn it on (GitHub)
 
@@ -353,9 +356,24 @@ saves are unaffected.
 5. Repeat for Level 3. Level 4 uploads after its first round is played.
 6. Once the Demo passes, turn off the old `GGR_SaveProgress` flow.
 
-### Rollout note for students
+### Multi-device rollout requirement
 
-Ask each student to open the game **first on the device that holds their
-progress**. If a fresh device saves first, the older device shows a conflict
-and keeps its progress locally instead of overwriting; a teacher can then
-export that device's backup.
+After the tenant flows are deployed and verified, there is **no designated
+device**. A student or teacher can sign in on any authorized device; the game
+must look up and restore the latest cloud save for that student's exact class,
+student and level before continuing. Saving from one device must make the new
+revision available to the next device.
+
+Before enabling this for students, verify that every existing cloud row is
+either migrated to the v2 revision/run contract or deliberately preserved and
+handled through an approved recovery path. Also identify students whose latest
+progress exists only in a browser's local storage; that progress has not
+reached the cloud and needs a one-time upload from a device that still holds
+it (or from its exported backup). This is a migration exception, not the
+ongoing workflow.
+
+If two devices are used offline or both continue from the same old revision,
+the later save must be rejected as a conflict rather than silently overwrite
+the other. The student must reload/reconcile the latest cloud save before
+continuing on the stale device. Do not have the same student play the same
+level concurrently on multiple devices.
