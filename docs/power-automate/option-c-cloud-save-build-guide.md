@@ -4,6 +4,24 @@ This guide restores Device A → save → Device B → restore for Levels 2–5 
 the existing Microsoft Lists, the existing `X-GGR-Key` API key and the existing
 student login. No document library is used.
 
+> **Do not enable this for students yet.** The current browser login supplies
+> class/student identity fields but no server-verifiable save authorization
+> proof. The API key is delivered to browser code and is therefore not a
+> student identity credential. A flow that checks only that shared key and
+> trusts submitted class/student codes could allow one student to request or
+> overwrite another student's progress. Before student rollout, implement and
+> verify server-side authorization that binds each save/get request to the
+> authenticated student and operation. `shared/student-progress-auth.js`
+> supports a proof provider, but the provider and corresponding flow-side proof
+> validation are not implemented/configured by this guide.
+>
+> Also, **rotate the Power Automate HTTP-trigger URLs currently embedded in
+> `shared/flow-endpoints.js`**. Treat them as exposed. Move replacement URLs to
+> GitHub Actions secrets and runtime configuration; do not commit replacement
+> signed URLs. Updating the deployment injection for the affected endpoints
+> requires a manual workflow edit because this session cannot push workflow
+> changes.
+
 ## What the game now sends
 
 | Copy | Contents |
@@ -113,8 +131,14 @@ as written; the expressions refer to those names.
    }
    ```
 
-2. **Copy your existing API-key check** from the current `GGR_SaveProgress`
-   (the condition on the `X-GGR-Key` header and its 401 response).
+2. **Authentication is a release blocker, not just an API-key condition.**
+   Do not rely on an `X-GGR-Key` check as student authentication. Add the
+   server-side proof validation described in the warning above: reject missing,
+   expired, invalid, wrong-student and wrong-operation proofs before reading or
+   writing the progress List. Bind the proof's authenticated subject to the
+   normalized class/student in the request. Until that is implemented and
+   tested, leave the feature flags off and do not publish these flows to
+   students.
 
 3. **Compose** named `ExpectedKey`:
 
@@ -133,9 +157,10 @@ as written; the expressions refer to those names.
    (Succeeded). Old queued saves from earlier game versions are rejected here
    and kept on the student's device.
 
-5. **Roster check** – if your current `GGR_SaveProgress` checks the student
-   against `GGR_Students`, copy that check here unchanged (its failure
-   Response must be status `403`). If it has none, skip this step.
+5. **Roster check** – after authenticating the proof, check that its bound
+   student is still active in `GGR_Students` and that the requested level is
+   permitted. Return status `403` if not. A roster lookup alone is not
+   authentication; never use submitted identity fields as proof of identity.
 
 6. **Get items** named `Get_receipt` → List `GGR_SaveReceipts`, Filter Query
    `SaveRequestId eq '@{triggerBody()?['saveRequestId']}'`, Top Count `1`.
@@ -279,7 +304,10 @@ as written; the expressions refer to those names.
    }
    ```
 
-2. Copy the API-key check, then the `ExpectedKey` Compose from Step 4.3.
+2. Apply the same server-side proof validation as in Step 4.2, with operation
+   `get`, then the `ExpectedKey` Compose from Step 4.3. Bind the authenticated
+   student to the requested slot before any lookup. Do not use the shared API
+   key or the roster query alone as authentication.
 3. Condition (advanced) named `Valid`:
 
    ```
@@ -287,7 +315,7 @@ as written; the expressions refer to those names.
    ```
 
    If no → Response `400` `{"ok":false,"code":"invalid_request"}` → Terminate.
-4. Roster check as in Step 4.5 (if you use one).
+4. Roster/level authorization as in Step 4.5, after validating the proof.
 5. **Get items** named `Get_row` → `GGR_StudentProgress`, Filter Query
    `ProgressKey eq '@{outputs('ExpectedKey')}'`, Top Count `2`. Add a parallel
    branch with **Configure run after** = *has failed* / *has timed out* →
@@ -364,13 +392,13 @@ must look up and restore the latest cloud save for that student's exact class,
 student and level before continuing. Saving from one device must make the new
 revision available to the next device.
 
-Before enabling this for students, verify that every existing cloud row is
-either migrated to the v2 revision/run contract or deliberately preserved and
-handled through an approved recovery path. Also identify students whose latest
-progress exists only in a browser's local storage; that progress has not
-reached the cloud and needs a one-time upload from a device that still holds
-it (or from its exported backup). This is a migration exception, not the
-ongoing workflow.
+Before enabling this for students, verify all three release gates: (1)
+server-verifiable student/operation authorization, (2) every existing cloud
+row is migrated to the v2 revision/run contract or deliberately preserved and
+handled through an approved recovery path, and (3) students whose latest
+progress exists only in browser storage have a one-time upload path from a
+device that still holds it (or from its exported backup). These are launch
+prerequisites, not routine device restrictions.
 
 If two devices are used offline or both continue from the same old revision,
 the later save must be rejected as a conflict rather than silently overwrite
