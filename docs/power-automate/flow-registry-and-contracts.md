@@ -156,6 +156,7 @@ Notes on the optional flows:
     ```
   - **Definitively missing:** `{ ok:true, contractVersion, found:false, progressKey }`. Return this only after a successful, complete query that returned zero rows for that exact key.
   - **Failure:** `{ ok:false, contractVersion, code:'unauthorized'|'identity_mismatch'|'server_error'|'timeout' }`. A response without the matching `contractVersion` is classified `incomplete`, never missing.
+  - **Option C (List-backed) found alternative:** omit `save` and return `"progressionMarkersJson": "<exact stored text>"`; the client converts and validates it as an envelope. Requests without `contractVersion` are the level-unlock compatibility mode and receive `{ ok:true, records:[{ studentCode, classCode, level, progressionMarkersJson }] }`. Build steps: `option-c-cloud-save-build-guide.md`.
   - `save` is the complete envelope as stored by the client (identity, level, progressKey, generation, runId, startingNetWorth, snapshot). If `runGeneration` is present it must equal `save.generation`. A missing response may include `runGeneration` (the server's current generation, e.g. after a reset).
 - **Auth:** student scope only. The server derives the identity from the auth proof and refuses a mismatched class/student. Never return another student's row. **Never** expose `GGR_GetDashboardData` for this purpose.
 - **Transport prerequisite:** `shared/student-progress-auth.js` requests ephemeral

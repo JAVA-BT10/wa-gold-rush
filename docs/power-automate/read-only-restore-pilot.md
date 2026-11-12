@@ -64,6 +64,13 @@ the executable rules. Extra save metadata is not required by that validator.
 validator. Flow failures, malformed responses, wrong identities, duplicates and
 timeouts are not `found:false`.
 
+**List-backed alternative (Option C):** instead of `save`, a found response
+may carry `progressionMarkersJson`, the exact text stored in the row by a v2
+save. The client converts it with `shared/progress-snapshot-converter.js` and
+then applies the same envelope validation; an owner or level mismatch is
+`failed`, any other conversion problem is `incomplete`. See
+`option-c-cloud-save-build-guide.md`.
+
 The suggested `{found:true,snapshot:"..."}` response is **not v2**: it has no
 revision or `save` envelope, and main returns `incomplete`. Do not label it v2,
 fabricate a revision, or point the production endpoint at it.

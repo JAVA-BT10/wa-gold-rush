@@ -215,10 +215,20 @@
             try {
                 const captured = JSON.parse(payload.progressionMarkersJson);
                 const local = current.envelope.snapshot;
-                const keys = ['round', 'cash', 'ownedMines', 'machinery', 'roundHistory',
+                const keys = ['round', 'cash', 'ownedMines', 'machinery',
                     'investmentPlans', 'investmentProfile', 'totalProfitLoss'];
                 const comparable = (value) => store.canonicalJson(value === undefined ? null : value);
-                newerLocal = newerLocal || keys.some((key) => comparable(captured[key]) !== comparable(local[key]))
+                // Cloud saves carry only the most recent rounds: compare them
+                // with the same tail of the complete local history.
+                const capturedHistory = Array.isArray(captured.roundHistory) ? captured.roundHistory : null;
+                const localHistory = Array.isArray(local.roundHistory) ? local.roundHistory : [];
+                const historyChanged = !capturedHistory
+                    || (capturedHistory.length === 0 ? localHistory.length !== 0
+                        : comparable(capturedHistory) !== comparable(localHistory.slice(-capturedHistory.length)));
+                const metricsChanged = ['strategyMetrics', 'roundMetrics'].some((key) => captured[key] !== undefined
+                    && comparable(captured[key]) !== comparable(local[key]));
+                newerLocal = newerLocal || historyChanged || metricsChanged
+                    || keys.some((key) => comparable(captured[key]) !== comparable(local[key]))
                     || comparable(captured.companyName) !== comparable(local.player?.companyName);
             } catch (_) {
                 newerLocal = true;

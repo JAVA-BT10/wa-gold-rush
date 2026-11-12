@@ -1389,14 +1389,16 @@ function playRound() {
     if (!Array.isArray(gameState.roundHistory)) {
         gameState.roundHistory = [];
     }
-    gameState.roundHistory.push({
+    const roundEntry = {
         round: gameState.round,
         event: event ? event.id : null,
         totalProfit: totalRoundChange,
         cashAfter: gameState.cash,
         netWorth: gameState.getNetWorth(),
         results
-    });
+    };
+    gameState.roundHistory.push(roundEntry);
+    gameState.recordRoundMetrics?.(roundEntry);
     gameState.round += 1;
 
     gameState.getOwnedMines().forEach(mine => {
@@ -1775,20 +1777,12 @@ function isPristineLevelGame() {
         || !(Array.isArray(attempts) && attempts.some((attempt) => Date.parse(attempt?.timestamp) >= createdAt));
 }
 
+// Uses the cumulative strategy totals, never a replay of round history.
 function calculateStrategyLabel() {
-    const totals = { safe: 0, medium: 0, deep: 0 };
-    (Array.isArray(gameState.roundHistory) ? gameState.roundHistory : []).forEach(round => {
-        (round.results || []).forEach(result => {
-            if (result.digKey && result.digKey in totals) {
-                totals[result.digKey] += result.amount || 0;
-            }
-        });
-    });
-    const max = Math.max(totals.safe, totals.medium, totals.deep);
-    if (max === 0) return 'No strategy yet';
-    if (max === totals.safe) return 'Safe-focused';
-    if (max === totals.medium) return 'Balanced-medium';
-    return 'High-risk deep';
+    const store = getLevelSaveStore();
+    const metrics = gameState.getSaveMetrics?.().strategyMetrics;
+    if (store?.strategyLabelFromMetrics && metrics) return store.strategyLabelFromMetrics(metrics);
+    return 'No strategy yet';
 }
 
 function syncPlayerRecord() {
@@ -1815,7 +1809,11 @@ function syncPlayerRecord() {
     const progressionStateByLevel = JSON.parse(JSON.stringify(gameState.progressionStateByLevel || {}));
     const ownedMinesSnapshot = JSON.parse(JSON.stringify(gameState.ownedMines || {}));
     const machinerySnapshot = JSON.parse(JSON.stringify(gameState.machinery || []));
-    const roundHistorySnapshot = JSON.parse(JSON.stringify(gameState.roundHistory || []));
+    // The cloud copy is an operational resume save: recent rounds plus the
+    // cumulative totals. The local save keeps the complete history.
+    const saveMetrics = JSON.parse(JSON.stringify(gameState.getSaveMetrics?.() || {}));
+    const cloudHistory = getLevelSaveStore()?.buildCloudHistory?.(gameState.roundHistory, saveMetrics)
+        || { roundHistory: JSON.parse(JSON.stringify(gameState.roundHistory || [])) };
     const investmentPlansSnapshot = JSON.parse(JSON.stringify(gameState.investmentPlans || {}));
     const latestQuizAttempt = Array.isArray(progressionState.quizAttempts) && progressionState.quizAttempts.length
         ? progressionState.quizAttempts[progressionState.quizAttempts.length - 1]
@@ -1844,7 +1842,9 @@ function syncPlayerRecord() {
         companyName: gameState.player.companyName || DEFAULT_COMPANY_NAME,
         ownedMines: ownedMinesSnapshot,
         machinery: machinerySnapshot,
-        roundHistory: roundHistorySnapshot,
+        roundHistory: cloudHistory.roundHistory,
+        ...(cloudHistory.historyRetention ? { historyRetention: cloudHistory.historyRetention } : {}),
+        ...saveMetrics,
         totalProfitLoss: gameState.totalProfitLoss,
         investmentPlans: investmentPlansSnapshot,
         investmentProfile,
@@ -1907,6 +1907,14 @@ function syncPlayerRecord() {
             updateCloudSaveStatusLabel('paused for teacher review');
             return;
         }
+        const progressionMarkersJson = JSON.stringify(progressionSnapshot);
+        const maxCloudChars = getLevelSaveStore()?.CLOUD_SAVE_MAX_CHARS;
+        if (Number.isInteger(maxCloudChars) && progressionMarkersJson.length > maxCloudChars) {
+            // Never send a save SharePoint would truncate; keep it local.
+            console.warn('[Cloud] Resume save exceeds the cloud size limit; kept on this device.', progressionMarkersJson.length);
+            updateCloudSaveStatusLabel('local-only (save too large for cloud)');
+            return;
+        }
         const progressPayload = SharePointSync.buildProgressPayload({
             ...v2Fields,
             studentCode,
@@ -1918,7 +1926,7 @@ function syncPlayerRecord() {
             currentAssets,
             netWorth,
             score: netWorth,
-            progressionMarkersJson: JSON.stringify(progressionSnapshot),
+            progressionMarkersJson,
             badgesJson: JSON.stringify([]),
             achievementsCount: Array.isArray(progressionState.quizAttempts) ? progressionState.quizAttempts.length : 0,
             sessionStatus: 'authenticated',
