@@ -124,6 +124,9 @@
         saveProtocolV2: false,
         // Ask GGR_GetStudentProgress for a full exact-slot snapshot at startup.
         fullCloudRestore: false,
+        // Explicitly permits shared-key-only progress get/save for a controlled
+        // pilot. A browser-visible shared key is not student authentication.
+        pilotSharedKeyProgress: false,
         serverLeaderboard: false,
         levelResetFlow: false,
         competitionBaselines: false,

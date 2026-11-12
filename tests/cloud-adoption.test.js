@@ -35,6 +35,24 @@ test('cloud adoption archives exact source, commits run and preserves unrelated 
     assert.equal(store.getLevelWriteProtection(storage, identity, 2), '');
 });
 
+test('cloud adoption preserves other levels when an extra ledger read would fail', () => {
+    const { storage, target } = setup();
+    assert.equal(store.recordProgressionEvidence(storage, identity, 4, { checkpointStatus: 'quiz_passed' }), true);
+    const ledgerKey = store.buildLedgerKey(identity);
+    let reads = 0;
+    const flaky = {
+        getItem(key) {
+            if (key === ledgerKey && ++reads === 5) throw new Error('simulated transient read');
+            return storage.getItem(key);
+        },
+        setItem: storage.setItem.bind(storage),
+        removeItem: storage.removeItem.bind(storage)
+    };
+    const result = restore.adoptCloudSave(flaky, { status: 'found', envelope: target });
+    assert.equal(result.ok, false);
+    assert.equal(store.readProgressionEvidence(storage, identity, 4).checkpointStatus, 'quiz_passed');
+});
+
 for (const stage of ['archive', 'journal', 'slot', 'ledger', 'cleanup']) {
     test(`cloud adoption recovers a storage failure at ${stage} without invalidating the source run`, () => {
         const { storage, original, target } = setup();

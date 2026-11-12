@@ -12,6 +12,7 @@ const buildBlocks = [...workflow.matchAll(/          python - <<'PY'\n([\s\S]*?)
 const featureVariables = {
     saveProtocolV2: 'WA_GGR_SAVE_PROTOCOL_V2',
     fullCloudRestore: 'WA_GGR_FULL_CLOUD_RESTORE',
+    pilotSharedKeyProgress: 'WA_GGR_PILOT_SHARED_KEY_PROGRESS',
     serverLeaderboard: 'WA_GGR_SERVER_LEADERBOARD',
     levelResetFlow: 'WA_GGR_LEVEL_RESET_FLOW',
     competitionBaselines: 'WA_GGR_COMPETITION_BASELINES',

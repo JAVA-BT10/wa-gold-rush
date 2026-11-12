@@ -1,5 +1,9 @@
 # Flow registry and contracts (current, planned and unverified)
 
+> Large full-game saves require the separate
+> [document-library implementation and acceptance requirements](large-cloud-save-requirements.md).
+> That implementation is not deployed by this repository.
+>
 > **Status legend:**
 >
 > | Label | Meaning |
@@ -19,7 +23,11 @@
 1. **Authentication prerequisite:**
    - `X-GGR-Key` and Pages-injected URLs are public browser configuration, not user authentication. See [checkpoint-approval-security](checkpoint-approval-security.md); that guidance is retained.
    - A request whose class/student fields match its source is **not** an authenticated server session. Every student-scoped flow needs a server-verifiable student proof before it is enabled for data that is restorable or competitive. Candidates are a short-lived signed session token issued by `GGR_LoginStudent`, or Entra-backed auth. Every teacher-scoped flow needs a server-verifiable teacher proof.
-   - Until that exists, read flows that expose a full save to students must stay disabled (`fullCloudRestore` OFF).
+   - The owner-selected, default-off `pilotSharedKeyProgress` option permits
+     shared-key-only get/save for a controlled pilot. This is not individual
+     student authorization and must not be enabled without explicit risk
+     acceptance, a scoped deployment and a verified tenant implementation.
+     Otherwise full restore must stay disabled (`fullCloudRestore` OFF).
 2. **The server recomputes the key.** It computes `ProgressKey = UPPER(ClassCode)|UPPER(StudentCode)|Level` itself. A client-supplied `progressKey` is used for diagnostics and for agreement checks only.
 3. **Verify internal column names** in List settings / the REST `$select` output before mapping. A display name change does not change the internal name. Placeholders like `<actual action name>` stand for the real action names in your flow; do not guess them.
 4. **Bounded responses:**
@@ -133,6 +141,8 @@ Notes on the optional flows:
 
 ## GGR_GetStudentProgress
 
+- **Read-only historical data pilot:** [pilot contract and operator guide](read-only-restore-pilot.md).
+  This is a separate diagnostic contract, not the v2 student restore endpoint.
 - **Status:**
   - Checkpoint-only compatibility mode: optional/unconfigured.
   - Full exact-slot retrieval (`ggr.getStudentProgress.v2`): **planned and unverified**.
@@ -146,6 +156,7 @@ Notes on the optional flows:
     ```
   - **Definitively missing:** `{ ok:true, contractVersion, found:false, progressKey }`. Return this only after a successful, complete query that returned zero rows for that exact key.
   - **Failure:** `{ ok:false, contractVersion, code:'unauthorized'|'identity_mismatch'|'server_error'|'timeout' }`. A response without the matching `contractVersion` is classified `incomplete`, never missing.
+  - **Option C (List-backed) found alternative:** omit `save` and return `"progressionMarkersJson": "<exact stored text>"`; the client converts and validates it as an envelope. Requests without `contractVersion` are the level-unlock compatibility mode and receive `{ ok:true, records:[{ studentCode, classCode, level, progressionMarkersJson }] }`. Build steps: `option-c-cloud-save-build-guide.md`.
   - `save` is the complete envelope as stored by the client (identity, level, progressKey, generation, runId, startingNetWorth, snapshot). If `runGeneration` is present it must equal `save.generation`. A missing response may include `runGeneration` (the server's current generation, e.g. after a reset).
 - **Auth:** student scope only. The server derives the identity from the auth proof and refuses a mismatched class/student. Never return another student's row. **Never** expose `GGR_GetDashboardData` for this purpose.
 - **Transport prerequisite:** `shared/student-progress-auth.js` requests ephemeral
@@ -158,6 +169,8 @@ Notes on the optional flows:
   payloads, local saves, queues or runtime config. Cookie-based gateway
   integration, if selected instead, needs separately validated transport/CSRF
   handling; it is not implemented by this header provider.
+  The separately gated shared-key pilot described above is the only get/save
+  exception; it does not apply to resets and does not imply per-student proof.
 - **Private fields:** the response includes no `StudentName`, `StudentID` or credentials.
 - **Acceptance:**
   - found / missing / failure are each distinguishable;
