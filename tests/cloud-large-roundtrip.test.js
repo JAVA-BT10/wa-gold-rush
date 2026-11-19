@@ -114,6 +114,11 @@ test('Option C: compact cloud resume save restores across devices while local hi
     assert.equal(second.gameState.roundHistory.length, 20);
     assert.deepEqual(plain(second.gameState.getSaveMetrics()), expectedMetrics);
     assert.equal(second.context.calculateStrategyLabel(), expectedLabel, 'label identical without full history');
+    assert.equal(second.gameState.saveToLocalStorage(), true);
+    const secondLocal = second.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.readLevelSave(second.storage, identity, 2);
+    assert.deepEqual(plain(secondLocal.envelope.snapshot.historyRetention), {
+        mode: 'recent', limit: 20, recordedRounds: 2500, retainedRounds: 20
+    }, 'saving on a new device preserves the fact that its local history is partial');
 
     first.gameState.round = 2502;
     first.gameState.cash = 2345;
@@ -141,6 +146,10 @@ test('Option C: compact cloud resume save restores across devices while local hi
     third.gameState.round = 2502;
     third.gameState.cash = 4567;
     assert.equal(third.gameState.saveToLocalStorage(), true);
+    const thirdLocal = third.context.WA_GOLD_RUSH_LEVEL_SAVE_STORE.readLevelSave(third.storage, identity, 2);
+    assert.deepEqual(plain(thirdLocal.envelope.snapshot.historyRetention), {
+        mode: 'recent', limit: 20, recordedRounds: 2501, retainedRounds: 21
+    }, 'new rounds update both the retained and cumulative history counts');
     third.context.realSyncPlayerRecord();
     await third.context.getProgressSaveScheduler().whenIdle();
     assert.equal(server.rows.get('6B|SC-1|2').revision, 3);

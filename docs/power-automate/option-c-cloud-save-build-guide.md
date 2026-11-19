@@ -36,7 +36,7 @@ the Power Automate flows below implement that outcome.
 
 | Copy | Contents |
 |---|---|
-| Local save and exported backup | Everything, including **every** round. Never trimmed. |
+| Local save and exported backup | Preserve the history available on that device. A device restored from the compact cloud save initially has only the last 20 rounds; its backup cannot recreate rounds that were never present there. |
 | Cloud save (`ProgressionMarkersJson`) | Current game, investment profile, `strategyMetrics`, `roundMetrics`, checkpoint, quiz and approval evidence, run identity and the **last 20 rounds**. |
 
 The game refuses to upload a cloud save over 60,000 characters (the List limit
@@ -57,8 +57,9 @@ New snapshot fields (see `shared/level-save-store.js`):
   (object), `eventJournal` (at most 200 entries, each with `eventType`) and
   `assessmentEvidence` (object).
 
-Existing saves are backfilled once from their complete local history, so the
-totals cover every round already played.
+Existing local saves with complete histories are backfilled from that history.
+Devices restored from a compact cloud save retain the cumulative metrics and
+the marker that their local history is partial.
 
 ## Step 1 – Back up first
 

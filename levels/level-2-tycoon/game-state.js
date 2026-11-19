@@ -38,6 +38,7 @@ class GameState {
         this.roundHistory = [];
         this.strategyMetrics = null;
         this.roundMetrics = null;
+        this.historyRetention = null;
         this.totalProfitLoss = 0;
         this.investmentPlans = {};
         this.investmentProfile = null;
@@ -797,6 +798,12 @@ class GameState {
     captureLevelSnapshot() {
         this.persistProgressionStateForLevel(this.assignedLevel);
         const clone = (value) => JSON.parse(JSON.stringify(value));
+        const metrics = this.getSaveMetrics();
+        const historyRetention = this.historyRetention ? {
+            ...this.historyRetention,
+            recordedRounds: metrics.roundMetrics.roundsRecorded,
+            retainedRounds: this.roundHistory.length
+        } : null;
         const profileApi = this.getInvestmentProfileApi();
         const identity = this.getSaveIdentity();
         const investmentProfile = profileApi && identity
@@ -815,7 +822,8 @@ class GameState {
             ownedMines: clone(this.ownedMines || {}),
             machinery: clone(Array.isArray(this.machinery) ? this.machinery : []),
             roundHistory: clone(Array.isArray(this.roundHistory) ? this.roundHistory : []),
-            ...clone(this.getSaveMetrics()),
+            ...clone(metrics),
+            ...(historyRetention ? { historyRetention } : {}),
             investmentPlans: clone(this.investmentPlans || {}),
             investmentProfile: clone(investmentProfile),
             totalProfitLoss: typeof this.totalProfitLoss === 'number' && Number.isFinite(this.totalProfitLoss) ? this.totalProfitLoss : 0,
@@ -918,6 +926,7 @@ class GameState {
             this.roundHistory = snapshot.roundHistory;
             this.strategyMetrics = snapshot.strategyMetrics ? store.clone(snapshot.strategyMetrics) : null;
             this.roundMetrics = snapshot.roundMetrics ? store.clone(snapshot.roundMetrics) : null;
+            this.historyRetention = snapshot.historyRetention ? store.clone(snapshot.historyRetention) : null;
             this.totalProfitLoss = snapshot.totalProfitLoss;
             this.investmentPlans = snapshot.investmentPlans;
             this.investmentProfile = store.clone(snapshot.investmentProfile || null);
@@ -1031,6 +1040,7 @@ class GameState {
         this.roundHistory = [];
         this.strategyMetrics = null;
         this.roundMetrics = null;
+        this.historyRetention = null;
         this.totalProfitLoss = 0;
         this.investmentPlans = {};
         this.investmentProfile = null;
