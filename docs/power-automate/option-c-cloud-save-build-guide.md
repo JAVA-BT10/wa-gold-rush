@@ -1,8 +1,18 @@
-# Option C cloud saves: List, column and flow build guide
+# Option C cloud saves: draft List and flow design
 
-This guide restores Device A → save → Device B → restore for Levels 2–5 with
-the existing Microsoft Lists, the existing `X-GGR-Key` API key and the existing
-student login. No document library is used.
+> **Draft only — do not build, deploy or enable the flows below.** These
+> unverified design notes do not yet implement the required safe v2 contract.
+> In particular, they treat some existing legacy rows as empty, do not provide
+> the reference protocol's durable retry/idempotency guarantees, and perform
+> a separate dashboard update outside the conditional save. Failure responses
+> also need to distinguish genuine conflicts from other SharePoint errors.
+> Using these instructions as written can risk existing progress or unreliable
+> saves. No tenant deployment or two-device acceptance has been verified.
+
+The intended outcome is Device A → save → Device B → restore for Levels 2–5
+using the existing Microsoft Lists and login, without a document library.
+The existing draft client and in-memory server tests do not establish that
+the Power Automate flows below implement that outcome.
 
 > **Do not enable this for students yet.** The current browser login supplies
 > class/student identity fields but no server-verifiable save authorization
@@ -96,7 +106,7 @@ Create a blank List named `GGR_SaveReceipts` in the **same site** as
 | `ContentHash` | Single line of text | |
 | `ResponseJson` | Multiple lines of text | Plain text |
 
-## Step 4 – New flow `GGR_SaveProgress` (v2)
+## Step 4 – Draft flow `GGR_SaveProgress` (v2; do not implement)
 
 Build a **new** flow (keep the old one until Step 7). Name each action exactly
 as written; the expressions refer to those names.
@@ -285,7 +295,7 @@ as written; the expressions refer to those names.
     {"ok":true,"protocolVersion":2,"saveRequestId":"@{triggerBody()?['saveRequestId']}","progressKey":"@{outputs('ExpectedKey')}","runGeneration":@{triggerBody()?['runGeneration']},"revision":@{outputs('NewRevision')}}
     ```
 
-## Step 5 – New flow `GGR_GetStudentProgress`
+## Step 5 – Draft flow `GGR_GetStudentProgress` (do not implement)
 
 1. **Trigger** – *When a HTTP request is received*, Method `POST`, schema:
 
@@ -353,7 +363,7 @@ procedure, preserving its original JSON in
 `LegacyProgressionMarkersJson`, and test conversion/restore on a second device.
 Do not treat an old row as an empty slot or let a first save overwrite it.
 
-## Step 6 – Turn it on (GitHub)
+## Step 6 – Deployment inputs (do not enable yet)
 
 Repository → Settings → Secrets and variables → Actions:
 
@@ -363,9 +373,10 @@ Repository → Settings → Secrets and variables → Actions:
   `WA_GGR_FULL_CLOUD_RESTORE` = `true`,
   `WA_GGR_PILOT_SHARED_KEY_PROGRESS` = `true`.
 
-Then Actions → *Build and Deploy to GitHub Pages* → **Run workflow** on `main`.
-Rollback: set the three variables to `false` and run the workflow again; local
-saves are unaffected.
+Only after the flow implementation, authorization, migration and acceptance
+gates above have been independently verified may these flags be enabled.
+Rollback is to set the three variables to `false` and redeploy; local saves
+are not intentionally modified by this switch.
 
 ## Step 7 – Acceptance with the Demo account (outside class time)
 
