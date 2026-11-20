@@ -227,7 +227,15 @@
                         : comparable(capturedHistory) !== comparable(localHistory.slice(-capturedHistory.length)));
                 const metricsChanged = ['strategyMetrics', 'roundMetrics'].some((key) => captured[key] !== undefined
                     && comparable(captured[key]) !== comparable(local[key]));
-                newerLocal = newerLocal || historyChanged || metricsChanged
+                const progression = local.progression || {};
+                const checkpointChanged = [
+                    'checkpointStatus', 'quizScore', 'quizPassedAt', 'quizAttempts',
+                    'approvalStatus', 'approverName', 'approvalTimestamp'
+                ].some((key) => Object.prototype.hasOwnProperty.call(captured, key)
+                    && comparable(captured[key]) !== comparable(key === 'quizAttempts'
+                        ? (Array.isArray(progression[key]) ? progression[key] : [])
+                        : (progression[key] ?? null)));
+                newerLocal = newerLocal || historyChanged || metricsChanged || checkpointChanged
                     || keys.some((key) => comparable(captured[key]) !== comparable(local[key]))
                     || comparable(captured.companyName) !== comparable(local.player?.companyName);
             } catch (_) {

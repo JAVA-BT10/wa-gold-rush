@@ -161,6 +161,35 @@ test('delayed acknowledgement cannot mark different local economy synced in the 
     assert.equal(after.snapshot.cash, original.snapshot.cash);
 });
 
+test('delayed acknowledgement keeps newer checkpoint evidence pending in the same millisecond', () => {
+    const { storage, original } = setup();
+    const next = store.clone(original);
+    next.snapshot.progression = {
+        ...next.snapshot.progression,
+        checkpointStatus: 'quiz_passed',
+        quizScore: 5,
+        quizAttempts: [{ score: 5, passed: true }]
+    };
+    assert.equal(store.writeLevelSave(storage, next, { identity, level: 2 }).ok, true);
+    const captured = {
+        ...original.snapshot,
+        companyName: original.snapshot.player.companyName,
+        checkpointStatus: null,
+        quizScore: null,
+        quizAttempts: []
+    };
+    const payload = {
+        ...identity, level: 2, protocolVersion: 2, runGeneration: original.generation,
+        runId: original.runId, saveRequestId: 'checkpoint-request',
+        clientTimestampUtc: next.savedAt, progressionMarkersJson: JSON.stringify(captured)
+    };
+    assert.equal(protocol.recordAcknowledgement(storage, payload, { revision: 2 }), true);
+    const after = store.readLevelSave(storage, identity, 2).envelope;
+    assert.equal(after.cloud.status, 'pending');
+    assert.equal(after.cloud.revision, 2);
+    assert.equal(after.snapshot.progression.checkpointStatus, 'quiz_passed');
+});
+
 test('adoption never replaces an unknown ledger schema with an empty ledger', () => {
     const { storage, target } = setup();
     const key = store.buildLedgerKey(identity);
