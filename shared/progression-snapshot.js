@@ -165,6 +165,9 @@
         });
         fields.quizScore = normalizeQuizScore(fields.quizScore);
         fields.checkpointStatus = fields.checkpointStatus ? String(fields.checkpointStatus) : null;
+        fields.approvalStatus = fields.approvalStatus
+            ? String(fields.approvalStatus).trim().toLowerCase()
+            : null;
         fields.progressionStateByLevel = byLevel;
         return fields;
     }

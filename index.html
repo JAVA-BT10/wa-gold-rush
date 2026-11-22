@@ -432,6 +432,7 @@
     <script src="shared/progression-snapshot.js"></script>
     <script src="shared/level-capabilities.js"></script>
     <script src="shared/level-save-store.js"></script>
+    <script src="shared/student-progress-auth.js"></script>
     <script src="levels/level-2-tycoon/level-access-guard.js"></script>
     <script src="shared/student-session.js"></script>
     <script src="shared/student-auth-client.js"></script>
@@ -533,14 +534,14 @@
             // Same reader the Level 2–5 access guard uses, so the home page and
             // the game always agree on which levels are unlocked.
             if (typeof LevelAccessGuard !== 'undefined') {
-                return LevelAccessGuard.isCheckpointPassed(requiredLevel);
+                return LevelAccessGuard.isCheckpointApproved(requiredLevel);
             }
             return false;
         }
 
         /**
          * When GGR_GetStudentProgress is configured, unlock levels whose
-         * checkpoint quiz was passed on another device. Otherwise unlocks remain
+         * checkpoint quiz was passed and approved on another device. Otherwise unlocks remain
          * same-device (this student's progression ledger on this device).
          */
         async function refreshRemoteProgression() {
@@ -617,7 +618,7 @@
          */
         function isLevelAccessible(level) {
             if (!isLevelPlayable(level)) return false;
-            // Every level, including Level 1, requires a roster-verified session.
+            if (Number(level.number) === 1) return true;
             const session = getStudentSession();
             if (!session) {
                 return false;
@@ -635,6 +636,7 @@
             if (!isLevelPlayable(level)) {
                 return 'Planned — not available yet.';
             }
+            if (Number(level.number) === 1) return null;
             const session = getStudentSession();
             if (!session) {
                 return 'Sign in as a student below to play.';
@@ -642,7 +644,7 @@
             if (!level.requiresApproval || Number(level.number) <= getRosterEntitledLevel(session)) {
                 return null;
             }
-            return `Complete Level ${level.requiredCheckpointLevel} checkpoint quiz.`;
+            return `Pass Level ${level.requiredCheckpointLevel} checkpoint quiz and receive teacher/admin approval.`;
         }
 
         /**

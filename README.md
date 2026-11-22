@@ -9,7 +9,7 @@ A progressive financial mathematics simulation game for students, themed around 
 ```
 wa-gold-rush/
 ├── levels/
-│   ├── level-1-basic/           # ARCHIVED: Original 10-round game
+│   ├── level-1-basic/           # Public 10-round practice game
 │   │   ├── index.html
 │   │   ├── script.js
 │   │   └── style.css
@@ -57,11 +57,14 @@ before a pilot; server refusal of old unconditional writers must come first.
 - [Manual repair template (mixed-level histories)](docs/operations/manual-repair-mixed-history.md)
 - [Staged release, rollback and tenant acceptance matrix](docs/operations/release-and-acceptance.md)
 
-## Level 1: Basic Mining (Archived)
+## Level 1: Basic Mining (Public Practice)
 
 **Access:** `/levels/level-1-basic/index.html`
 
-The original working game - preserved as-is for reference and student access.
+Open practice without student login, assignment or progression locks. Practice
+does not persist student records or submit scores. The current Level 1 page has
+no leaderboard; any leaderboard service must authorize logged-in students for
+both reading and submission before being connected.
 
 - **Duration:** 10 rounds maximum
 - **Starting Cash:** $100
@@ -78,6 +81,22 @@ The original working game - preserved as-is for reference and student access.
 ## Progression Note
 
 Detailed progression steps are condensed into the current Level 2 Goldfields Venture implementation and reflected on the home page cards for Levels 2–5.
+
+Initial teacher placement establishes a student's starting level. Advancement
+beyond the roster entitlement requires the preceding assessed level's passed
+quiz **and** teacher/admin approval. Home cards, direct game links and quiz
+continuation use the same gate. Teacher approval requires a passed quiz and a
+verified Lists read-back; an HTTP acknowledgement alone is not confirmation.
+The backend must enforce the same rule and must not accept student-supplied
+approval as authority. Existing roster progression decisions are preserved,
+not automatically recalculated from contradictory historical snapshots.
+
+Release 1 covers **all Levels 2–5** through their shared engine and independent
+class/student/level save slots, plus public Level 1 practice. See the
+[Department-hosted repair handoff](docs/power-automate/department-hosted-repair.md)
+for required tenant changes and remaining activation blockers. Release 2 is the
+complete Level 6 implementation from the preserved blueprint, not merely
+enabling its card.
 
 ## Teacher Dashboard
 

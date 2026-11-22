@@ -27,7 +27,7 @@
             rosterAssignable: true,
             requiredCheckpointLevel: null,
             status: 'available',
-            note: 'Auth-only practice game; no per-level save or cloud progress pipeline yet.'
+            note: 'Public practice game; no student records or leaderboard submissions from practice.'
         }),
         2: Object.freeze({
             level: 2,
