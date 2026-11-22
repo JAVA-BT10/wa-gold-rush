@@ -48,6 +48,15 @@
         return null;
     }
 
+    function getConverter(root) {
+        const converter = root?.WA_GOLD_RUSH_PROGRESS_SNAPSHOT_CONVERTER;
+        if (converter && typeof converter.convertLegacySnapshot === 'function') return converter;
+        if (typeof require === 'function') {
+            try { return require('./progress-snapshot-converter.js'); } catch (_) { return null; }
+        }
+        return null;
+    }
+
     function result(status, reason, extra = {}) {
         return Object.freeze({ status, reason: reason || '', ...extra });
     }
@@ -103,7 +112,22 @@
         if (body.found !== true) return result('incomplete', 'found_flag_missing');
         const revision = body.revision;
         if (!Number.isInteger(revision) || revision < 1) return result('incomplete', 'revision_missing');
-        const envelope = body.save;
+        let envelope = body.save;
+        if (envelope === undefined && typeof body.progressionMarkersJson === 'string') {
+            // List-backed flows return the stored ProgressionMarkersJson text;
+            // convert it strictly (exact owner, level and run) into an envelope.
+            const converter = getConverter(root);
+            if (!converter) return result('unavailable', 'converter_unavailable');
+            const converted = converter.convertLegacySnapshot(body.progressionMarkersJson, {
+                identity: request.identity, level: request.level
+            });
+            if (!converted.ok) {
+                return ['owner_mismatch', 'level_mismatch'].includes(converted.reason)
+                    ? result('failed', converted.reason)
+                    : result('incomplete', `invalid_save_${converted.reason}`);
+            }
+            envelope = converted.envelope;
+        }
         const validation = store.validateEnvelope(envelope, { identity: request.identity, level: request.level });
         if (!validation.ok) {
             const reason = ['owner_mismatch', 'level_mismatch', 'progress_key_mismatch'].includes(validation.reason)

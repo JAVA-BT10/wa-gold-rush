@@ -35,6 +35,24 @@ test('cloud adoption archives exact source, commits run and preserves unrelated 
     assert.equal(store.getLevelWriteProtection(storage, identity, 2), '');
 });
 
+test('cloud adoption preserves other levels when an extra ledger read would fail', () => {
+    const { storage, target } = setup();
+    assert.equal(store.recordProgressionEvidence(storage, identity, 4, { checkpointStatus: 'quiz_passed' }), true);
+    const ledgerKey = store.buildLedgerKey(identity);
+    let reads = 0;
+    const flaky = {
+        getItem(key) {
+            if (key === ledgerKey && ++reads === 5) throw new Error('simulated transient read');
+            return storage.getItem(key);
+        },
+        setItem: storage.setItem.bind(storage),
+        removeItem: storage.removeItem.bind(storage)
+    };
+    const result = restore.adoptCloudSave(flaky, { status: 'found', envelope: target });
+    assert.equal(result.ok, false);
+    assert.equal(store.readProgressionEvidence(storage, identity, 4).checkpointStatus, 'quiz_passed');
+});
+
 for (const stage of ['archive', 'journal', 'slot', 'ledger', 'cleanup']) {
     test(`cloud adoption recovers a storage failure at ${stage} without invalidating the source run`, () => {
         const { storage, original, target } = setup();
@@ -141,6 +159,35 @@ test('delayed acknowledgement cannot mark different local economy synced in the 
     assert.equal(after.cloud.status, 'pending');
     assert.equal(after.cloud.revision, 2);
     assert.equal(after.snapshot.cash, original.snapshot.cash);
+});
+
+test('delayed acknowledgement keeps newer checkpoint evidence pending in the same millisecond', () => {
+    const { storage, original } = setup();
+    const next = store.clone(original);
+    next.snapshot.progression = {
+        ...next.snapshot.progression,
+        checkpointStatus: 'quiz_passed',
+        quizScore: 5,
+        quizAttempts: [{ score: 5, passed: true }]
+    };
+    assert.equal(store.writeLevelSave(storage, next, { identity, level: 2 }).ok, true);
+    const captured = {
+        ...original.snapshot,
+        companyName: original.snapshot.player.companyName,
+        checkpointStatus: null,
+        quizScore: null,
+        quizAttempts: []
+    };
+    const payload = {
+        ...identity, level: 2, protocolVersion: 2, runGeneration: original.generation,
+        runId: original.runId, saveRequestId: 'checkpoint-request',
+        clientTimestampUtc: next.savedAt, progressionMarkersJson: JSON.stringify(captured)
+    };
+    assert.equal(protocol.recordAcknowledgement(storage, payload, { revision: 2 }), true);
+    const after = store.readLevelSave(storage, identity, 2).envelope;
+    assert.equal(after.cloud.status, 'pending');
+    assert.equal(after.cloud.revision, 2);
+    assert.equal(after.snapshot.progression.checkpointStatus, 'quiz_passed');
 });
 
 test('adoption never replaces an unknown ledger schema with an empty ledger', () => {

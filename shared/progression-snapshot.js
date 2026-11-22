@@ -52,8 +52,28 @@
             approverName: input.approverName || null,
             approvalTimestamp: input.approvalTimestamp || null,
             progressionStateByLevel: input.progressionStateByLevel || {},
+            ...optionalSaveFields(input),
             ...(input.run && typeof input.run === 'object' ? { run: normalizeSnapshotRun(input.run) } : {})
         };
+    }
+
+    /**
+     * Cumulative metrics, the history retention marker and the reserved
+     * Level 6 fields (timeline position, capped event journal, assessment
+     * evidence) are copied only when supplied.
+     */
+    function optionalSaveFields(input) {
+        const fields = {};
+        const isObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
+        ['strategyMetrics', 'roundMetrics', 'historyRetention', 'assessmentEvidence'].forEach((key) => {
+            if (isObject(input[key])) fields[key] = input[key];
+        });
+        if (input.timelinePosition === null || isObject(input.timelinePosition)) fields.timelinePosition = input.timelinePosition;
+        if (Array.isArray(input.eventJournal)) {
+            const max = globalObj.WA_GOLD_RUSH_LEVEL_SAVE_STORE?.EVENT_JOURNAL_MAX || 200;
+            fields.eventJournal = input.eventJournal.slice(-max);
+        }
+        return fields;
     }
 
     /**

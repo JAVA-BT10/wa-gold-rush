@@ -21,7 +21,9 @@
         'round', 'cash', 'netWorth', 'player', 'companyName', 'ownedMines', 'machinery',
         'roundHistory', 'totalProfitLoss', 'investmentPlans', 'investmentProfile',
         'strategyLabel', 'checkpointStatus', 'quizScore', 'quizPassedAt', 'quizAttempts',
-        'approvalStatus', 'approverName', 'approvalTimestamp', 'progressionStateByLevel', 'run'
+        'approvalStatus', 'approverName', 'approvalTimestamp', 'progressionStateByLevel', 'run',
+        'strategyMetrics', 'roundMetrics', 'historyRetention',
+        'timelinePosition', 'eventJournal', 'assessmentEvidence'
     ]);
     const CHECKPOINTS = [
         'checkpointStatus', 'quizScore', 'quizPassedAt', 'quizAttempts',

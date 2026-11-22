@@ -36,6 +36,9 @@ class GameState {
 
         this.machinery = [];
         this.roundHistory = [];
+        this.strategyMetrics = null;
+        this.roundMetrics = null;
+        this.historyRetention = null;
         this.totalProfitLoss = 0;
         this.investmentPlans = {};
         this.investmentProfile = null;
@@ -760,12 +763,47 @@ class GameState {
     }
 
     /**
+     * Cumulative strategy and round totals. Older saves without them are
+     * backfilled once from their complete local history.
+     */
+    getSaveMetrics() {
+        const store = this.getSaveStore();
+        if (!store?.computeMetricsFromHistory) return {};
+        if (!this.strategyMetrics || !this.roundMetrics) {
+            const computed = store.computeMetricsFromHistory(this.roundHistory);
+            this.strategyMetrics = this.strategyMetrics || computed.strategyMetrics;
+            this.roundMetrics = this.roundMetrics || computed.roundMetrics;
+        }
+        return { strategyMetrics: this.strategyMetrics, roundMetrics: this.roundMetrics };
+    }
+
+    /** Record one completed round in the cumulative totals. */
+    recordRoundMetrics(roundEntry) {
+        const store = this.getSaveStore();
+        if (!store?.accumulateRoundMetrics) return;
+        if (!this.strategyMetrics || !this.roundMetrics) {
+            // Backfill from the history before this round was appended.
+            const previous = Array.isArray(this.roundHistory) ? this.roundHistory.filter((entry) => entry !== roundEntry) : [];
+            const computed = store.computeMetricsFromHistory(previous);
+            this.strategyMetrics = this.strategyMetrics || computed.strategyMetrics;
+            this.roundMetrics = this.roundMetrics || computed.roundMetrics;
+        }
+        store.accumulateRoundMetrics(this.strategyMetrics, this.roundMetrics, roundEntry);
+    }
+
+    /**
      * Detached snapshot of THIS level's economy. Carries only the identity
      * needed to prove ownership (no StudentName/StudentID).
      */
     captureLevelSnapshot() {
         this.persistProgressionStateForLevel(this.assignedLevel);
         const clone = (value) => JSON.parse(JSON.stringify(value));
+        const metrics = this.getSaveMetrics();
+        const historyRetention = this.historyRetention ? {
+            ...this.historyRetention,
+            recordedRounds: metrics.roundMetrics.roundsRecorded,
+            retainedRounds: this.roundHistory.length
+        } : null;
         const profileApi = this.getInvestmentProfileApi();
         const identity = this.getSaveIdentity();
         const investmentProfile = profileApi && identity
@@ -784,6 +822,8 @@ class GameState {
             ownedMines: clone(this.ownedMines || {}),
             machinery: clone(Array.isArray(this.machinery) ? this.machinery : []),
             roundHistory: clone(Array.isArray(this.roundHistory) ? this.roundHistory : []),
+            ...clone(metrics),
+            ...(historyRetention ? { historyRetention } : {}),
             investmentPlans: clone(this.investmentPlans || {}),
             investmentProfile: clone(investmentProfile),
             totalProfitLoss: typeof this.totalProfitLoss === 'number' && Number.isFinite(this.totalProfitLoss) ? this.totalProfitLoss : 0,
@@ -884,6 +924,9 @@ class GameState {
             this.ownedMines = snapshot.ownedMines;
             this.machinery = snapshot.machinery;
             this.roundHistory = snapshot.roundHistory;
+            this.strategyMetrics = snapshot.strategyMetrics ? store.clone(snapshot.strategyMetrics) : null;
+            this.roundMetrics = snapshot.roundMetrics ? store.clone(snapshot.roundMetrics) : null;
+            this.historyRetention = snapshot.historyRetention ? store.clone(snapshot.historyRetention) : null;
             this.totalProfitLoss = snapshot.totalProfitLoss;
             this.investmentPlans = snapshot.investmentPlans;
             this.investmentProfile = store.clone(snapshot.investmentProfile || null);
@@ -995,6 +1038,9 @@ class GameState {
         };
         this.machinery = [];
         this.roundHistory = [];
+        this.strategyMetrics = null;
+        this.roundMetrics = null;
+        this.historyRetention = null;
         this.totalProfitLoss = 0;
         this.investmentPlans = {};
         this.investmentProfile = null;

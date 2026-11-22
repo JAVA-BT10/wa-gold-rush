@@ -224,7 +224,167 @@
         if (typeof snapshot.totalProfitLoss !== 'number' || !Number.isFinite(snapshot.totalProfitLoss)) {
             return 'snapshot_profit_invalid';
         }
+        return validateSaveMetricsFields(snapshot);
+    }
+
+    // ------------------------------------------------------------------
+    // Cumulative metrics + compact cloud saves
+    // ------------------------------------------------------------------
+
+    /**
+     * Local saves and exported backups always keep the complete round history.
+     * Cloud saves are an operational resume copy: current state, cumulative
+     * metrics, progression evidence and only the most recent rounds. The
+     * cumulative metrics are first-class data so reports never need replay.
+     */
+    const CLOUD_HISTORY_LIMIT = 20;
+    const CLOUD_SAVE_MAX_CHARS = 60000;
+    const EVENT_JOURNAL_MAX = 200;
+    const DIG_KEYS = ['safe', 'medium', 'deep'];
+    const STRATEGY_METRIC_KEYS = [
+        'safeInvestmentTotal', 'mediumInvestmentTotal', 'deepInvestmentTotal',
+        'safeDigs', 'mediumDigs', 'deepDigs'
+    ];
+    const ROUND_METRIC_KEYS = [
+        'roundsRecorded', 'profitableRounds', 'lossRounds', 'breakEvenRounds',
+        'totalProfit', 'totalLoss', 'largestProfit', 'largestLoss'
+    ];
+
+    function emptyStrategyMetrics() {
+        return Object.fromEntries(STRATEGY_METRIC_KEYS.map((key) => [key, 0]));
+    }
+
+    function emptyRoundMetrics() {
+        return Object.fromEntries(ROUND_METRIC_KEYS.map((key) => [key, 0]));
+    }
+
+    function finiteOrZero(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : 0;
+    }
+
+    /** Add one played round to both metric objects (mutates them). */
+    function accumulateRoundMetrics(strategyMetrics, roundMetrics, roundEntry) {
+        (Array.isArray(roundEntry?.results) ? roundEntry.results : []).forEach((result) => {
+            if (!DIG_KEYS.includes(result?.digKey)) return;
+            strategyMetrics[`${result.digKey}InvestmentTotal`] += finiteOrZero(result.amount);
+            strategyMetrics[`${result.digKey}Digs`] += 1;
+        });
+        const change = finiteOrZero(roundEntry?.totalProfit);
+        roundMetrics.roundsRecorded += 1;
+        if (change > 0) {
+            roundMetrics.profitableRounds += 1;
+            roundMetrics.totalProfit += change;
+            roundMetrics.largestProfit = Math.max(roundMetrics.largestProfit, change);
+        } else if (change < 0) {
+            roundMetrics.lossRounds += 1;
+            roundMetrics.totalLoss += -change;
+            roundMetrics.largestLoss = Math.max(roundMetrics.largestLoss, -change);
+        } else {
+            roundMetrics.breakEvenRounds += 1;
+        }
+    }
+
+    /** One-off backfill from a complete history (existing saves). */
+    function computeMetricsFromHistory(history) {
+        const strategyMetrics = emptyStrategyMetrics();
+        const roundMetrics = emptyRoundMetrics();
+        (Array.isArray(history) ? history : []).forEach((entry) => accumulateRoundMetrics(strategyMetrics, roundMetrics, entry));
+        return { strategyMetrics, roundMetrics };
+    }
+
+    function validMetricObject(value, keys, integerKeys) {
+        return isPlainObject(value) && keys.every((key) => typeof value[key] === 'number'
+            && Number.isFinite(value[key]) && value[key] >= 0
+            && (!integerKeys.includes(key) || Number.isInteger(value[key])));
+    }
+
+    function validateSaveMetricsFields(snapshot) {
+        if (snapshot.strategyMetrics !== undefined && !validMetricObject(snapshot.strategyMetrics,
+            STRATEGY_METRIC_KEYS, ['safeDigs', 'mediumDigs', 'deepDigs'])) return 'snapshot_strategy_metrics_invalid';
+        if (snapshot.roundMetrics !== undefined && !validMetricObject(snapshot.roundMetrics,
+            ROUND_METRIC_KEYS, ['roundsRecorded', 'profitableRounds', 'lossRounds', 'breakEvenRounds'])) {
+            return 'snapshot_round_metrics_invalid';
+        }
+        const retention = snapshot.historyRetention;
+        if (retention !== undefined) {
+            if (!isPlainObject(retention) || !['full', 'recent'].includes(retention.mode)
+                || !Number.isInteger(retention.recordedRounds) || retention.recordedRounds < 0
+                || !Number.isInteger(retention.retainedRounds) || retention.retainedRounds !== snapshot.roundHistory.length
+                || retention.retainedRounds > retention.recordedRounds) return 'snapshot_history_retention_invalid';
+            // A trimmed history is only acceptable when the totals travel with it.
+            if (retention.mode === 'recent' && (snapshot.strategyMetrics === undefined || snapshot.roundMetrics === undefined
+                || snapshot.roundMetrics.roundsRecorded !== retention.recordedRounds)) {
+                return 'snapshot_history_metrics_missing';
+            }
+        }
+        if (snapshot.timelinePosition !== undefined && snapshot.timelinePosition !== null
+            && !isPlainObject(snapshot.timelinePosition)) return 'snapshot_timeline_invalid';
+        if (snapshot.eventJournal !== undefined && (!Array.isArray(snapshot.eventJournal)
+            || snapshot.eventJournal.length > EVENT_JOURNAL_MAX
+            || snapshot.eventJournal.some((entry) => !isPlainObject(entry) || typeof entry.eventType !== 'string'))) {
+            return 'snapshot_event_journal_invalid';
+        }
+        if (snapshot.assessmentEvidence !== undefined && !isPlainObject(snapshot.assessmentEvidence)) {
+            return 'snapshot_assessment_evidence_invalid';
+        }
         return '';
+    }
+
+    /**
+     * Cloud representation of the round history: the last `limit` rounds plus
+     * a retention marker. Never mutates or shortens the local history.
+     */
+    function buildCloudHistory(history, metrics, limit = CLOUD_HISTORY_LIMIT) {
+        const source = Array.isArray(history) ? history : [];
+        const recent = clone(source.slice(-limit));
+        const recordedRounds = Math.max(source.length, Number(metrics?.roundMetrics?.roundsRecorded) || 0);
+        return {
+            roundHistory: recent,
+            historyRetention: {
+                mode: recent.length === recordedRounds ? 'full' : 'recent',
+                limit,
+                recordedRounds,
+                retainedRounds: recent.length
+            }
+        };
+    }
+
+    function strategyLabelFromMetrics(metrics) {
+        const safe = finiteOrZero(metrics?.safeInvestmentTotal);
+        const medium = finiteOrZero(metrics?.mediumInvestmentTotal);
+        const deep = finiteOrZero(metrics?.deepInvestmentTotal);
+        const max = Math.max(safe, medium, deep);
+        if (max === 0) return 'No strategy yet';
+        if (max === safe) return 'Safe-focused';
+        if (max === medium) return 'Balanced-medium';
+        return 'High-risk deep';
+    }
+
+    /**
+     * Restoring a cloud resume save onto a device that already holds older
+     * rounds of the SAME run keeps those older rounds locally, so a device's
+     * complete history is never lost by adopting a newer cloud save.
+     */
+    function mergeRetainedHistory(localSnapshot, cloudSnapshot) {
+        const cloudHistory = Array.isArray(cloudSnapshot?.roundHistory) ? cloudSnapshot.roundHistory : [];
+        const localHistory = Array.isArray(localSnapshot?.roundHistory) ? localSnapshot.roundHistory : [];
+        if (cloudSnapshot?.historyRetention?.mode !== 'recent' || !localHistory.length) return null;
+        const firstCloudRound = Number(cloudHistory[0]?.round);
+        const older = localHistory.filter((entry) => Number.isFinite(Number(entry?.round))
+            && (!Number.isFinite(firstCloudRound) || Number(entry.round) < firstCloudRound));
+        if (!older.length) return null;
+        const merged = clone(cloudSnapshot);
+        merged.roundHistory = [...clone(older), ...clone(cloudHistory)];
+        merged.historyRetention = {
+            ...merged.historyRetention,
+            mode: merged.roundHistory.length >= merged.historyRetention.recordedRounds ? 'full' : 'recent',
+            retainedRounds: merged.roundHistory.length
+        };
+        if (merged.historyRetention.retainedRounds > merged.historyRetention.recordedRounds) {
+            merged.historyRetention.recordedRounds = merged.historyRetention.retainedRounds;
+        }
+        return merged;
     }
 
     function validateEnvelope(envelope, expectedInput = {}) {
@@ -645,17 +805,25 @@
                     || envelope.cloud.revision <= local.cloud.revision) {
                     return { ok: false, reason: 'cloud_reconciliation_required' };
                 }
-            }
-            if (sourceLedger !== null) {
-                const parsedLedger = JSON.parse(sourceLedger);
-                const owner = normalizeIdentity(parsedLedger?.owner);
-                if (!isPlainObject(parsedLedger) || parsedLedger.storageSchemaVersion !== STORAGE_SCHEMA_VERSION
-                    || !owner || owner.classCode !== identity.classCode || owner.studentCode !== identity.studentCode
-                    || !isPlainObject(parsedLedger.levelRuns) || !isPlainObject(parsedLedger.progressionStateByLevel)) {
-                    return { ok: false, reason: 'source_ledger_invalid' };
+                const mergedSnapshot = mergeRetainedHistory(local.snapshot, envelope.snapshot);
+                if (mergedSnapshot) {
+                    const merged = { ...clone(envelope), snapshot: mergedSnapshot };
+                    if (!validateEnvelope(merged, { identity, level }).ok) return { ok: false, reason: 'history_merge_invalid' };
+                    envelope = merged;
                 }
             }
-            const ledger = readLedger(storage, identity);
+            let ledger;
+            if (sourceLedger !== null) {
+                ledger = JSON.parse(sourceLedger);
+                const owner = normalizeIdentity(ledger?.owner);
+                if (!isPlainObject(ledger) || ledger.storageSchemaVersion !== STORAGE_SCHEMA_VERSION
+                    || !owner || owner.classCode !== identity.classCode || owner.studentCode !== identity.studentCode
+                    || !isPlainObject(ledger.levelRuns) || !isPlainObject(ledger.progressionStateByLevel)) {
+                    return { ok: false, reason: 'source_ledger_invalid' };
+                }
+            } else {
+                ledger = emptyLedger(identity);
+            }
             const current = ledger.levelRuns[String(level)];
             if (current?.generation > envelope.generation) return { ok: false, reason: 'stale_generation' };
             ledger.levelRuns[String(level)] = {
@@ -979,6 +1147,16 @@
         randomId,
         validateSnapshot,
         validateEnvelope,
+        CLOUD_HISTORY_LIMIT,
+        CLOUD_SAVE_MAX_CHARS,
+        EVENT_JOURNAL_MAX,
+        emptyStrategyMetrics,
+        emptyRoundMetrics,
+        accumulateRoundMetrics,
+        computeMetricsFromHistory,
+        buildCloudHistory,
+        strategyLabelFromMetrics,
+        mergeRetainedHistory,
         createEnvelope,
         readLevelSave,
         writeLevelSave,
