@@ -136,6 +136,8 @@ Notes on the optional flows:
 - **Status:**
   - Checkpoint-only compatibility mode: optional/unconfigured.
   - Full exact-slot retrieval (`ggr.getStudentProgress.v2`): **planned and unverified**.
+- **Build steps and List-column mapping:** see the
+  [GGR_GetStudentProgress build specification](GGR_GetStudentProgress-build-spec.md).
 - **Request (v2):** `{ contractVersion:'ggr.getStudentProgress.v2', mode:'full_save', classCode, studentCode, level, progressKey }`, plus the student auth proof (prerequisite).
 - **Responses (v2):**
   - **Found:**
@@ -145,6 +147,7 @@ Notes on the optional flows:
       "save": { "kind": "wa_gr_level_save", "storageSchemaVersion": 1, "…": "…" } }
     ```
   - **Definitively missing:** `{ ok:true, contractVersion, found:false, progressKey }`. Return this only after a successful, complete query that returned zero rows for that exact key.
+  - A List-backed response may return the `ProgressionMarkersJson` value as `progressionMarkersJson`; the client converts the strict schema-2 snapshot into an envelope before adoption.
   - **Failure:** `{ ok:false, contractVersion, code:'unauthorized'|'identity_mismatch'|'server_error'|'timeout' }`. A response without the matching `contractVersion` is classified `incomplete`, never missing.
   - `save` is the complete envelope as stored by the client (identity, level, progressKey, generation, runId, startingNetWorth, snapshot). If `runGeneration` is present it must equal `save.generation`. A missing response may include `runGeneration` (the server's current generation, e.g. after a reset).
 - **Auth:** student scope only. The server derives the identity from the auth proof and refuses a mismatched class/student. Never return another student's row. **Never** expose `GGR_GetDashboardData` for this purpose.
