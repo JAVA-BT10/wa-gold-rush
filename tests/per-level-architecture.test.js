@@ -887,6 +887,60 @@ test('cloud restore: explicit not-found, malformed save and mismatched owner are
     assert.equal(Object.isFrozen(ok.envelope), true);
 });
 
+test('cloud restore: converts an exact-slot List snapshot and preserves the server revision', async () => {
+    const session = buildRosterSession();
+    const snapshot = {
+        schemaVersion: 2,
+        savedAt: '2026-11-23T12:00:00.000Z',
+        assignedLevel: 2,
+        currentLevel: 2,
+        rosterAssignedLevel: 2,
+        round: 8,
+        cash: 1234.5,
+        netWorth: 1534.5,
+        player: { classCode: '6B', studentCode: 'SC-1' },
+        companyName: 'Southern Cross',
+        ownedMines: {},
+        machinery: [],
+        roundHistory: [{ round: 7 }],
+        totalProfitLoss: 10,
+        investmentPlans: {},
+        investmentProfile: null,
+        strategyLabel: 'No strategy yet',
+        checkpointStatus: '',
+        quizScore: null,
+        quizPassedAt: '',
+        quizAttempts: [],
+        approvalStatus: '',
+        approverName: '',
+        approvalTimestamp: '',
+        progressionStateByLevel: { 2: {} },
+        run: { generation: 1, runId: 'run_cloud', startingNetWorth: 300, storageSchemaVersion: 1 }
+    };
+    const response = {
+        success: true,
+        status: 200,
+        data: {
+            ok: true,
+            contractVersion: cloudRestore.CONTRACT_VERSION,
+            progressKey: '6B|SC-1|2',
+            found: true,
+            revision: 7,
+            runGeneration: 1,
+            progressionMarkersJson: JSON.stringify(snapshot)
+        }
+    };
+    const restored = await cloudRestore.fetchLevelSave(
+        { session, level: 2 },
+        restoreGlobals(async () => response)
+    );
+    assert.equal(restored.status, 'found');
+    assert.equal(restored.revision, 7);
+    assert.equal(restored.envelope.cloud.revision, 7);
+    assert.equal(restored.envelope.snapshot.cash, 1234.5);
+    assert.equal(restored.envelope.runId, 'run_cloud');
+});
+
 test('cloud restore: reconcile never auto-overwrites unsent local changes', () => {
     const cloud = { status: 'found', revision: 5, envelope: { ...validCloudSave(), cloud: { status: 'synced', revision: 5 } } };
     const local = (cloudState, runId = 'run_cloud') => ({ status: 'found', envelope: { ...validCloudSave(), runId, cloud: cloudState } });
